@@ -57,7 +57,7 @@ export class AppStore {
   private load(): PersistedState {
     try {
       if (fs.existsSync(this.filePath)) {
-        const raw = fs.readFileSync(this.filePath, 'utf-8');
+        const raw = fs.readFileSync(this.filePath, 'utf-8').replace(/^\uFEFF/, '');
         const parsed = JSON.parse(raw);
         const rawStations: WeatherStation[] = Array.isArray(
           parsed.cachedStations
