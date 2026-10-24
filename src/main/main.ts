@@ -89,6 +89,7 @@ function createMainWindow(): void {
     height: 860,
     minWidth: 1020,
     minHeight: 680,
+    center: true,
     backgroundColor: '#090d16',
     autoHideMenuBar: true,
     title: 'winAtmo — Netatmo Weather & Air Quality Studio',
@@ -100,6 +101,24 @@ function createMainWindow(): void {
       sandbox: false,
     },
     show: true,
+  });
+
+  // Explicitly call show() & focus() after construction to override Win32 STARTUPINFO SW_HIDE when spawned from IDE terminals
+  mainWindow.show();
+  mainWindow.focus();
+
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
   });
 
   const entry = getRendererEntryUrl();
@@ -150,7 +169,12 @@ function getDefaultWidgetBounds(expanded = false): {
   const height = expanded ? 210 : 48;
 
   // Position cleanly docked at bottom-right just above the Windows Taskbar
-  const saved = settings.widgetPosition;
+  const saved =
+    settings.widgetPosition &&
+    settings.widgetPosition.y >= workArea.y &&
+    settings.widgetPosition.y <= workArea.y + workArea.height - 24
+      ? settings.widgetPosition
+      : undefined;
   let x = saved ? saved.x : workArea.x + workArea.width - width - 16;
   let y = saved
     ? ExpandedYAdjustment(saved.y, height, workArea)

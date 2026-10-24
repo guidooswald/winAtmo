@@ -70,6 +70,7 @@ async function startDev() {
   const electronProc = spawn(electronBin, [path.join(rootDir, 'dist/main/main.js')], {
     cwd: rootDir,
     stdio: 'inherit',
+    windowsHide: false,
     env: {
       ...process.env,
       NODE_ENV: 'development',
