@@ -28,6 +28,7 @@ export const TaskbarWidget: React.FC = () => {
   const [stations, setStations] = useState<WeatherStation[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [expanded, setExpanded] = useState<boolean>(false);
+  const [expandDirection, setExpandDirection] = useState<'up' | 'down'>('up');
   const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
@@ -120,7 +121,6 @@ export const TaskbarWidget: React.FC = () => {
     return () => clearTimeout(timer);
   }, [
     pinnedIdsKey,
-    expanded,
     stations.length,
     settings?.temperatureUnit,
     settings?.pressureUnit,
@@ -160,8 +160,16 @@ export const TaskbarWidget: React.FC = () => {
 
   const toggleExpand = async () => {
     const next = !expanded;
+    if (next) {
+      const isTopHalf =
+        window.screenY + window.innerHeight / 2 < window.screen.availHeight / 2;
+      setExpandDirection(isTopHalf ? 'down' : 'up');
+    }
+    const dir = await window.winatmo.setWidgetExpanded(next);
+    if (dir === 'up' || dir === 'down') {
+      setExpandDirection(dir);
+    }
     setExpanded(next);
-    await window.winatmo.setWidgetExpanded(next);
   };
 
   const handleRefresh = async (e: React.MouseEvent) => {
@@ -217,7 +225,11 @@ export const TaskbarWidget: React.FC = () => {
   const dragClass = settings.widgetLocked ? '' : 'widget-os-drag';
 
   return (
-    <div className={`taskbar-widget-shell ${expanded ? 'is-expanded' : ''}`}>
+    <div
+      className={`taskbar-widget-shell ${expanded ? 'is-expanded' : ''} ${
+        expandDirection === 'down' ? 'expand-down' : 'expand-up'
+      }`}
+    >
       {/* Expanded Flyout Panel (24h Mini Sparklines & Details) */}
       {expanded && (
         <div
@@ -370,7 +382,17 @@ export const TaskbarWidget: React.FC = () => {
             onClick={toggleExpand}
             title={expanded ? 'Collapse flyout' : 'Expand 24h mini charts'}
           >
-            {expanded ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+            {expandDirection === 'down' ? (
+              expanded ? (
+                <ChevronUp size={13} />
+              ) : (
+                <ChevronDown size={13} />
+              )
+            ) : expanded ? (
+              <ChevronDown size={13} />
+            ) : (
+              <ChevronUp size={13} />
+            )}
           </button>
         </div>
 

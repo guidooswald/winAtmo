@@ -30,6 +30,7 @@ app.name = 'winAtmo';
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
 let isWidgetExpanded = false;
+let widgetExpandDirection: 'up' | 'down' = 'up';
 let widgetTargetSize = { width: 420, height: 50 };
 let tray: Tray | null = null;
 let isQuitting = false;
@@ -566,32 +567,65 @@ function registerIpcHandlers(): void {
     return updated;
   });
 
-  ipcMain.handle('widget:set-expanded', (_e, expanded: boolean) => {
-    isWidgetExpanded = expanded;
-    if (!widgetWindow || widgetWindow.isDestroyed()) return;
+  ipcMain.handle('widget:set-expanded', (_e, expanded: boolean): 'up' | 'down' => {
+    if (!widgetWindow || widgetWindow.isDestroyed()) {
+      isWidgetExpanded = expanded;
+      return widgetExpandDirection;
+    }
+
     const [curX, curY] = widgetWindow.getPosition();
-    const [, curH] = widgetWindow.getContentSize();
+    const [curW, curH] = widgetWindow.getContentSize();
+    const display = screen.getDisplayMatching({
+      x: curX,
+      y: curY,
+      width: curW,
+      height: curH,
+    });
+    const workArea = display.workArea;
     const target = getDefaultWidgetBounds(expanded);
-    const primary = screen.getPrimaryDisplay().workArea;
+    const nextW = Math.max(curW, target.width);
 
-    widgetTargetSize = { width: target.width, height: target.height };
+    // Determine expand direction when expanding from collapsed state
+    if (expanded && !isWidgetExpanded) {
+      const centerY = curY + curH / 2;
+      const screenMidY = workArea.y + workArea.height / 2;
+      const roomAbove = curY - workArea.y;
+      widgetExpandDirection =
+        centerY < screenMidY || roomAbove < target.height - curH
+          ? 'down'
+          : 'up';
+    }
 
-    // Keep bottom edge anchored near current bottom edge
-    const bottomEdge = curY + curH;
-    const newY = Math.max(
-      primary.y + 8,
-      Math.min(
-        bottomEdge - target.height,
-        primary.y + primary.height - target.height - 4
-      )
-    );
+    isWidgetExpanded = expanded;
+    widgetTargetSize = { width: nextW, height: target.height };
+
+    let newY: number;
+    if (widgetExpandDirection === 'down') {
+      // Towards top of display: keep top edge anchored and expand/collapse downwards
+      newY = Math.max(
+        workArea.y + 4,
+        Math.min(curY, workArea.y + workArea.height - target.height - 4)
+      );
+    } else {
+      // Towards bottom of display: keep bottom edge anchored and expand/collapse upwards
+      const bottomEdge = curY + curH;
+      newY = Math.max(
+        workArea.y + 4,
+        Math.min(
+          bottomEdge - target.height,
+          workArea.y + workArea.height - target.height - 4
+        )
+      );
+    }
+
     const newX = Math.max(
-      primary.x + 4,
-      Math.min(curX, primary.x + primary.width - target.width - 4)
+      workArea.x + 4,
+      Math.min(curX, workArea.x + workArea.width - nextW - 4)
     );
 
-    widgetWindow.setContentSize(target.width, target.height);
+    widgetWindow.setContentSize(nextW, target.height);
     widgetWindow.setPosition(newX, newY);
+    return widgetExpandDirection;
   });
 
   ipcMain.on('widget:move-by', (_e, delta: { dx: number; dy: number }) => {

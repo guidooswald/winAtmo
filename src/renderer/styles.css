@@ -1355,6 +1355,15 @@ body {
   user-select: none;
 }
 
+.taskbar-widget-shell.expand-down {
+  flex-direction: column-reverse;
+}
+
+.taskbar-widget-shell.expand-down .widget-flyout-panel {
+  margin-bottom: 0;
+  margin-top: 6px;
+}
+
 .widget-os-drag {
   -webkit-app-region: drag;
 }

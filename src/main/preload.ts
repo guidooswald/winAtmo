@@ -20,7 +20,7 @@ export interface WinAtmoAPI {
   // Widget controls
   toggleWidget: (enabled?: boolean) => Promise<UserSettings>;
   resetWidgetPosition: () => Promise<UserSettings>;
-  setWidgetExpanded: (expanded: boolean) => Promise<void>;
+  setWidgetExpanded: (expanded: boolean) => Promise<'up' | 'down'>;
   moveWidgetBy: (dx: number, dy: number) => void;
   resizeWidget: (width: number, height: number) => void;
 
