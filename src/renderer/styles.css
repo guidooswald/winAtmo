@@ -1399,8 +1399,8 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
-  align-content: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
   gap: 6px;
   overflow: hidden;
 }
@@ -1432,8 +1432,9 @@ body {
 .widget-sensor-pill {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 5px;
-  padding: 4px 8px;
+  padding: 4px 9px;
   border-radius: 7px;
   background: rgba(25, 35, 58, 0.85);
   border: 1px solid rgba(148, 163, 184, 0.14);
@@ -1457,12 +1458,16 @@ body {
 .widget-mod-short {
   color: var(--text-secondary);
   font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .widget-val-text {
   color: #f8fafc;
   font-size: 12.5px;
   font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .trend-up-mini {

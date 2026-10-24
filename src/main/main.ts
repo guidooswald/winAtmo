@@ -169,26 +169,17 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
   let height: number;
 
   if (expanded) {
-    const cols = Math.min(4, Math.max(2, pinnedCount));
-    const rows = Math.ceil(pinnedCount / cols);
     width = Math.min(
-      workArea.width - 32,
-      Math.max(360, cols * 148 + 32)
+      workArea.width - 16,
+      Math.max(360, pinnedCount * 156 + 78)
     );
-    height = Math.min(
-      workArea.height - 48,
-      Math.max(195, 52 + 44 + rows * 92)
-    );
+    height = 215;
   } else {
-    const singleRowWidth = pinnedCount * 136 + 74;
-    if (singleRowWidth <= workArea.width - 32) {
-      width = Math.max(230, singleRowWidth);
-      height = 50;
-    } else {
-      const perRow = Math.ceil(pinnedCount / 2);
-      width = Math.min(workArea.width - 32, Math.max(320, perRow * 136 + 74));
-      height = 88;
-    }
+    width = Math.min(
+      workArea.width - 16,
+      Math.max(230, pinnedCount * 156 + 78)
+    );
+    height = 48;
   }
 
   // Position cleanly docked at bottom-right just above the Windows Taskbar
@@ -617,10 +608,16 @@ function registerIpcHandlers(): void {
     'widget:resize',
     (_e, size: { width: number; height: number }) => {
       if (!widgetWindow || widgetWindow.isDestroyed()) return;
-      const w = Math.max(200, Math.round(size.width));
+      const primary = screen.getPrimaryDisplay().workArea;
+      const w = Math.min(primary.width - 12, Math.max(200, Math.round(size.width)));
       const h = Math.max(44, Math.round(size.height));
       widgetTargetSize = { width: w, height: h };
+      const [curX, curY] = widgetWindow.getPosition();
       widgetWindow.setContentSize(w, h);
+      if (curX + w > primary.x + primary.width - 4) {
+        const nextX = Math.max(primary.x + 4, primary.x + primary.width - w - 8);
+        widgetWindow.setPosition(nextX, curY);
+      }
     }
   );
 

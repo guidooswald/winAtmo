@@ -31,6 +31,7 @@ export const TaskbarWidget: React.FC = () => {
   const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
+  const sensorsStripRef = useRef<HTMLDivElement | null>(null);
   const resizeRef = useRef<{
     resizing: boolean;
     startX: number;
@@ -95,6 +96,37 @@ export const TaskbarWidget: React.FC = () => {
     }
     return fallback;
   }, [settings, stations]);
+
+  // Automatically measure the exact single-line width of all pinned sensor pills and fit the window
+  const pinnedIdsKey = activePins.map((p) => p.id).join('|');
+  useEffect(() => {
+    if (!settings || resizeRef.current.resizing) return;
+    const timer = setTimeout(() => {
+      const stripEl = sensorsStripRef.current;
+      if (!stripEl) return;
+      // Sum natural width of all children + gaps on a single line
+      let contentWidth = 0;
+      const children = Array.from(stripEl.children) as HTMLElement[];
+      for (const child of children) {
+        contentWidth += child.offsetWidth;
+      }
+      if (children.length > 1) {
+        contentWidth += (children.length - 1) * 6;
+      }
+      const targetWidth = Math.max(220, Math.ceil(contentWidth + 78));
+      const targetHeight = expanded ? 215 : 48;
+      window.winatmo.resizeWidget(targetWidth, targetHeight);
+    }, 30);
+    return () => clearTimeout(timer);
+  }, [
+    pinnedIdsKey,
+    expanded,
+    stations.length,
+    settings?.temperatureUnit,
+    settings?.pressureUnit,
+    settings?.windUnit,
+    settings?.rainUnit,
+  ]);
 
   // Load 24h mini-sparklines when expanded
   useEffect(() => {
@@ -277,7 +309,7 @@ export const TaskbarWidget: React.FC = () => {
           <GripVertical size={13} />
         </div>
 
-        <div className="widget-sensors-strip">
+        <div className="widget-sensors-strip" ref={sensorsStripRef}>
           {activePins.length === 0 ? (
             <div
               className="widget-empty-item widget-no-drag"
