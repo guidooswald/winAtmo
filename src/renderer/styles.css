@@ -683,6 +683,43 @@ body {
   color: var(--text-muted);
 }
 
+.dashboard-version-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.dashboard-version-footer strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.dashboard-version-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.dashboard-version-footer a:hover {
+  color: var(--accent-sky);
+  text-decoration: underline;
+}
+
+.dashboard-version-footer .footer-sep {
+  opacity: 0.45;
+}
+
 /* Diagnostics Table */
 .diagnostics-table-card {
   border-radius: 12px;

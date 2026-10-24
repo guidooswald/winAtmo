@@ -1,6 +1,6 @@
 {
   "name": "winatmo",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Native Windows desktop application for Netatmo Weather Stations with web login, SQLite historical storage, flexible multi-curve charting, and a live Windows taskbar widget",
   "main": "dist/main/main.js",
   "type": "commonjs",

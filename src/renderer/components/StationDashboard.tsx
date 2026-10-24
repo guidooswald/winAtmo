@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Activity,
   ArrowDownRight,
@@ -9,6 +9,7 @@ import {
   Compass,
   Cpu,
   Droplets,
+  ExternalLink,
   Gauge,
   LineChart,
   MapPin,
@@ -38,6 +39,10 @@ import {
   SERIES_PALETTE,
 } from '../utils/metrics';
 
+declare const __APP_VERSION__: string | undefined;
+declare const __APP_BUILD__: number | undefined;
+declare const __APP_COMMIT__: string | undefined;
+
 interface StationDashboardProps {
   stations: WeatherStation[];
   settings: UserSettings;
@@ -54,6 +59,26 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
   const [filterMode, setFilterMode] = useState<
     'all' | 'indoor' | 'outdoor' | 'diagnostics'
   >('all');
+  const [versionInfo, setVersionInfo] = useState<{
+    version: string;
+    build: number;
+    commit: string;
+  }>({
+    version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.1.1',
+    build: typeof __APP_BUILD__ !== 'undefined' ? __APP_BUILD__ : 1,
+    commit: typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'main',
+  });
+
+  useEffect(() => {
+    fetch('/__winatmo_version')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.version) {
+          setVersionInfo(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const isPinned = (stationId: string, moduleId: string, metric: MetricType) => {
     const id = `${stationId}::${moduleId}::${metric}`;
@@ -492,6 +517,33 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
           </section>
         );
       })}
+
+      <footer className="dashboard-version-footer">
+        <span>
+          winAtmo <strong>v{versionInfo.version}</strong> (build #
+          {versionInfo.build} • {versionInfo.commit})
+        </span>
+        <span className="footer-sep">•</span>
+        <a
+          href="https://github.com/guidooswald/winAtmo"
+          onClick={(e) => {
+            e.preventDefault();
+            window.winatmo.openExternal('https://github.com/guidooswald/winAtmo');
+          }}
+        >
+          github.com/guidooswald/winAtmo <ExternalLink size={10} />
+        </a>
+        <span className="footer-sep">•</span>
+        <a
+          href="https://guido.swiss"
+          onClick={(e) => {
+            e.preventDefault();
+            window.winatmo.openExternal('https://guido.swiss');
+          }}
+        >
+          guido.swiss <ExternalLink size={10} />
+        </a>
+      </footer>
     </div>
   );
 };
