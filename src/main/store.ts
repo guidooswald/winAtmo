@@ -59,12 +59,36 @@ export class AppStore {
       if (fs.existsSync(this.filePath)) {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
         const parsed = JSON.parse(raw);
+        const rawStations: WeatherStation[] = Array.isArray(
+          parsed.cachedStations
+        )
+          ? parsed.cachedStations
+          : [];
+        const normalizedStations = this.normalizeStations(rawStations);
+        const settings: UserSettings = {
+          ...DEFAULT_SETTINGS,
+          ...(parsed.settings || {}),
+        };
+        if (normalizedStations.length > 0 && settings.pinnedSensors?.length) {
+          const primaryHome = normalizedStations[0];
+          settings.pinnedSensors = settings.pinnedSensors.map((pin) => {
+            const mod = primaryHome.modules.find((m) => m.id === pin.moduleId);
+            if (mod) {
+              return {
+                ...pin,
+                id: `${primaryHome.id}::${mod.id}::${pin.metric}`,
+                stationId: primaryHome.id,
+                stationName: primaryHome.stationName,
+                moduleName: mod.moduleName,
+              };
+            }
+            return pin;
+          });
+        }
         return {
-          settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
+          settings,
           session: { ...DEFAULT_SESSION, ...(parsed.session || {}) },
-          cachedStations: Array.isArray(parsed.cachedStations)
-            ? parsed.cachedStations
-            : [],
+          cachedStations: normalizedStations,
           lastSyncAt: parsed.lastSyncAt,
         };
       }
@@ -134,21 +158,86 @@ export class AppStore {
     };
   }
 
+  /**
+   * Ensures any NHC Air Quality sensors are grouped into the primary Weather Station Home
+   * and use their room name instead of "Indoor".
+   */
+  private normalizeStations(stations: WeatherStation[]): WeatherStation[] {
+    if (!Array.isArray(stations) || stations.length === 0) return [];
+
+    const primaryHome = stations.find((s) => s.type !== 'NHC') || stations[0];
+    const result: WeatherStation[] = [];
+
+    for (const st of stations) {
+      if (st.type === 'NHC' && st.id !== primaryHome.id) {
+        for (const mod of st.modules) {
+          const roomName = (
+            st.stationName ||
+            st.homeName ||
+            (mod.moduleName &&
+            mod.moduleName.trim().toLowerCase() !== 'indoor'
+              ? mod.moduleName
+              : '') ||
+            'Air Quality'
+          ).trim();
+
+          const normalizedMod = {
+            ...mod,
+            stationId: primaryHome.id,
+            stationName: primaryHome.stationName,
+            homeName: primaryHome.homeName,
+            moduleName: roomName,
+          };
+
+          const existingIdx = primaryHome.modules.findIndex(
+            (m) => m.id === normalizedMod.id
+          );
+          if (existingIdx >= 0) {
+            primaryHome.modules[existingIdx] = normalizedMod;
+          } else {
+            primaryHome.modules.push(normalizedMod);
+          }
+        }
+      } else {
+        // Also normalize any NHC modules already inside primaryHome
+        st.modules = st.modules.map((mod) => {
+          if (
+            mod.type === 'NHC' &&
+            mod.moduleName.trim().toLowerCase() === 'indoor'
+          ) {
+            return {
+              ...mod,
+              moduleName: (st.stationName || st.homeName || 'Air Quality').trim(),
+            };
+          }
+          return {
+            ...mod,
+            moduleName: mod.moduleName.trim(),
+          };
+        });
+        result.push(st);
+      }
+    }
+
+    return result;
+  }
+
   public getCachedStations(): WeatherStation[] {
     return this.state.cachedStations || [];
   }
 
   public setCachedStations(stations: WeatherStation[]): void {
-    this.state.cachedStations = stations;
+    const normalized = this.normalizeStations(stations);
+    this.state.cachedStations = normalized;
     this.state.lastSyncAt = Math.floor(Date.now() / 1000);
 
     // If user has no pinned sensors yet, auto-pin the most useful default sensors
     if (
       this.state.settings.pinnedSensors.length === 0 &&
-      stations.length > 0
+      normalized.length > 0
     ) {
       const defaults: PinnedSensorItem[] = [];
-      for (const st of stations) {
+      for (const st of normalized) {
         // Outdoor temperature first if available
         const outdoor = st.modules.find((m) => m.type === 'NAModule1');
         if (outdoor && outdoor.availableMetrics.includes('temperature')) {

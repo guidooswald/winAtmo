@@ -302,12 +302,7 @@ export class NetatmoClient {
     // Also try fetching Healthy Home Coach (Aircare) devices if any exist on the account
     try {
       const coachData = await this.apiGet('gethomecoachsdata');
-      const coachStations = this.parseHomeCoachPayload(coachData);
-      for (const cs of coachStations) {
-        if (!stations.some((s) => s.id === cs.id)) {
-          stations.push(cs);
-        }
-      }
+      this.mergeHomeCoachPayload(stations, coachData);
     } catch {
       // Optional scope/device type; ignore if account has no Home Coach
     }
@@ -432,27 +427,60 @@ export class NetatmoClient {
     return result;
   }
 
-  private parseHomeCoachPayload(payload: any): WeatherStation[] {
+  /**
+   * Parses `/api/gethomecoachsdata` (NHC Air Quality sensors) and groups them into the
+   * existing Home from the Weather Station, using the room name (`station_name` / `name`)
+   * as the device/module name instead of "Indoor".
+   */
+  private mergeHomeCoachPayload(stations: WeatherStation[], payload: any): void {
     const devices = payload?.body?.devices;
-    if (!Array.isArray(devices)) return [];
+    if (!Array.isArray(devices) || devices.length === 0) return;
 
-    const result: WeatherStation[] = [];
+    // Group into the existing primary Weather Station Home if one exists
+    let targetHome = stations.find((s) => s.type !== 'NHC') || stations[0];
+
     for (const dev of devices) {
-      const stationId: string = dev._id;
-      const stationName: string =
-        dev.station_name || dev.name || 'Healthy Home Coach';
+      const deviceId: string = dev._id;
+      const rawRoomName =
+        dev.station_name ||
+        dev.name ||
+        (dev.module_name &&
+        String(dev.module_name).trim().toLowerCase() !== 'indoor'
+          ? dev.module_name
+          : '') ||
+        'Air Quality';
+      const roomName: string = String(rawRoomName).trim();
+
       const metrics = this.resolveAvailableMetrics(
         dev.data_type || ['Temperature', 'Humidity', 'CO2', 'Noise', 'Pressure'],
         'NHC',
         dev.dashboard_data
       );
 
-      const mainModule: StationModule = {
-        id: stationId,
-        stationId,
-        stationName,
-        homeName: stationName,
-        moduleName: dev.module_name || stationName,
+      if (!targetHome) {
+        // Fallback only if the account has no Weather Station at all
+        const homeName = dev.home_name ? String(dev.home_name).trim() : roomName;
+        targetHome = {
+          id: deviceId,
+          stationName: homeName,
+          homeId: dev.home_id,
+          homeName,
+          type: 'NHC',
+          dateSetup: dev.date_setup || Math.floor(Date.now() / 1000) - 86400 * 365,
+          lastStatusStore: dev.last_status_store || Math.floor(Date.now() / 1000),
+          reachable: dev.reachable !== false,
+          readOnly: Boolean(dev.read_only),
+          modules: [],
+        };
+        stations.push(targetHome);
+      }
+
+      const nhcModule: StationModule = {
+        id: deviceId,
+        stationId: targetHome.id,
+        stationName: targetHome.stationName,
+        homeName: targetHome.homeName,
+        moduleName: roomName,
         type: 'NHC',
         dataTypes: dev.data_type || [
           'Temperature',
@@ -471,19 +499,13 @@ export class NetatmoClient {
         dateSetup: dev.date_setup,
       };
 
-      result.push({
-        id: stationId,
-        stationName,
-        homeName: stationName,
-        type: 'NHC',
-        dateSetup: dev.date_setup || Math.floor(Date.now() / 1000) - 86400 * 365,
-        lastStatusStore: dev.last_status_store || Math.floor(Date.now() / 1000),
-        reachable: dev.reachable !== false,
-        readOnly: Boolean(dev.read_only),
-        modules: [mainModule],
-      });
+      const existingIdx = targetHome.modules.findIndex((m) => m.id === deviceId);
+      if (existingIdx >= 0) {
+        targetHome.modules[existingIdx] = nhcModule;
+      } else {
+        targetHome.modules.push(nhcModule);
+      }
     }
-    return result;
   }
 
   private normalizeDashboardData(
@@ -775,12 +797,18 @@ export class NetatmoClient {
         const { station, module } = allModules[i];
 
         // Compute target begin timestamp for this station/module:
-        // If historyMaxMode is enabled, go back to station.dateSetup (or module.lastSetup),
+        // If historyMaxMode is enabled, go back to module.dateSetup / station.dateSetup,
         // which is the maximum history Netatmo stores for the device!
         const days = options?.customDays ?? settings.historyDays ?? 14;
+        const setupTs =
+          module.dateSetup && module.dateSetup > 1262304000
+            ? module.dateSetup
+            : module.lastSetup && module.lastSetup > 1262304000
+              ? module.lastSetup
+              : station.dateSetup;
         const earliestAllowed =
-          station.dateSetup && station.dateSetup > 1262304000
-            ? station.dateSetup
+          setupTs && setupTs > 1262304000
+            ? setupTs
             : now - 86400 * 365 * 5; // 5 years fallback
 
         const requestedBegin = settings.historyMaxMode
@@ -902,9 +930,13 @@ export class NetatmoClient {
       pageCount++;
       const chunkEnd = Math.min(targetEnd, cursor + maxWindowSeconds);
 
+      // Standalone devices (NAMain base station or NHC Healthy Home Coach grouped under the Home)
+      // use their own MAC as device_id and omit module_id in /api/getmeasure.
+      const isStandaloneDevice =
+        module.type === 'NHC' || module.id === stationId;
       const params: Record<string, string | number | boolean | undefined> = {
-        device_id: stationId,
-        module_id: module.id !== stationId ? module.id : undefined,
+        device_id: module.type === 'NHC' ? module.id : stationId,
+        module_id: isStandaloneDevice ? undefined : module.id,
         scale,
         type: typeParam,
         date_begin: cursor,
