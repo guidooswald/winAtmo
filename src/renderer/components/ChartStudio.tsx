@@ -78,6 +78,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
   const [seriesData, setSeriesData] = useState<MeasureSeries[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
 
   // Interactive zoom window [0..1, 0..1]
   const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
@@ -88,6 +89,254 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
   const [hoverRatio, setHoverRatio] = useState<number | null>(null);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // Dynamically build Quick Presets based on available sensors across all stations
+  const availablePresets = useMemo(() => {
+    const allItems: Array<{
+      st: WeatherStation;
+      mod: WeatherStation['modules'][number];
+    }> = [];
+    for (const st of stations) {
+      for (const mod of st.modules) {
+        allItems.push({ st, mod });
+      }
+    }
+
+    const hasWind = allItems.some((x) =>
+      x.mod.availableMetrics.includes('windstrength')
+    );
+    const hasRain = allItems.some((x) =>
+      x.mod.availableMetrics.includes('rain')
+    );
+    const hasOutdoor = allItems.some((x) => x.mod.type === 'NAModule1');
+
+    const indoorTempMods = allItems.filter(
+      (x) =>
+        x.mod.type !== 'NAModule1' &&
+        x.mod.availableMetrics.includes('temperature')
+    );
+    const co2Mods = allItems.filter((x) =>
+      x.mod.availableMetrics.includes('co2')
+    );
+    const humidityMods = allItems.filter((x) =>
+      x.mod.availableMetrics.includes('humidity')
+    );
+    const noiseMods = allItems.filter((x) =>
+      x.mod.availableMetrics.includes('noise')
+    );
+    const pressureMods = allItems.filter((x) =>
+      x.mod.availableMetrics.includes('pressure')
+    );
+
+    const presets: Array<{
+      id: string;
+      label: string;
+      title: string;
+      layout: ChartLayoutMode;
+      style: ChartCurveStyle;
+      curves: Array<{ st: WeatherStation; modId: string; metric: MetricType }>;
+    }> = [];
+
+    // 1. All Temperatures (Indoor + Outdoor)
+    const allTempCurves = allItems
+      .filter((x) => x.mod.availableMetrics.includes('temperature'))
+      .map((x) => ({
+        st: x.st,
+        modId: x.mod.id,
+        metric: 'temperature' as MetricType,
+      }));
+    if (allTempCurves.length > 0) {
+      presets.push({
+        id: 'all-temps',
+        label: 'All Temperatures',
+        title: 'Compare temperature across all indoor and outdoor sensors',
+        layout: 'overlay',
+        style: 'area',
+        curves: allTempCurves,
+      });
+    }
+
+    // 2. Indoor Temperatures (only when both outdoor and multiple indoor sensors exist, so outdoor cold doesn't compress room comparisons)
+    if (hasOutdoor && indoorTempMods.length >= 2) {
+      presets.push({
+        id: 'indoor-temps',
+        label: 'Indoor Temps',
+        title: 'Compare room temperatures without outdoor extremes compressing the scale',
+        layout: 'overlay',
+        style: 'line',
+        curves: indoorTempMods.map((x) => ({
+          st: x.st,
+          modId: x.mod.id,
+          metric: 'temperature' as MetricType,
+        })),
+      });
+    }
+
+    // 3. CO2 Across All Rooms
+    if (co2Mods.length >= 2) {
+      presets.push({
+        id: 'co2-rooms',
+        label: 'CO₂ All Rooms',
+        title: 'Compare indoor CO₂ air quality levels across all rooms',
+        layout: 'overlay',
+        style: 'line',
+        curves: co2Mods.map((x) => ({
+          st: x.st,
+          modId: x.mod.id,
+          metric: 'co2' as MetricType,
+        })),
+      });
+    }
+
+    // 4. Humidity Across All Sensors
+    if (humidityMods.length >= 2) {
+      presets.push({
+        id: 'humidity-all',
+        label: 'Humidity All Rooms',
+        title: 'Compare relative humidity across all sensors',
+        layout: 'overlay',
+        style: 'line',
+        curves: humidityMods.map((x) => ({
+          st: x.st,
+          modId: x.mod.id,
+          metric: 'humidity' as MetricType,
+        })),
+      });
+    }
+
+    // 5. Weather / Rain (only if Rain sensor is present; otherwise Outdoor Temp & Barometric Pressure if available)
+    if (hasRain) {
+      const outdoor = allItems.find((x) => x.mod.type === 'NAModule1');
+      const mainMod = pressureMods[0];
+      const rainMod = allItems.find((x) =>
+        x.mod.availableMetrics.includes('rain')
+      );
+      const c: Array<{
+        st: WeatherStation;
+        modId: string;
+        metric: MetricType;
+      }> = [];
+      if (outdoor)
+        c.push({
+          st: outdoor.st,
+          modId: outdoor.mod.id,
+          metric: 'temperature',
+        });
+      if (mainMod)
+        c.push({
+          st: mainMod.st,
+          modId: mainMod.mod.id,
+          metric: 'pressure',
+        });
+      if (rainMod)
+        c.push({ st: rainMod.st, modId: rainMod.mod.id, metric: 'rain' });
+      if (c.length > 0) {
+        presets.push({
+          id: 'weather-rain',
+          label: 'Temp + Pressure + Rain',
+          title: 'Outdoor temperature, barometric pressure, and rainfall',
+          layout: 'stacked',
+          style: 'area',
+          curves: c,
+        });
+      }
+    } else if (hasOutdoor && pressureMods.length > 0) {
+      const outdoor = allItems.find((x) => x.mod.type === 'NAModule1')!;
+      const baro = pressureMods[0];
+      presets.push({
+        id: 'outdoor-baro',
+        label: 'Outdoor & Pressure',
+        title: 'Outdoor temperature vs. barometric pressure (dual Y-axis)',
+        layout: 'overlay',
+        style: 'area',
+        curves: [
+          { st: outdoor.st, modId: outdoor.mod.id, metric: 'temperature' },
+          { st: baro.st, modId: baro.mod.id, metric: 'pressure' },
+        ],
+      });
+    }
+
+    // 6. Wind & Gusts (only if Wind gauge is present; otherwise Acoustic Noise across rooms if multiple noise sensors exist)
+    if (hasWind) {
+      const windMod = allItems.find((x) =>
+        x.mod.availableMetrics.includes('windstrength')
+      )!;
+      const c: Array<{
+        st: WeatherStation;
+        modId: string;
+        metric: MetricType;
+      }> = [
+        { st: windMod.st, modId: windMod.mod.id, metric: 'windstrength' },
+      ];
+      if (windMod.mod.availableMetrics.includes('guststrength')) {
+        c.push({
+          st: windMod.st,
+          modId: windMod.mod.id,
+          metric: 'guststrength',
+        });
+      }
+      presets.push({
+        id: 'wind',
+        label: 'Wind & Gusts',
+        title: 'Wind speed and gust strength',
+        layout: 'overlay',
+        style: 'line',
+        curves: c,
+      });
+    } else if (noiseMods.length >= 2) {
+      presets.push({
+        id: 'noise-rooms',
+        label: 'Noise All Rooms',
+        title: 'Compare acoustic noise levels (dB) across all rooms',
+        layout: 'overlay',
+        style: 'area',
+        curves: noiseMods.map((x) => ({
+          st: x.st,
+          modId: x.mod.id,
+          metric: 'noise' as MetricType,
+        })),
+      });
+    }
+
+    // 7. Single-room Indoor Air Quality overview (CO2 + Temp + Humidity for primary indoor station)
+    const mainIndoor =
+      allItems.find(
+        (x) => x.mod.type === 'NAMain' || x.mod.type === 'NHC'
+      ) || allItems[0];
+    if (mainIndoor && mainIndoor.mod.availableMetrics.includes('co2')) {
+      const c: Array<{
+        st: WeatherStation;
+        modId: string;
+        metric: MetricType;
+      }> = [
+        { st: mainIndoor.st, modId: mainIndoor.mod.id, metric: 'co2' },
+      ];
+      if (mainIndoor.mod.availableMetrics.includes('temperature')) {
+        c.push({
+          st: mainIndoor.st,
+          modId: mainIndoor.mod.id,
+          metric: 'temperature',
+        });
+      }
+      if (mainIndoor.mod.availableMetrics.includes('humidity')) {
+        c.push({
+          st: mainIndoor.st,
+          modId: mainIndoor.mod.id,
+          metric: 'humidity',
+        });
+      }
+      presets.push({
+        id: 'iaq-main',
+        label: `${mainIndoor.mod.moduleName} IAQ`,
+        title: `CO₂, Temperature & Humidity in ${mainIndoor.mod.moduleName}`,
+        layout: 'stacked',
+        style: 'area',
+        curves: c,
+      });
+    }
+
+    return presets;
+  }, [stations]);
 
   // Sync default range preset with settings.historyDays on initial mount
   useEffect(() => {
@@ -116,6 +365,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
         if (mod) {
           const metric = (initialFocus.metric as MetricType) || mod.availableMetrics[0] || 'temperature';
           const id = `${st.id}::${mod.id}::${metric}`;
+          setActivePreset(null);
           setSelectedCurves([
             {
               id,
@@ -133,74 +383,36 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
       }
     }
 
-    if (selectedCurves.length === 0) {
-      applyPresetComparison('temps');
+    if (selectedCurves.length === 0 && availablePresets.length > 0) {
+      applyPresetComparison(availablePresets[0].id);
     }
-  }, [stations, initialFocus]);
+  }, [stations, initialFocus, availablePresets]);
 
-  const applyPresetComparison = (
-    preset: 'temps' | 'iaq' | 'weather' | 'wind'
-  ) => {
-    if (stations.length === 0) return;
-    const st = stations[0];
+  const applyPresetComparison = (presetId: string) => {
+    const preset = availablePresets.find((p) => p.id === presetId);
+    if (!preset) return;
+
     const next: SelectedCurve[] = [];
-
-    const addCurve = (modId: string, metric: MetricType) => {
-      const mod = st.modules.find((m) => m.id === modId);
-      if (!mod || !mod.availableMetrics.includes(metric)) return;
-      const id = `${st.id}::${mod.id}::${metric}`;
-      if (next.some((c) => c.id === id)) return;
+    for (const item of preset.curves) {
+      const mod = item.st.modules.find((m) => m.id === item.modId);
+      if (!mod || !mod.availableMetrics.includes(item.metric)) continue;
+      const id = `${item.st.id}::${mod.id}::${item.metric}`;
+      if (next.some((c) => c.id === id)) continue;
       next.push({
         id,
-        stationId: st.id,
-        stationName: st.stationName,
+        stationId: item.st.id,
+        stationName: item.st.stationName,
         moduleId: mod.id,
         moduleName: mod.moduleName,
-        metric,
+        metric: item.metric,
         color: SERIES_PALETTE[next.length % SERIES_PALETTE.length],
       });
-    };
-
-    if (preset === 'temps') {
-      for (const mod of st.modules) {
-        if (mod.availableMetrics.includes('temperature')) {
-          addCurve(mod.id, 'temperature');
-        }
-      }
-      setLayoutMode('overlay');
-      setCurveStyle('area');
-    } else if (preset === 'iaq') {
-      const mainMod =
-        st.modules.find((m) => m.type === 'NAMain' || m.type === 'NHC') ||
-        st.modules[0];
-      if (mainMod) {
-        addCurve(mainMod.id, 'co2');
-        addCurve(mainMod.id, 'temperature');
-        addCurve(mainMod.id, 'humidity');
-      }
-      setLayoutMode('overlay');
-      setCurveStyle('area');
-    } else if (preset === 'weather') {
-      const outdoor = st.modules.find((m) => m.type === 'NAModule1');
-      const mainMod = st.modules.find((m) => m.type === 'NAMain');
-      const rainMod = st.modules.find((m) => m.type === 'NAModule3');
-      if (outdoor) addCurve(outdoor.id, 'temperature');
-      if (mainMod) addCurve(mainMod.id, 'pressure');
-      if (rainMod) addCurve(rainMod.id, 'rain');
-      setLayoutMode('stacked');
-    } else if (preset === 'wind') {
-      const windMod = st.modules.find((m) => m.type === 'NAModule2');
-      if (windMod) {
-        addCurve(windMod.id, 'windstrength');
-        addCurve(windMod.id, 'guststrength');
-      } else if (st.modules[0]) {
-        addCurve(st.modules[0].id, st.modules[0].availableMetrics[0]);
-      }
-      setLayoutMode('overlay');
-      setCurveStyle('line');
     }
 
+    setLayoutMode(preset.layout);
+    setCurveStyle(preset.style);
     if (next.length > 0) {
+      setActivePreset(preset.id);
       setSelectedCurves(next);
       setZoomRange(null);
     }
@@ -292,12 +504,13 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     modName: string,
     metric: MetricType
   ) => {
+    setActivePreset(null);
     const id = `${st.id}::${modId}::${metric}`;
     const exists = selectedCurves.find((c) => c.id === id);
     if (exists) {
       setSelectedCurves(selectedCurves.filter((c) => c.id !== id));
     } else {
-      if (selectedCurves.length >= 6) return; // Cap at 6 curves for readability
+      if (selectedCurves.length >= 10) return; // Cap at 10 curves for readability
       const usedColors = new Set(selectedCurves.map((c) => c.color));
       const nextColor =
         SERIES_PALETTE.find((col) => !usedColors.has(col)) ||
@@ -545,30 +758,16 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
               <Sparkles size={13} /> Quick Presets
             </span>
             <div className="pill-group">
-              <button
-                className="pill-btn"
-                onClick={() => applyPresetComparison('temps')}
-              >
-                All Temperatures
-              </button>
-              <button
-                className="pill-btn"
-                onClick={() => applyPresetComparison('iaq')}
-              >
-                Indoor Air Quality
-              </button>
-              <button
-                className="pill-btn"
-                onClick={() => applyPresetComparison('weather')}
-              >
-                Temp + Pressure + Rain
-              </button>
-              <button
-                className="pill-btn"
-                onClick={() => applyPresetComparison('wind')}
-              >
-                Wind & Gusts
-              </button>
+              {availablePresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  className={`pill-btn ${activePreset === preset.id ? 'active' : ''}`}
+                  onClick={() => applyPresetComparison(preset.id)}
+                  title={preset.title}
+                >
+                  {preset.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -752,7 +951,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
         {/* Left Sidebar: Sensor & Metric Curve Selector */}
         <div className="sensor-selector-panel">
           <div className="selector-header">
-            <h4>Sensors & Curves ({selectedCurves.length}/6)</h4>
+            <h4>Sensors & Curves ({selectedCurves.length}/10)</h4>
             <span>Click metrics to plot</span>
           </div>
 

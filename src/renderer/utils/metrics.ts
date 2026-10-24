@@ -105,6 +105,8 @@ export const SERIES_PALETTE = [
   '#2dd4bf', // Teal
   '#60a5fa', // Blue
   '#fb923c', // Orange
+  '#eab308', // Yellow
+  '#ec4899', // Pink
 ];
 
 export function getMetricUnit(

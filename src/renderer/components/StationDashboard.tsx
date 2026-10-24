@@ -115,6 +115,10 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
     return null;
   };
 
+  const hasWindOrRain = stations.some((st) =>
+    st.modules.some((m) => m.type === 'NAModule2' || m.type === 'NAModule3')
+  );
+
   return (
     <div className="dashboard-container">
       {/* Filter & Pin Info Bar */}
@@ -136,7 +140,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
             className={`pill-btn ${filterMode === 'outdoor' ? 'active' : ''}`}
             onClick={() => setFilterMode('outdoor')}
           >
-            Outdoor, Wind & Rain
+            {hasWindOrRain ? 'Outdoor, Wind & Rain' : 'Outdoor Sensors'}
           </button>
           <button
             className={`pill-btn ${filterMode === 'diagnostics' ? 'active' : ''}`}
