@@ -42,6 +42,7 @@ import {
 declare const __APP_VERSION__: string | undefined;
 declare const __APP_BUILD__: number | undefined;
 declare const __APP_COMMIT__: string | undefined;
+declare const __APP_DATE__: string | undefined;
 
 interface StationDashboardProps {
   stations: WeatherStation[];
@@ -63,10 +64,12 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
     version: string;
     build: number;
     commit: string;
+    date: string;
   }>({
     version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.1.1',
     build: typeof __APP_BUILD__ !== 'undefined' ? __APP_BUILD__ : 1,
     commit: typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'main',
+    date: typeof __APP_DATE__ !== 'undefined' ? __APP_DATE__ : '2026-10-24',
   });
 
   useEffect(() => {
@@ -521,7 +524,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
       <footer className="dashboard-version-footer">
         <span>
           winAtmo <strong>v{versionInfo.version}</strong> (build #
-          {versionInfo.build} • {versionInfo.commit})
+          {versionInfo.build} • {versionInfo.date} • {versionInfo.commit})
         </span>
         <span className="footer-sep">•</span>
         <a

@@ -150,20 +150,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         if (outdoor?.dashboard?.Temperature !== undefined) {
           const t = outdoor.dashboard.Temperature;
           const val = isF ? (t * 9) / 5 + 32 : t;
-          const rounded = Math.round(val);
           const color =
             t < 0 ? '#38bdf8' : t < 15 ? '#0ea5e9' : t >= 28 ? '#ef4444' : t >= 23 ? '#f59e0b' : '#10b981';
           return {
-            text: rounded >= 100 || rounded <= -10 ? `${rounded}` : `${rounded}°`,
+            text: val >= 100 || val <= -100 ? `${Math.round(val)}` : val.toFixed(1),
             color,
             label: `${outdoor.moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`,
           };
         }
       }
       return {
-        text: isF ? '64°' : '18°',
+        text: isF ? '64.4' : '18.2',
         color: '#10b981',
-        label: `Outside Temp: ${isF ? '64.4°F' : '18.0°C'}`,
+        label: `Outside Temp: ${isF ? '64.4°F' : '18.2°C'}`,
       };
     }
 
@@ -177,20 +176,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         if (main?.dashboard?.Temperature !== undefined) {
           const t = main.dashboard.Temperature;
           const val = isF ? (t * 9) / 5 + 32 : t;
-          const rounded = Math.round(val);
           const color =
             t < 0 ? '#38bdf8' : t < 15 ? '#0ea5e9' : t >= 28 ? '#ef4444' : t >= 23 ? '#f59e0b' : '#10b981';
           return {
-            text: rounded >= 100 || rounded <= -10 ? `${rounded}` : `${rounded}°`,
+            text: val >= 100 || val <= -100 ? `${Math.round(val)}` : val.toFixed(1),
             color,
             label: `${main.moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`,
           };
         }
       }
       return {
-        text: isF ? '70°' : '21°',
+        text: isF ? '70.5' : '21.4',
         color: '#10b981',
-        label: `Indoor Temp: ${isF ? '70°F' : '21°C'}`,
+        label: `Indoor Temp: ${isF ? '70.5°F' : '21.4°C'}`,
       };
     }
 
@@ -272,7 +270,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 ? '#f59e0b'
                 : '#10b981';
             return {
-              text: rounded >= 100 || rounded <= -10 ? `${rounded}` : `${rounded}°`,
+              text: val >= 100 || val <= -100 ? `${Math.round(val)}` : val.toFixed(1),
               color,
               label: `${mod.moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`,
             };
@@ -760,7 +758,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   style={{
                     width: 32,
                     height: 32,
-                    borderRadius: 6,
+                    borderRadius: 5,
                     background: '#090d16',
                     border: `1.5px solid ${previewInfo.color}`,
                     display: 'flex',
@@ -768,9 +766,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     justifyContent: 'center',
                     color: '#ffffff',
                     fontWeight: 700,
-                    fontSize: previewInfo.text.length >= 4 ? 11 : previewInfo.text.length === 3 ? 13 : 15,
+                    fontSize:
+                      previewInfo.text.length <= 3
+                        ? 16.5
+                        : previewInfo.text.length === 4
+                        ? 14.5
+                        : 11.5,
                     boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
-                    fontFamily: '"Segoe UI", "Segoe UI Variable Display", Arial, sans-serif',
+                    fontFamily:
+                      '"Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
                   }}
                 >
                   {previewInfo.text}

@@ -284,14 +284,12 @@ function formatTemperatureReading(
 ): TaskbarReadingResult {
   const isF = settings.temperatureUnit === 'F';
   const val = isF ? (rawCelsius * 9) / 5 + 32 : rawCelsius;
-  const rounded = Math.round(val);
 
-  // Formatting text for 32x32 icon:
-  // e.g. "18°", "-4°", "102"
-  let text = `${rounded}°`;
-  if (rounded >= 100 || rounded <= -10) {
-    // 3+ digits: omit degree mark to keep numbers crisp and large
-    text = `${rounded}`;
+  // Temperature formatted with 1 decimal place (e.g. "14.2", "8.0", "-3.5")
+  let text = val.toFixed(1);
+  if (val >= 100 || val <= -100) {
+    // If extreme 3+ digits, round to integer to maximize font size and avoid clipping
+    text = `${Math.round(val)}`;
   }
 
   // Semantic color based on Celsius temperature:
@@ -359,10 +357,10 @@ export async function generateTaskbarIcon(
           const ctx = canvas.getContext('2d');
           ctx.clearRect(0, 0, 32, 32);
 
-          // Deep dark slate background badge
+          // Edge-to-edge rounded badge for maximum drawing area
           ctx.fillStyle = '#090d16';
           ctx.beginPath();
-          ctx.roundRect(1, 1, 30, 30, 6.5);
+          ctx.roundRect(0.5, 0.5, 31, 31, 5);
           ctx.fill();
 
           // Soft inner gradient
@@ -371,45 +369,33 @@ export async function generateTaskbarIcon(
           grad.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
           ctx.fillStyle = grad;
           ctx.beginPath();
-          ctx.roundRect(1.5, 1.5, 29, 29, 6);
+          ctx.roundRect(0.75, 0.75, 30.5, 30.5, 4.5);
           ctx.fill();
 
           // Accent border with sensor semantic status color
           ctx.strokeStyle = '${reading.color}';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.roundRect(1.5, 1.5, 29, 29, 6);
+          ctx.roundRect(0.75, 0.75, 30.5, 30.5, 4.5);
           ctx.stroke();
 
-          // Text layout
+          // Dynamic font maximizer: calculate largest font size that fits into 29.5px
           const str = '${reading.text}';
-          const len = str.length;
-          let fontSize = 14;
-          let yOffset = 16.5;
-
-          if (len <= 2) {
-            fontSize = 15.5;
-            yOffset = 16.5;
-          } else if (len === 3) {
-            fontSize = 13.5;
-            yOffset = 16.5;
-          } else if (len === 4) {
-            fontSize = 11;
-            yOffset = 16.5;
-          } else {
-            fontSize = 9.5;
-            yOffset = 16.5;
+          let fontSize = 24;
+          ctx.font = 'bold ' + fontSize + 'px "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
+          while ((ctx.measureText(str).width > 29.5 || fontSize > 24) && fontSize > 8) {
+            fontSize -= 0.5;
+            ctx.font = 'bold ' + fontSize + 'px "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
           }
 
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-          ctx.shadowBlur = 2.5;
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+          ctx.shadowBlur = 2;
           ctx.shadowOffsetY = 1;
 
           ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold ' + fontSize + 'px "Segoe UI", "Segoe UI Variable Display", Arial, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(str, 16, yOffset);
+          ctx.fillText(str, 16, 16);
 
           return canvas.toDataURL('image/png');
         })()

@@ -15,17 +15,30 @@ function getGitVersionInfo() {
     })
       .toString()
       .trim();
+    let dateStr = '';
+    try {
+      dateStr = execSync('git log -1 --format=%cd --date=short HEAD', {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .toString()
+        .trim();
+    } catch {}
+    if (!dateStr) {
+      dateStr = new Date().toISOString().split('T')[0];
+    }
     const buildNum = Number.parseInt(count, 10) || 1;
     return {
       version: `0.1.${buildNum}`,
       build: buildNum,
       commit: hash,
+      date: dateStr,
     };
   } catch {
     return {
       version: '0.1.1',
       build: 1,
       commit: 'dev',
+      date: new Date().toISOString().split('T')[0],
     };
   }
 }
@@ -51,6 +64,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(gitInfo.version),
     __APP_BUILD__: JSON.stringify(gitInfo.build),
     __APP_COMMIT__: JSON.stringify(gitInfo.commit),
+    __APP_DATE__: JSON.stringify(gitInfo.date),
   },
   base: './',
   root: '.',
