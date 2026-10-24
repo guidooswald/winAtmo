@@ -24,7 +24,11 @@ import {
   WeatherStation,
 } from '../renderer/types';
 
+app.setName('winAtmo');
 app.name = 'winAtmo';
+if (process.platform === 'win32') {
+  app.setAppUserModelId('winAtmo');
+}
 
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
@@ -213,7 +217,8 @@ function createOrUpdateWidgetWindow(): void {
     alwaysOnTop: settings.widgetAlwaysOnTop,
     hasShadow: true,
     backgroundColor: '#00000000',
-    title: 'winAtmo Taskbar Widget',
+    title: 'winAtmo',
+    icon: createTrayNativeImage(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -313,7 +318,7 @@ function updateTrayTooltipAndMenu(): void {
 
   const stations = store.getCachedStations();
   const settings = store.getSettings();
-  const lines: string[] = ['winAtmo — Netatmo Weather Monitor'];
+  const lines: string[] = ['winAtmo'];
 
   if (settings.pinnedSensors.length > 0 && stations.length > 0) {
     for (const pin of settings.pinnedSensors) {
@@ -784,6 +789,8 @@ app.whenReady().then(async () => {
 
   // Create System Tray
   tray = new Tray(createTrayNativeImage());
+  tray.setTitle('winAtmo');
+  tray.setToolTip('winAtmo');
   tray.on('click', () => {
     showMainWindow();
   });

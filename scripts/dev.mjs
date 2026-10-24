@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
@@ -47,7 +48,11 @@ async function startDev() {
     'node_modules',
     'electron',
     'dist',
-    process.platform === 'win32' ? 'electron.exe' : 'electron'
+    process.platform === 'win32'
+      ? fs.existsSync(path.join(rootDir, 'node_modules', 'electron', 'dist', 'winAtmo.exe'))
+        ? 'winAtmo.exe'
+        : 'electron.exe'
+      : 'electron'
   );
 
   const electronProc = spawn(electronBin, [path.join(rootDir, 'dist/main/main.js')], {
