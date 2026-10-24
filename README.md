@@ -58,6 +58,7 @@ winAtmo employs a secure, high-performance multi-process architecture:
   - Moving Average smoothing, Avg dashed lines, Min/Max pins, drag-to-zoom on the canvas, interactive crosshair inspector, summary statistics cards (`Latest`, `Min`, `Average`, `Max`, `Delta`, `Points`), and one-click **CSV Export**.
 
 ### 4. Floating Windows Taskbar Widget & 12 Themes
+- **Live Taskbar & System Tray Sensor Reading**: Shows a live single sensor reading (e.g., outside temperature `14°` with semantic status colors) directly in your Windows taskbar tray instead of the static app icon. Fully customizable in settings to outside temp (default), indoor temp, CO₂, humidity, pressure, or any discovered station sensor.
 - **Floating Single-Line Taskbar Bar**: Always-on-top, frameless rounded widget that auto-sizes to fit your pinned sensors on a single line, is freely resizable, and includes a **25%–100% Opacity slider**.
 - **Smart Upward / Downward 24h Flyout**: Expands upwards when docked near the bottom taskbar and downwards when placed near the top of the screen, restoring its exact position on collapse.
 - **12 Popular Dark & Light Color Themes**: Includes *Midnight Slate*, *Catppuccin Mocha*, *Tokyo Night*, *Dracula*, *Nord Polar Night*, *OLED Pitch Black*, *Alpine Daylight*, *Catppuccin Latte*, *Solarized Light*, *Nord Snow Storm*, *Rosé Pine Dawn*, and *GitHub Light* with native Windows dark/light title bar sync.

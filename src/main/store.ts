@@ -58,6 +58,8 @@ const DEFAULT_SETTINGS: UserSettings = {
   widgetOpacity: 0.94,
   widgetCompact: false,
   pinnedSensors: [],
+  taskbarDisplayMode: 'sensor',
+  taskbarSensorTarget: 'outdoor_temp',
   minimizeToTray: true,
 };
 

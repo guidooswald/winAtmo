@@ -17,6 +17,11 @@ import { TimeSeriesDatabase } from './database';
 import { NetatmoClient } from './netatmoClient';
 import { WebAuthManager } from './webAuth';
 import {
+  initTaskbarIconRenderer,
+  resolveTaskbarReading,
+  generateTaskbarIcon,
+} from './taskbarIcon';
+import {
   MeasureQueryRequest,
   MeasureSeries,
   NetatmoScale,
@@ -432,7 +437,30 @@ function updateTrayTooltipAndMenu(): void {
 
   const stations = store.getCachedStations();
   const settings = store.getSettings();
-  const lines: string[] = ['winAtmo'];
+  const defaultIcon = createTrayNativeImage();
+  const reading = resolveTaskbarReading(stations, settings);
+
+  // Update System Tray icon and Window Taskbar Overlay
+  generateTaskbarIcon(reading, defaultIcon).then((iconImg) => {
+    if (tray && !tray.isDestroyed()) {
+      tray.setImage(iconImg);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (reading) {
+        mainWindow.setOverlayIcon(iconImg, reading.fullLabel);
+      } else {
+        mainWindow.setOverlayIcon(null, '');
+      }
+    }
+  });
+
+  const lines: string[] = [];
+  if (reading) {
+    lines.push(`${reading.fullLabel} • winAtmo`);
+    lines.push('─────────────────────');
+  } else {
+    lines.push('winAtmo');
+  }
 
   if (settings.pinnedSensors.length > 0 && stations.length > 0) {
     for (const pin of settings.pinnedSensors) {
@@ -460,7 +488,19 @@ function updateTrayTooltipAndMenu(): void {
 
   tray.setToolTip(lines.join('\n'));
 
-  const contextMenu = Menu.buildFromTemplate([
+  const menuItems: Electron.MenuItemConstructorOptions[] = [];
+
+  if (reading) {
+    menuItems.push(
+      {
+        label: `Current: ${reading.fullLabel}`,
+        enabled: false,
+      },
+      { type: 'separator' }
+    );
+  }
+
+  menuItems.push(
     {
       label: 'Open winAtmo Studio',
       click: () => showMainWindow(),
@@ -505,9 +545,10 @@ function updateTrayTooltipAndMenu(): void {
         isQuitting = true;
         app.quit();
       },
-    },
-  ]);
+    }
+  );
 
+  const contextMenu = Menu.buildFromTemplate(menuItems);
   tray.setContextMenu(contextMenu);
 }
 
@@ -990,6 +1031,7 @@ app.whenReady().then(async () => {
   });
 
   registerIpcHandlers();
+  await initTaskbarIconRenderer();
 
   // Create System Tray
   tray = new Tray(createTrayNativeImage());

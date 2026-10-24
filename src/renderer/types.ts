@@ -221,6 +221,8 @@ export interface UserSettings {
   widgetCompact: boolean;
   widgetPosition?: { x: number; y: number };
   pinnedSensors: PinnedSensorItem[];
+  taskbarDisplayMode: 'sensor' | 'icon'; // Default 'sensor' (show sensor reading instead of icon in taskbar)
+  taskbarSensorTarget: string; // Default 'outdoor_temp' (outside temperature)
   oauthClientId?: string;
   oauthClientSecret?: string;
   minimizeToTray: boolean;

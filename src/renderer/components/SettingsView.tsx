@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   CheckCircle2,
   Database,
   ExternalLink,
+  Gauge,
   Globe,
   HardDrive,
   KeyRound,
@@ -82,6 +83,215 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   useEffect(() => {
     setCustomDaysInput(settings.historyDays);
   }, [settings.historyDays]);
+
+  // Build discovered station sensor options for the taskbar icon selector
+  const stationSensorOptions = useMemo(() => {
+    const list: Array<{ value: string; label: string }> = [];
+    for (const st of stations) {
+      for (const mod of st.modules) {
+        if (!mod.dashboard) continue;
+        const d = mod.dashboard as Record<string, any>;
+        if (d.Temperature !== undefined) {
+          list.push({
+            value: `${st.id}::${mod.id}::temperature`,
+            label: `${st.stationName} — ${mod.moduleName} (Temperature)`,
+          });
+        }
+        if (d.CO2 !== undefined) {
+          list.push({
+            value: `${st.id}::${mod.id}::co2`,
+            label: `${st.stationName} — ${mod.moduleName} (CO₂)`,
+          });
+        }
+        if (d.Humidity !== undefined) {
+          list.push({
+            value: `${st.id}::${mod.id}::humidity`,
+            label: `${st.stationName} — ${mod.moduleName} (Humidity)`,
+          });
+        }
+        if (d.Pressure !== undefined) {
+          list.push({
+            value: `${st.id}::${mod.id}::pressure`,
+            label: `${st.stationName} — ${mod.moduleName} (Pressure)`,
+          });
+        }
+        if (d.Rain !== undefined) {
+          list.push({
+            value: `${st.id}::${mod.id}::rain`,
+            label: `${st.stationName} — ${mod.moduleName} (Rain)`,
+          });
+        }
+        if (d.WindStrength !== undefined) {
+          list.push({
+            value: `${st.id}::${mod.id}::windstrength`,
+            label: `${st.stationName} — ${mod.moduleName} (Wind)`,
+          });
+        }
+      }
+    }
+    return list;
+  }, [stations]);
+
+  // Live preview for taskbar icon badge
+  const previewInfo = useMemo(() => {
+    const target = settings.taskbarSensorTarget || 'outdoor_temp';
+    const isF = settings.temperatureUnit === 'F';
+
+    if (target === 'outdoor_temp') {
+      for (const st of stations) {
+        const outdoor = st.modules.find(
+          (m) =>
+            (m.type === 'NAModule1' ||
+              m.moduleName.toLowerCase().includes('outdoor') ||
+              m.moduleName.toLowerCase().includes('aussen') ||
+              m.moduleName.toLowerCase().includes('ext')) &&
+            m.dashboard?.Temperature !== undefined
+        );
+        if (outdoor?.dashboard?.Temperature !== undefined) {
+          const t = outdoor.dashboard.Temperature;
+          const val = isF ? (t * 9) / 5 + 32 : t;
+          const rounded = Math.round(val);
+          const color =
+            t < 0 ? '#38bdf8' : t < 15 ? '#0ea5e9' : t >= 28 ? '#ef4444' : t >= 23 ? '#f59e0b' : '#10b981';
+          return {
+            text: rounded >= 100 || rounded <= -10 ? `${rounded}` : `${rounded}°`,
+            color,
+            label: `${outdoor.moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`,
+          };
+        }
+      }
+      return {
+        text: isF ? '64°' : '18°',
+        color: '#10b981',
+        label: `Outside Temp: ${isF ? '64.4°F' : '18.0°C'}`,
+      };
+    }
+
+    if (target === 'indoor_temp') {
+      for (const st of stations) {
+        const main = st.modules.find(
+          (m) =>
+            (m.type === 'NAMain' || m.type === 'NAModule4') &&
+            m.dashboard?.Temperature !== undefined
+        );
+        if (main?.dashboard?.Temperature !== undefined) {
+          const t = main.dashboard.Temperature;
+          const val = isF ? (t * 9) / 5 + 32 : t;
+          const rounded = Math.round(val);
+          const color =
+            t < 0 ? '#38bdf8' : t < 15 ? '#0ea5e9' : t >= 28 ? '#ef4444' : t >= 23 ? '#f59e0b' : '#10b981';
+          return {
+            text: rounded >= 100 || rounded <= -10 ? `${rounded}` : `${rounded}°`,
+            color,
+            label: `${main.moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`,
+          };
+        }
+      }
+      return {
+        text: isF ? '70°' : '21°',
+        color: '#10b981',
+        label: `Indoor Temp: ${isF ? '70°F' : '21°C'}`,
+      };
+    }
+
+    if (target === 'indoor_co2') {
+      for (const st of stations) {
+        const mod = st.modules.find((m) => m.dashboard?.CO2 !== undefined);
+        if (mod?.dashboard?.CO2 !== undefined) {
+          const co2 = mod.dashboard.CO2;
+          const text = co2 >= 1000 ? `${(co2 / 1000).toFixed(1)}k` : `${co2}`;
+          const color =
+            co2 >= 1500 ? '#ef4444' : co2 >= 1000 ? '#f59e0b' : '#10b981';
+          return { text, color, label: `${mod.moduleName} CO₂: ${co2} ppm` };
+        }
+      }
+      return { text: '650', color: '#10b981', label: 'CO₂: 650 ppm' };
+    }
+
+    if (target === 'outdoor_humidity' || target === 'indoor_humidity') {
+      for (const st of stations) {
+        const mod = st.modules.find((m) => m.dashboard?.Humidity !== undefined);
+        if (mod?.dashboard?.Humidity !== undefined) {
+          const h = Math.round(mod.dashboard.Humidity);
+          const color = h < 30 ? '#f59e0b' : h > 70 ? '#3b82f6' : '#0ea5e9';
+          return { text: `${h}%`, color, label: `${mod.moduleName} Humidity: ${h}%` };
+        }
+      }
+      return { text: '55%', color: '#0ea5e9', label: 'Humidity: 55%' };
+    }
+
+    if (target === 'pressure') {
+      for (const st of stations) {
+        const mod = st.modules.find((m) => m.dashboard?.Pressure !== undefined);
+        if (mod?.dashboard?.Pressure !== undefined) {
+          const p = mod.dashboard.Pressure;
+          const text =
+            settings.pressureUnit === 'inHg' ? p.toFixed(1) : `${Math.round(p)}`;
+          return {
+            text,
+            color: '#8b5cf6',
+            label: `Pressure: ${p.toFixed(1)} ${settings.pressureUnit}`,
+          };
+        }
+      }
+      return {
+        text: '1015',
+        color: '#8b5cf6',
+        label: `Pressure: 1015 ${settings.pressureUnit}`,
+      };
+    }
+
+    if (target.includes('::')) {
+      const [stationId, moduleId, metric] = target.split('::');
+      const st = stations.find((s) => s.id === stationId);
+      const mod = st?.modules.find((m) => m.id === moduleId);
+      if (mod?.dashboard) {
+        const d = mod.dashboard as Record<string, any>;
+        const raw =
+          metric === 'temperature'
+            ? d.Temperature
+            : metric === 'humidity'
+            ? d.Humidity
+            : metric === 'co2'
+            ? d.CO2
+            : metric === 'pressure'
+            ? d.Pressure
+            : d.Noise;
+        if (raw !== undefined) {
+          if (metric === 'temperature') {
+            const val = isF ? (raw * 9) / 5 + 32 : raw;
+            const rounded = Math.round(val);
+            const color =
+              raw < 0
+                ? '#38bdf8'
+                : raw < 15
+                ? '#0ea5e9'
+                : raw >= 28
+                ? '#ef4444'
+                : raw >= 23
+                ? '#f59e0b'
+                : '#10b981';
+            return {
+              text: rounded >= 100 || rounded <= -10 ? `${rounded}` : `${rounded}°`,
+              color,
+              label: `${mod.moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`,
+            };
+          }
+          return {
+            text: `${Math.round(raw)}`,
+            color: '#0ea5e9',
+            label: `${mod.moduleName}: ${raw}`,
+          };
+        }
+      }
+    }
+
+    return {
+      text: isF ? '64°' : '18°',
+      color: '#10b981',
+      label: `Outside Temp: ${isF ? '64.4°F' : '18.0°C'}`,
+    };
+  }, [stations, settings]);
 
   const earliestStationSetup =
     stations.length > 0
@@ -478,6 +688,99 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             widget. You can also resize the widget directly from its edges or
             bottom-right corner.
           </small>
+        </div>
+
+        {/* Taskbar & System Tray Icon Display Mode */}
+        <div className="setting-field" style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border-subtle)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <label style={{ fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Gauge size={14} className="accent-icon" /> Taskbar & System Tray Icon Display
+              </label>
+              <small className="field-hint" style={{ marginTop: 2, display: 'block' }}>
+                Show a live sensor reading (e.g. outside temperature) directly in your Windows taskbar tray instead of the standard icon.
+              </small>
+            </div>
+            <div className="inline-input-row" style={{ marginTop: 0 }}>
+              <button
+                type="button"
+                className={`pill-btn ${settings.taskbarDisplayMode !== 'icon' ? 'active' : ''}`}
+                onClick={() => onUpdateSettings({ taskbarDisplayMode: 'sensor' })}
+              >
+                Live Sensor Reading
+              </button>
+              <button
+                type="button"
+                className={`pill-btn ${settings.taskbarDisplayMode === 'icon' ? 'active' : ''}`}
+                onClick={() => onUpdateSettings({ taskbarDisplayMode: 'icon' })}
+              >
+                Default App Icon
+              </button>
+            </div>
+          </div>
+
+          {settings.taskbarDisplayMode !== 'icon' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 260 }}>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Target Sensor Reading
+                </label>
+                <select
+                  className="select-input"
+                  style={{ width: '100%', padding: '7px 10px', borderRadius: 6 }}
+                  value={settings.taskbarSensorTarget || 'outdoor_temp'}
+                  onChange={(e) => onUpdateSettings({ taskbarSensorTarget: e.target.value })}
+                >
+                  <optgroup label="Standard Presets">
+                    <option value="outdoor_temp">Outside Temperature (Default)</option>
+                    <option value="indoor_temp">Indoor Temperature (Main Station)</option>
+                    <option value="indoor_co2">Indoor CO₂ (Main Station)</option>
+                    <option value="outdoor_humidity">Outdoor Humidity</option>
+                    <option value="indoor_humidity">Indoor Humidity</option>
+                    <option value="pressure">Barometric Pressure</option>
+                  </optgroup>
+                  {stationSensorOptions.length > 0 && (
+                    <optgroup label="Connected Station Sensors">
+                      {stationSensorOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
+              {/* Live Preview Badge */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: 'var(--bg-subtle)', borderRadius: 8, border: '1px solid var(--border-subtle)', marginTop: 14 }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Tray Preview:
+                </div>
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 6,
+                    background: '#090d16',
+                    border: `1.5px solid ${previewInfo.color}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#ffffff',
+                    fontWeight: 700,
+                    fontSize: previewInfo.text.length >= 4 ? 11 : previewInfo.text.length === 3 ? 13 : 15,
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+                    fontFamily: '"Segoe UI", "Segoe UI Variable Display", Arial, sans-serif',
+                  }}
+                >
+                  {previewInfo.text}
+                </div>
+                <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {previewInfo.label}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="pinned-sensors-list-section">

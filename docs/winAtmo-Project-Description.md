@@ -107,6 +107,7 @@ For users who want continuous ambient awareness of their indoor environment with
 * **24-Hour Sparklines**: Provides high-density, smooth SVG micro-charts displaying 24-hour temperature and humidity trends at a glance.
 * **Interactive Expandability**: Can be toggled between a compact single-metric badge and an expanded multi-module inspection view. When collapsed, the widget preserves its exact desktop coordinate positioning.
 * **Customizable Transparency & Pinning**: Users can dynamically adjust widget opacity via a slider and toggle an `Always on Top` pin to float above productive workspaces or sit quietly on secondary monitors.
+* **Dynamic Taskbar & System Tray Sensor Reading**: Instead of a static application icon, winAtmo can render a live single sensor reading (e.g., outside temperature with semantic status color coding) directly into the Windows taskbar notification area, defaulting to outside temperature and customizable to any connected module or metric.
 * **System Tray & DWM Synchronization**: winAtmo minimizes unobtrusively to the Windows notification tray, with instant menu actions to show or hide the studio or widget. The main window frame dynamically synchronizes native Windows DWM title bar styling to match the selected theme.
 
 ---
