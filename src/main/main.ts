@@ -265,6 +265,10 @@ function createOrUpdateWidgetWindow(): void {
     widgetWindow?.loadFile(entry.filePath, { query: { mode: 'widget' } });
   });
 
+  widgetWindow.on('page-title-updated', (e) => {
+    e.preventDefault();
+  });
+
   widgetWindow.once('ready-to-show', () => {
     widgetWindow?.showInactive();
   });

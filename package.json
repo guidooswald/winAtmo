@@ -11,7 +11,7 @@
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/main.ts --bundle --platform=node --target=node22 --outfile=dist/main/main.js --external:electron --external:node:sqlite && esbuild src/main/preload.ts --bundle --platform=node --target=node22 --outfile=dist/main/preload.js --external:electron && node scripts/brand-exe.mjs",
     "build": "npm run build:renderer && npm run build:main",
-    "start": "electron dist/main/main.js",
+    "start": "node scripts/start.mjs",
     "lint": "tsc --noEmit"
   },
   "keywords": [
