@@ -8,11 +8,14 @@ import {
   KeyRound,
   LayoutGrid,
   Lock,
+  Moon,
+  Palette,
   Pin,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
   Sliders,
+  Sun,
   Trash2,
   Unlock,
 } from 'lucide-react';
@@ -25,6 +28,7 @@ import {
   WeatherStation,
 } from '../types';
 import { METRIC_METADATA } from '../utils/metrics';
+import { getThemeDefinition, THEMES } from '../utils/themes';
 
 interface SettingsViewProps {
   settings: UserSettings;
@@ -517,7 +521,86 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* 4. Units & Display Preferences */}
+      {/* 4. Appearance, Themes & Units */}
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div className="settings-title-group">
+            <Palette size={18} className="accent-icon" />
+            <div>
+              <h3>Appearance & Color Themes</h3>
+              <p>
+                Choose from 12 popular dark and light color themes for winAtmo
+                Studio and the floating Windows Taskbar Widget.
+              </p>
+            </div>
+          </div>
+          <span className="active-window-badge">
+            {getThemeDefinition(settings.theme).name}
+          </span>
+        </div>
+
+        <div className="theme-category-label">
+          <Moon size={13} /> Popular Dark Themes
+        </div>
+        <div className="theme-cards-grid">
+          {THEMES.filter((t) => t.mode === 'dark').map((theme) => (
+            <button
+              key={theme.id}
+              type="button"
+              className={`theme-swatch-card ${
+                settings.theme === theme.id ? 'active' : ''
+              }`}
+              onClick={() => onUpdateSettings({ theme: theme.id })}
+            >
+              <div className="theme-swatch-info">
+                <span className="theme-swatch-title">{theme.name}</span>
+                <span className="theme-swatch-sub">{theme.subtitle}</span>
+              </div>
+              <div className="theme-swatch-dots">
+                {theme.swatches.map((hex, i) => (
+                  <span
+                    key={i}
+                    className="theme-swatch-dot"
+                    style={{ backgroundColor: hex }}
+                  />
+                ))}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="theme-category-label">
+          <Sun size={13} /> Popular Light Themes
+        </div>
+        <div className="theme-cards-grid">
+          {THEMES.filter((t) => t.mode === 'light').map((theme) => (
+            <button
+              key={theme.id}
+              type="button"
+              className={`theme-swatch-card ${
+                settings.theme === theme.id ? 'active' : ''
+              }`}
+              onClick={() => onUpdateSettings({ theme: theme.id })}
+            >
+              <div className="theme-swatch-info">
+                <span className="theme-swatch-title">{theme.name}</span>
+                <span className="theme-swatch-sub">{theme.subtitle}</span>
+              </div>
+              <div className="theme-swatch-dots">
+                {theme.swatches.map((hex, i) => (
+                  <span
+                    key={i}
+                    className="theme-swatch-dot"
+                    style={{ backgroundColor: hex }}
+                  />
+                ))}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 5. Units & Display Preferences */}
       <div className="settings-card">
         <div className="settings-card-header">
           <div className="settings-title-group">

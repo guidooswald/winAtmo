@@ -23,6 +23,7 @@ import {
   METRIC_METADATA,
   SERIES_PALETTE,
 } from '../utils/metrics';
+import { applyThemeToDocument } from '../utils/themes';
 
 export const TaskbarWidget: React.FC = () => {
   const [stations, setStations] = useState<WeatherStation[]>([]);
@@ -254,8 +255,9 @@ export const TaskbarWidget: React.FC = () => {
 
   if (!settings) return null;
 
+  const themeDef = applyThemeToDocument(settings.theme);
   const bgAlpha = Math.max(0.25, Math.min(1, settings.widgetOpacity ?? 0.94));
-  const stripBg = `rgba(13, 19, 33, ${bgAlpha})`;
+  const stripBg = `rgba(${themeDef.widgetBgRgb}, ${bgAlpha})`;
   const dragClass = settings.widgetLocked ? '' : 'widget-os-drag';
 
   return (

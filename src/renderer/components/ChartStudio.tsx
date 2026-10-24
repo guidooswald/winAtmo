@@ -992,7 +992,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                                 ? {
                                     borderColor: activeCurve.color,
                                     backgroundColor: `${activeCurve.color}22`,
-                                    color: '#f8fafc',
+                                    color: 'var(--text-primary)',
                                   }
                                 : undefined
                             }
@@ -1210,7 +1210,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                       y1={padTop}
                       x2={padLeft + hoverRatio * plotWidth}
                       y2={padTop + plotHeight}
-                      stroke="rgba(248, 250, 252, 0.45)"
+                      stroke="var(--chart-crosshair)"
                       strokeWidth="1"
                       strokeDasharray="4 4"
                     />
@@ -1358,7 +1358,7 @@ function renderOverlayChart(params: {
               y1={y}
               x2={padLeft + plotWidth}
               y2={y}
-              stroke="rgba(148, 163, 184, 0.12)"
+              stroke="var(--chart-grid)"
               strokeWidth="1"
             />
             {primaryMetric && (
@@ -1366,7 +1366,7 @@ function renderOverlayChart(params: {
                 x={padLeft - 8}
                 y={y + 4}
                 textAnchor="end"
-                fill="#94a3b8"
+                fill="var(--chart-axis)"
                 fontSize="11"
               >
                 {leftVal.toFixed(
@@ -1380,7 +1380,7 @@ function renderOverlayChart(params: {
                 x={padLeft + plotWidth + 8}
                 y={y + 4}
                 textAnchor="start"
-                fill="#94a3b8"
+                fill="var(--chart-axis)"
                 fontSize="11"
               >
                 {rightVal.toFixed(
@@ -1474,7 +1474,7 @@ function renderOverlayChart(params: {
                   cy={toY(s.stats.max)}
                   r="4"
                   fill={s.curve.color}
-                  stroke="#0f172a"
+                  stroke="var(--bg-base)"
                   strokeWidth="1.5"
                 />
                 <circle
@@ -1482,7 +1482,7 @@ function renderOverlayChart(params: {
                   cy={toY(s.stats.min)}
                   r="4"
                   fill={s.curve.color}
-                  stroke="#0f172a"
+                  stroke="var(--bg-base)"
                   strokeWidth="1.5"
                 />
               </>
@@ -1573,8 +1573,8 @@ function renderStackedChart(params: {
               y={subTop}
               width={plotWidth}
               height={subHeight}
-              fill="rgba(15, 23, 42, 0.35)"
-              stroke="rgba(148, 163, 184, 0.12)"
+              fill="var(--bg-surface)"
+              stroke="var(--chart-grid)"
               rx="6"
             />
             <text
@@ -1591,7 +1591,7 @@ function renderStackedChart(params: {
               x={padLeft - 8}
               y={subTop + 12}
               textAnchor="end"
-              fill="#94a3b8"
+              fill="var(--chart-axis)"
               fontSize="10.5"
             >
               {max.toFixed(1)}
@@ -1600,7 +1600,7 @@ function renderStackedChart(params: {
               x={padLeft - 8}
               y={subBottom - 4}
               textAnchor="end"
-              fill="#94a3b8"
+              fill="var(--chart-axis)"
               fontSize="10.5"
             >
               {min.toFixed(1)}
@@ -1676,13 +1676,13 @@ function renderTimeAxis(params: {
               y1={y}
               x2={x}
               y2={y + 5}
-              stroke="rgba(148, 163, 184, 0.35)"
+              stroke="var(--chart-grid)"
             />
             <text
               x={x}
               y={y + 20}
               textAnchor="middle"
-              fill="#94a3b8"
+              fill="var(--chart-axis)"
               fontSize="11"
             >
               {label}

@@ -190,6 +190,20 @@ export interface AccountInfo {
   tokenExpiresAt?: number;
 }
 
+export type ThemeId =
+  | 'dark'
+  | 'catppuccin-mocha'
+  | 'tokyo-night'
+  | 'dracula'
+  | 'nord-dark'
+  | 'oled-black'
+  | 'light'
+  | 'catppuccin-latte'
+  | 'solarized-light'
+  | 'nord-light'
+  | 'rose-pine-dawn'
+  | 'github-light';
+
 export interface UserSettings {
   historyDays: number; // Default 14 days, up to 3650+ or max
   historyMaxMode: boolean; // When true, loads from station's date_setup (max Netatmo allows)
@@ -199,7 +213,7 @@ export interface UserSettings {
   pressureUnit: 'mbar' | 'hPa' | 'inHg' | 'mmHg';
   windUnit: 'kph' | 'ms' | 'mph' | 'kn';
   rainUnit: 'mm' | 'in';
-  theme: 'dark' | 'light';
+  theme: ThemeId;
   widgetEnabled: boolean;
   widgetAlwaysOnTop: boolean;
   widgetLocked: boolean;

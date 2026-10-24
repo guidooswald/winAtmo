@@ -16,6 +16,7 @@ import {
   AccountInfo,
   MetricType,
   SyncProgress,
+  ThemeId,
   UserSettings,
   WeatherStation,
 } from './types';
@@ -23,6 +24,7 @@ import { StationDashboard } from './components/StationDashboard';
 import { ChartStudio } from './components/ChartStudio';
 import { SettingsView } from './components/SettingsView';
 import { TaskbarWidget } from './components/TaskbarWidget';
+import { applyThemeToDocument, THEMES } from './utils/themes';
 import { WinAtmoAPI } from '../main/preload';
 
 declare global {
@@ -193,6 +195,12 @@ const MainStudioApp: React.FC = () => {
     await window.winatmo.syncHistory({ forceFull });
   };
 
+  useEffect(() => {
+    if (settings?.theme) {
+      applyThemeToDocument(settings.theme);
+    }
+  }, [settings?.theme]);
+
   if (!settings) {
     return (
       <div className="loading-screen">
@@ -201,6 +209,9 @@ const MainStudioApp: React.FC = () => {
       </div>
     );
   }
+
+  const darkThemes = THEMES.filter((t) => t.mode === 'dark');
+  const lightThemes = THEMES.filter((t) => t.mode === 'light');
 
   return (
     <div className={`app-shell theme-${settings.theme}`}>
@@ -252,6 +263,30 @@ const MainStudioApp: React.FC = () => {
               </span>
             </div>
           )}
+
+          <select
+            className="header-theme-select"
+            value={settings.theme}
+            onChange={(e) =>
+              handleUpdateSettings({ theme: e.target.value as ThemeId })
+            }
+            title="Switch color theme (Dark & Light)"
+          >
+            <optgroup label="Dark Themes">
+              {darkThemes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  🌙 {t.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Light Themes">
+              {lightThemes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  ☀️ {t.name}
+                </option>
+              ))}
+            </optgroup>
+          </select>
 
           <button
             className={`header-btn ${settings.widgetEnabled ? 'widget-on' : ''}`}
