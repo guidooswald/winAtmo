@@ -20,6 +20,18 @@ Native Windows desktop application for **Netatmo Personal Weather Stations** (`N
 
 ---
 
+## Architecture Overview
+
+![winAtmo Architecture Diagram](docs/screenshots/architecture.png)
+
+winAtmo employs a secure, high-performance multi-process architecture:
+- **Netatmo Cloud Layer**: Weather Stations, Modules, and Air Quality sensors synced via REST API and OAuth 2.0 / Web Login.
+- **Electron Main Process (Node.js)**: Local high-throughput time-series storage using native `node:sqlite` in WAL mode (`WITHOUT ROWID`), DPAPI credential encryption at rest (`safeStorage`), and background poller.
+- **Windows OS Integration**: Native translucent floating Taskbar Widget, System Tray background residency, and dynamic DWM title bar theme synchronization.
+- **React 19 & TypeScript Studio**: Real-time sensor cards, custom zero-dependency SVG multi-curve charting studio (up to 10 curves with dual Y-axes), and 12 curated dark/light themes.
+
+---
+
 ## Key Features
 
 ### 1. Web Login, OAuth 2.0 & DPAPI Security
