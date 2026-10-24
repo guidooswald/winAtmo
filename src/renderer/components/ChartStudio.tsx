@@ -59,7 +59,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
   onClearFocus,
 }) => {
   const [selectedCurves, setSelectedCurves] = useState<SelectedCurve[]>([]);
-  const [rangePreset, setRangePreset] = useState<RangePreset>('14d');
+  const [rangePreset, setRangePreset] = useState<RangePreset>('7d');
   const [scaleMode, setScaleMode] = useState<'auto' | NetatmoScale>('auto');
   const [layoutMode, setLayoutMode] = useState<ChartLayoutMode>('overlay');
   const [curveStyle, setCurveStyle] = useState<ChartCurveStyle>('area');
@@ -337,23 +337,6 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
 
     return presets;
   }, [stations]);
-
-  // Sync default range preset with settings.historyDays on initial mount
-  useEffect(() => {
-    if (settings.historyMaxMode) {
-      setRangePreset('max');
-    } else if (settings.historyDays === 7) {
-      setRangePreset('7d');
-    } else if (settings.historyDays === 30) {
-      setRangePreset('30d');
-    } else if (settings.historyDays === 90) {
-      setRangePreset('90d');
-    } else if (settings.historyDays >= 365) {
-      setRangePreset('1y');
-    } else {
-      setRangePreset('14d');
-    }
-  }, [settings.historyDays, settings.historyMaxMode]);
 
   // Populate initial default curves when stations load
   useEffect(() => {

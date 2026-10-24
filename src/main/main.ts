@@ -7,6 +7,7 @@ import {
   Tray,
   Menu,
   nativeImage,
+  nativeTheme,
   screen,
 } from 'electron';
 import path from 'path';
@@ -92,14 +93,53 @@ function showMainWindow(focusModuleId?: string, focusMetric?: string): void {
   }
 }
 
+const LIGHT_THEME_IDS = new Set([
+  'light',
+  'catppuccin-latte',
+  'solarized-light',
+  'nord-light',
+  'rose-pine-dawn',
+  'github-light',
+]);
+
+const THEME_BG_COLORS: Record<string, string> = {
+  dark: '#090d16',
+  'catppuccin-mocha': '#1e1e2e',
+  'tokyo-night': '#1a1b26',
+  dracula: '#282a36',
+  'nord-dark': '#2e3440',
+  'oled-black': '#000000',
+  light: '#f1f5f9',
+  'catppuccin-latte': '#eff1f5',
+  'solarized-light': '#fdf6e3',
+  'nord-light': '#e5e9f0',
+  'rose-pine-dawn': '#faf4ed',
+  'github-light': '#f6f8fa',
+};
+
+function applyNativeWindowTheme(themeId?: string): void {
+  const id = themeId || 'dark';
+  const isLight = LIGHT_THEME_IDS.has(id);
+  nativeTheme.themeSource = isLight ? 'light' : 'dark';
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const bg = THEME_BG_COLORS[id] || (isLight ? '#f1f5f9' : '#090d16');
+    mainWindow.setBackgroundColor(bg);
+  }
+}
+
 function createMainWindow(): void {
+  const currentTheme = store ? store.getSettings().theme : 'dark';
+  applyNativeWindowTheme(currentTheme);
+  const initialBg = THEME_BG_COLORS[currentTheme] || '#090d16';
+
   mainWindow = new BrowserWindow({
     width: 1340,
     height: 860,
     minWidth: 1020,
     minHeight: 680,
     center: true,
-    backgroundColor: '#090d16',
+    backgroundColor: initialBg,
+    darkTheme: !LIGHT_THEME_IDS.has(currentTheme),
     autoHideMenuBar: true,
     title: 'winAtmo — Netatmo Weather & Air Quality Studio',
     icon: createTrayNativeImage(),
@@ -881,12 +921,16 @@ function registerIpcHandlers(): void {
 
   // Settings IPC
   ipcMain.handle('settings:get', () => {
-    return store.getSettings();
+    const s = store.getSettings();
+    applyNativeWindowTheme(s.theme);
+    return s;
   });
 
   ipcMain.handle('settings:update', async (_e, partial: Partial<UserSettings>) => {
     const prev = store.getSettings();
     const updated = store.updateSettings(partial);
+
+    applyNativeWindowTheme(updated.theme);
 
     if (
       partial.widgetEnabled !== undefined ||
