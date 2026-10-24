@@ -22,6 +22,7 @@ export interface WinAtmoAPI {
   resetWidgetPosition: () => Promise<UserSettings>;
   setWidgetExpanded: (expanded: boolean) => Promise<void>;
   moveWidgetBy: (dx: number, dy: number) => void;
+  resizeWidget: (width: number, height: number) => void;
 
   // Auth
   getAccountInfo: () => Promise<AccountInfo>;
@@ -103,6 +104,8 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('widget:set-expanded', expanded),
   moveWidgetBy: (dx: number, dy: number) =>
     ipcRenderer.send('widget:move-by', { dx, dy }),
+  resizeWidget: (width: number, height: number) =>
+    ipcRenderer.send('widget:resize', { width, height }),
 
   getAccountInfo: () => ipcRenderer.invoke('auth:get-account'),
   startWebLogin: () => ipcRenderer.invoke('auth:web-login'),

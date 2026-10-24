@@ -29,6 +29,8 @@ app.name = 'winAtmo';
 
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
+let isWidgetExpanded = false;
+let widgetTargetSize = { width: 420, height: 50 };
 let tray: Tray | null = null;
 let isQuitting = false;
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -152,7 +154,7 @@ function createMainWindow(): void {
   });
 }
 
-function getDefaultWidgetBounds(expanded = false): {
+function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
   x: number;
   y: number;
   width: number;
@@ -163,10 +165,31 @@ function getDefaultWidgetBounds(expanded = false): {
   const settings = store.getSettings();
   const pinnedCount = Math.max(1, settings.pinnedSensors.length || 3);
 
-  const width = expanded
-    ? Math.min(540, Math.max(360, pinnedCount * 135))
-    : Math.min(520, Math.max(310, pinnedCount * 118 + 64));
-  const height = expanded ? 210 : 48;
+  let width: number;
+  let height: number;
+
+  if (expanded) {
+    const cols = Math.min(4, Math.max(2, pinnedCount));
+    const rows = Math.ceil(pinnedCount / cols);
+    width = Math.min(
+      workArea.width - 32,
+      Math.max(360, cols * 148 + 32)
+    );
+    height = Math.min(
+      workArea.height - 48,
+      Math.max(195, 52 + 44 + rows * 92)
+    );
+  } else {
+    const singleRowWidth = pinnedCount * 136 + 74;
+    if (singleRowWidth <= workArea.width - 32) {
+      width = Math.max(230, singleRowWidth);
+      height = 50;
+    } else {
+      const perRow = Math.ceil(pinnedCount / 2);
+      width = Math.min(workArea.width - 32, Math.max(320, perRow * 136 + 74));
+      height = 88;
+    }
+  }
 
   // Position cleanly docked at bottom-right just above the Windows Taskbar
   const saved =
@@ -198,7 +221,7 @@ function ExpandedYAdjustment(
   return savedY;
 }
 
-function createOrUpdateWidgetWindow(): void {
+function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
   const settings = store.getSettings();
 
   if (!settings.widgetEnabled) {
@@ -209,29 +232,46 @@ function createOrUpdateWidgetWindow(): void {
     return;
   }
 
-  const bounds = getDefaultWidgetBounds(false);
+  const bounds = getDefaultWidgetBounds(isWidgetExpanded);
 
   if (widgetWindow && !widgetWindow.isDestroyed()) {
     widgetWindow.setAlwaysOnTop(settings.widgetAlwaysOnTop, 'pop-up-menu');
-    widgetWindow.setOpacity(Math.max(0.4, Math.min(1, settings.widgetOpacity || 0.94)));
-    widgetWindow.setBounds({
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: widgetWindow.getBounds().height,
-    });
+    widgetWindow.setMovable(!settings.widgetLocked);
+    widgetWindow.setOpacity(
+      Math.max(0.25, Math.min(1, settings.widgetOpacity ?? 0.94))
+    );
+    if (autoSizeForSensors) {
+      widgetTargetSize = { width: bounds.width, height: bounds.height };
+      const cur = widgetWindow.getBounds();
+      const primary = screen.getPrimaryDisplay().workArea;
+      const nextX = Math.max(
+        primary.x + 4,
+        Math.min(cur.x, primary.x + primary.width - bounds.width - 4)
+      );
+      const nextY = Math.max(
+        primary.y + 4,
+        Math.min(cur.y, primary.y + primary.height - bounds.height - 4)
+      );
+      widgetWindow.setContentSize(bounds.width, bounds.height);
+      widgetWindow.setPosition(nextX, nextY);
+    }
     widgetWindow.showInactive();
     return;
   }
+
+  widgetTargetSize = { width: bounds.width, height: bounds.height };
 
   widgetWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
+    minWidth: 200,
+    minHeight: 44,
+    useContentSize: true,
     frame: false,
     transparent: true,
-    resizable: false,
+    resizable: true,
     movable: !settings.widgetLocked,
     minimizable: false,
     maximizable: false,
@@ -252,7 +292,9 @@ function createOrUpdateWidgetWindow(): void {
   });
 
   widgetWindow.setAlwaysOnTop(settings.widgetAlwaysOnTop, 'pop-up-menu');
-  widgetWindow.setOpacity(Math.max(0.4, Math.min(1, settings.widgetOpacity || 0.94)));
+  widgetWindow.setOpacity(
+    Math.max(0.25, Math.min(1, settings.widgetOpacity ?? 0.94))
+  );
 
   const entry = getRendererEntryUrl('widget');
   if (entry.isDev) {
@@ -273,12 +315,17 @@ function createOrUpdateWidgetWindow(): void {
     widgetWindow?.showInactive();
   });
 
+  let moveSaveTimeout: NodeJS.Timeout | null = null;
   widgetWindow.on('moved', () => {
     if (!widgetWindow || widgetWindow.isDestroyed()) return;
-    const b = widgetWindow.getBounds();
-    if (b.height <= 60) {
-      store.updateSettings({ widgetPosition: { x: b.x, y: b.y } });
-    }
+    if (moveSaveTimeout) clearTimeout(moveSaveTimeout);
+    moveSaveTimeout = setTimeout(() => {
+      if (!widgetWindow || widgetWindow.isDestroyed()) return;
+      const [x, y] = widgetWindow.getPosition();
+      if (!isWidgetExpanded) {
+        store.updateSettings({ widgetPosition: { x, y } });
+      }
+    }, 250);
   });
 
   widgetWindow.on('closed', () => {
@@ -519,43 +566,63 @@ function registerIpcHandlers(): void {
   ipcMain.handle('widget:reset-position', () => {
     const updated = store.updateSettings({ widgetPosition: undefined });
     if (widgetWindow && !widgetWindow.isDestroyed()) {
-      const b = getDefaultWidgetBounds(false);
-      widgetWindow.setBounds(b);
+      const b = getDefaultWidgetBounds(isWidgetExpanded);
+      widgetTargetSize = { width: b.width, height: b.height };
+      widgetWindow.setContentSize(b.width, b.height);
+      widgetWindow.setPosition(b.x, b.y);
     }
     broadcastToAllWindows('settings:updated', updated);
     return updated;
   });
 
   ipcMain.handle('widget:set-expanded', (_e, expanded: boolean) => {
+    isWidgetExpanded = expanded;
     if (!widgetWindow || widgetWindow.isDestroyed()) return;
-    const currentBounds = widgetWindow.getBounds();
+    const [curX, curY] = widgetWindow.getPosition();
+    const [, curH] = widgetWindow.getContentSize();
     const target = getDefaultWidgetBounds(expanded);
     const primary = screen.getPrimaryDisplay().workArea;
 
+    widgetTargetSize = { width: target.width, height: target.height };
+
     // Keep bottom edge anchored near current bottom edge
-    const bottomEdge = currentBounds.y + currentBounds.height;
+    const bottomEdge = curY + curH;
     const newY = Math.max(
       primary.y + 8,
-      Math.min(bottomEdge - target.height, primary.y + primary.height - target.height - 4)
+      Math.min(
+        bottomEdge - target.height,
+        primary.y + primary.height - target.height - 4
+      )
+    );
+    const newX = Math.max(
+      primary.x + 4,
+      Math.min(curX, primary.x + primary.width - target.width - 4)
     );
 
-    widgetWindow.setBounds({
-      x: currentBounds.x,
-      y: newY,
-      width: target.width,
-      height: target.height,
-    });
+    widgetWindow.setContentSize(target.width, target.height);
+    widgetWindow.setPosition(newX, newY);
   });
 
   ipcMain.on('widget:move-by', (_e, delta: { dx: number; dy: number }) => {
     if (!widgetWindow || widgetWindow.isDestroyed()) return;
     if (store.getSettings().widgetLocked) return;
-    const b = widgetWindow.getBounds();
-    const nextX = Math.round(b.x + delta.dx);
-    const nextY = Math.round(b.y + delta.dy);
+    const [curX, curY] = widgetWindow.getPosition();
+    const nextX = Math.round(curX + delta.dx);
+    const nextY = Math.round(curY + delta.dy);
     widgetWindow.setPosition(nextX, nextY);
-    store.updateSettings({ widgetPosition: { x: nextX, y: nextY } });
+    widgetWindow.setContentSize(widgetTargetSize.width, widgetTargetSize.height);
   });
+
+  ipcMain.on(
+    'widget:resize',
+    (_e, size: { width: number; height: number }) => {
+      if (!widgetWindow || widgetWindow.isDestroyed()) return;
+      const w = Math.max(200, Math.round(size.width));
+      const h = Math.max(44, Math.round(size.height));
+      widgetTargetSize = { width: w, height: h };
+      widgetWindow.setContentSize(w, h);
+    }
+  );
 
   // Authentication IPC
   ipcMain.handle('auth:get-account', () => {
@@ -769,7 +836,7 @@ function registerIpcHandlers(): void {
       partial.widgetLocked !== undefined ||
       partial.pinnedSensors !== undefined
     ) {
-      createOrUpdateWidgetWindow();
+      createOrUpdateWidgetWindow(partial.pinnedSensors !== undefined);
     }
 
     if (partial.refreshIntervalMinutes !== undefined) {

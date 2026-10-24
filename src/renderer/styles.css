@@ -1348,13 +1348,25 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: stretch;
   padding: 2px 4px;
   background: transparent;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.widget-os-drag {
+  -webkit-app-region: drag;
+}
+
+.widget-no-drag {
+  -webkit-app-region: no-drag;
 }
 
 .taskbar-strip {
-  height: 42px;
+  position: relative;
+  flex: 1;
+  min-height: 42px;
   border-radius: 10px;
   background: rgba(13, 19, 33, 0.94);
   border: 1px solid rgba(56, 189, 248, 0.35);
@@ -1362,8 +1374,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px;
+  padding: 4px 10px 4px 8px;
   gap: 6px;
+}
+
+.taskbar-widget-shell.is-expanded .taskbar-strip {
+  flex: 0 0 44px;
 }
 
 .widget-drag-handle {
@@ -1383,8 +1399,34 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
+  align-content: center;
+  flex-wrap: wrap;
   gap: 6px;
   overflow: hidden;
+}
+
+.widget-resize-grip {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+  background: linear-gradient(
+    135deg,
+    transparent 50%,
+    rgba(148, 163, 184, 0.45) 50%,
+    rgba(148, 163, 184, 0.45) 65%,
+    transparent 65%,
+    transparent 80%,
+    rgba(56, 189, 248, 0.7) 80%
+  );
+  border-bottom-right-radius: 7px;
+  opacity: 0.75;
+}
+
+.widget-resize-grip:hover {
+  opacity: 1;
 }
 
 .widget-sensor-pill {

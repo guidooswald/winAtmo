@@ -31,10 +31,18 @@ export const TaskbarWidget: React.FC = () => {
   const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
-  const dragRef = useRef<{ dragging: boolean; lastX: number; lastY: number }>({
-    dragging: false,
-    lastX: 0,
-    lastY: 0,
+  const resizeRef = useRef<{
+    resizing: boolean;
+    startX: number;
+    startY: number;
+    startW: number;
+    startH: number;
+  }>({
+    resizing: false,
+    startX: 0,
+    startY: 0,
+    startW: 0,
+    startH: 0,
   });
 
   useEffect(() => {
@@ -134,28 +142,33 @@ export const TaskbarWidget: React.FC = () => {
     }
   };
 
-  const onMouseDownDrag = (e: React.MouseEvent) => {
-    if (settings?.widgetLocked) return;
-    dragRef.current = {
-      dragging: true,
-      lastX: e.screenX,
-      lastY: e.screenY,
+  const onMouseDownResize = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    resizeRef.current = {
+      resizing: true,
+      startX: e.screenX,
+      startY: e.screenY,
+      startW: window.innerWidth,
+      startH: window.innerHeight,
     };
   };
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
-      if (!dragRef.current.dragging) return;
-      const dx = e.screenX - dragRef.current.lastX;
-      const dy = e.screenY - dragRef.current.lastY;
-      dragRef.current.lastX = e.screenX;
-      dragRef.current.lastY = e.screenY;
-      if (dx !== 0 || dy !== 0) {
-        window.winatmo.moveWidgetBy(dx, dy);
-      }
+      if (!resizeRef.current.resizing) return;
+      const nextW = Math.max(
+        200,
+        resizeRef.current.startW + (e.screenX - resizeRef.current.startX)
+      );
+      const nextH = Math.max(
+        44,
+        resizeRef.current.startH + (e.screenY - resizeRef.current.startY)
+      );
+      window.winatmo.resizeWidget(nextW, nextH);
     };
     const onUp = () => {
-      dragRef.current.dragging = false;
+      resizeRef.current.resizing = false;
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -167,14 +180,21 @@ export const TaskbarWidget: React.FC = () => {
 
   if (!settings) return null;
 
+  const bgAlpha = Math.max(0.25, Math.min(1, settings.widgetOpacity ?? 0.94));
+  const stripBg = `rgba(13, 19, 33, ${bgAlpha})`;
+  const dragClass = settings.widgetLocked ? '' : 'widget-os-drag';
+
   return (
     <div className={`taskbar-widget-shell ${expanded ? 'is-expanded' : ''}`}>
       {/* Expanded Flyout Panel (24h Mini Sparklines & Details) */}
       {expanded && (
-        <div className="widget-flyout-panel">
-          <div className="widget-flyout-header">
+        <div
+          className="widget-flyout-panel"
+          style={{ backgroundColor: stripBg }}
+        >
+          <div className={`widget-flyout-header ${dragClass}`}>
             <span className="flyout-brand">winAtmo Live Sensors (24h)</span>
-            <div className="flyout-actions">
+            <div className="flyout-actions widget-no-drag">
               <button
                 className="widget-icon-btn"
                 onClick={handleRefresh}
@@ -192,7 +212,7 @@ export const TaskbarWidget: React.FC = () => {
             </div>
           </div>
 
-          <div className="widget-flyout-grid">
+          <div className="widget-flyout-grid widget-no-drag">
             {activePins.map((pin) => {
               const st = stations.find((s) => s.id === pin.stationId);
               const mod = st?.modules.find((m) => m.id === pin.moduleId);
@@ -242,10 +262,12 @@ export const TaskbarWidget: React.FC = () => {
       )}
 
       {/* Compact Taskbar Bar */}
-      <div className="taskbar-strip">
+      <div
+        className={`taskbar-strip ${dragClass}`}
+        style={{ backgroundColor: stripBg }}
+      >
         <div
           className="widget-drag-handle"
-          onMouseDown={onMouseDownDrag}
           title={
             settings.widgetLocked
               ? 'Taskbar Widget Locked'
@@ -258,7 +280,7 @@ export const TaskbarWidget: React.FC = () => {
         <div className="widget-sensors-strip">
           {activePins.length === 0 ? (
             <div
-              className="widget-empty-item"
+              className="widget-empty-item widget-no-drag"
               onClick={() => window.winatmo.openMainWindow()}
             >
               <span>winAtmo • Click to connect sensors</span>
@@ -282,7 +304,7 @@ export const TaskbarWidget: React.FC = () => {
               return (
                 <div
                   key={pin.id}
-                  className="widget-sensor-pill"
+                  className="widget-sensor-pill widget-no-drag"
                   onClick={() =>
                     window.winatmo.openMainWindow(pin.moduleId, pin.metric)
                   }
@@ -310,7 +332,7 @@ export const TaskbarWidget: React.FC = () => {
           )}
         </div>
 
-        <div className="widget-strip-controls">
+        <div className="widget-strip-controls widget-no-drag">
           <button
             className="widget-toggle-btn"
             onClick={toggleExpand}
@@ -319,6 +341,13 @@ export const TaskbarWidget: React.FC = () => {
             {expanded ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
           </button>
         </div>
+
+        {/* Corner Resize Grip */}
+        <div
+          className="widget-resize-grip widget-no-drag"
+          onMouseDown={onMouseDownResize}
+          title="Drag corner to resize widget"
+        />
       </div>
     </div>
   );

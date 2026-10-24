@@ -419,6 +419,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </label>
         </div>
 
+        <div className="setting-field" style={{ marginTop: 14 }}>
+          <label>
+            Widget Opacity ({Math.round((settings.widgetOpacity ?? 0.94) * 100)}
+            %{(settings.widgetOpacity ?? 0.94) >= 0.99 ? ' — Fully Opaque' : ''})
+          </label>
+          <div className="inline-input-row">
+            <input
+              type="range"
+              min={25}
+              max={100}
+              step={1}
+              value={Math.round((settings.widgetOpacity ?? 0.94) * 100)}
+              onChange={(e) =>
+                onUpdateSettings({
+                  widgetOpacity: Number(e.target.value) / 100,
+                })
+              }
+            />
+            <button
+              type="button"
+              className={`pill-btn ${
+                Math.round((settings.widgetOpacity ?? 0.94) * 100) === 80
+                  ? 'active'
+                  : ''
+              }`}
+              onClick={() => onUpdateSettings({ widgetOpacity: 0.8 })}
+            >
+              80%
+            </button>
+            <button
+              type="button"
+              className={`pill-btn ${
+                Math.round((settings.widgetOpacity ?? 0.94) * 100) === 94
+                  ? 'active'
+                  : ''
+              }`}
+              onClick={() => onUpdateSettings({ widgetOpacity: 0.94 })}
+            >
+              94%
+            </button>
+            <button
+              type="button"
+              className={`pill-btn ${
+                (settings.widgetOpacity ?? 0.94) >= 0.99 ? 'active' : ''
+              }`}
+              onClick={() => onUpdateSettings({ widgetOpacity: 1.0 })}
+            >
+              100% Opaque
+            </button>
+          </div>
+          <small className="field-hint">
+            Adjust transparency or slide to 100% for a completely solid opaque
+            widget. You can also resize the widget directly from its edges or
+            bottom-right corner.
+          </small>
+        </div>
+
         <div className="pinned-sensors-list-section">
           <h4>
             <Pin size={14} /> Pinned Sensors in Taskbar Widget (
