@@ -1349,10 +1349,11 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: stretch;
-  padding: 2px 4px;
-  background: transparent;
+  padding: 0;
+  background: transparent !important;
   box-sizing: border-box;
   user-select: none;
+  overflow: hidden;
 }
 
 .taskbar-widget-shell.expand-down {
@@ -1379,12 +1380,13 @@ body {
   border-radius: 10px;
   background: rgba(13, 19, 33, 0.94);
   border: 1px solid rgba(56, 189, 248, 0.35);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  box-shadow: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 4px 10px 4px 8px;
   gap: 6px;
+  overflow: hidden;
 }
 
 .taskbar-widget-shell.is-expanded .taskbar-strip {
@@ -1522,7 +1524,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
+  box-shadow: none;
+  overflow: hidden;
 }
 
 .widget-flyout-header {

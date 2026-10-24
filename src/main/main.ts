@@ -235,9 +235,9 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
   if (widgetWindow && !widgetWindow.isDestroyed()) {
     widgetWindow.setAlwaysOnTop(settings.widgetAlwaysOnTop, 'pop-up-menu');
     widgetWindow.setMovable(!settings.widgetLocked);
-    widgetWindow.setOpacity(
-      Math.max(0.25, Math.min(1, settings.widgetOpacity ?? 0.94))
-    );
+    // Keep OS window opacity at 1.0 so Windows DWM does not draw a layered rectangular box;
+    // transparency is controlled per-pixel via CSS rgba() in TaskbarWidget.tsx.
+    widgetWindow.setOpacity(1.0);
     if (autoSizeForSensors) {
       widgetTargetSize = { width: bounds.width, height: bounds.height };
       const cur = widgetWindow.getBounds();
@@ -276,7 +276,7 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: settings.widgetAlwaysOnTop,
-    hasShadow: true,
+    hasShadow: false,
     backgroundColor: '#00000000',
     title: 'winAtmo',
     icon: createTrayNativeImage(),
@@ -290,9 +290,7 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
   });
 
   widgetWindow.setAlwaysOnTop(settings.widgetAlwaysOnTop, 'pop-up-menu');
-  widgetWindow.setOpacity(
-    Math.max(0.25, Math.min(1, settings.widgetOpacity ?? 0.94))
-  );
+  widgetWindow.setOpacity(1.0);
 
   const entry = getRendererEntryUrl('widget');
   if (entry.isDev) {
