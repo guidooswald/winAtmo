@@ -26,9 +26,6 @@ import {
 
 app.setName('winAtmo');
 app.name = 'winAtmo';
-if (process.platform === 'win32') {
-  app.setAppUserModelId('winAtmo');
-}
 
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;

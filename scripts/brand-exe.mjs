@@ -54,11 +54,7 @@ function refreshWindowsNotifyIconRegistry() {
       Get-ChildItem "HKCU:\\Control Panel\\NotifyIconSettings" -ErrorAction SilentlyContinue | ForEach-Object {
         $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
         if ($p.ExecutablePath -match "winAtmo") {
-          if ($p.ExecutablePath -match "electron\\.exe$") {
-            Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
-          } else {
-            Set-ItemProperty -Path $_.PSPath -Name "InitialTooltip" -Value "winAtmo" -ErrorAction SilentlyContinue
-          }
+          Set-ItemProperty -Path $_.PSPath -Name "InitialTooltip" -Value "winAtmo" -ErrorAction SilentlyContinue
         }
       }
     `;
@@ -81,8 +77,6 @@ function brandExecutable() {
 
   patchPeVersionString(buf, 'FileDescription', 'Electron', 'winAtmo');
   patchPeVersionString(buf, 'ProductName', 'Electron', 'winAtmo');
-  patchPeVersionString(buf, 'InternalName', 'electron.exe', 'winAtmo.exe');
-  patchPeVersionString(buf, 'OriginalFilename', 'electron.exe', 'winAtmo.exe');
 
   try {
     fs.writeFileSync(winAtmoExe, buf);
