@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import {
@@ -8,6 +8,32 @@ import {
   UserSettings,
   WeatherStation,
 } from '../renderer/types';
+
+const DPAPI_PREFIX = 'dpapi:';
+
+function encryptSecret(plain?: string): string | undefined {
+  if (!plain) return undefined;
+  if (plain.startsWith(DPAPI_PREFIX)) return plain;
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      const buf = safeStorage.encryptString(plain);
+      return DPAPI_PREFIX + buf.toString('base64');
+    }
+  } catch {}
+  return plain;
+}
+
+function decryptSecret(stored?: string): string | undefined {
+  if (!stored) return undefined;
+  if (!stored.startsWith(DPAPI_PREFIX)) return stored;
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      const buf = Buffer.from(stored.slice(DPAPI_PREFIX.length), 'base64');
+      return safeStorage.decryptString(buf);
+    }
+  } catch {}
+  return undefined;
+}
 
 interface PersistedState {
   settings: UserSettings;
@@ -69,6 +95,22 @@ export class AppStore {
           ...DEFAULT_SETTINGS,
           ...(parsed.settings || {}),
         };
+        if (settings.oauthClientSecret) {
+          settings.oauthClientSecret = decryptSecret(
+            settings.oauthClientSecret
+          );
+        }
+
+        const rawSession = { ...DEFAULT_SESSION, ...(parsed.session || {}) };
+        rawSession.accessToken = decryptSecret(rawSession.accessToken);
+        rawSession.refreshToken = decryptSecret(rawSession.refreshToken);
+        if (Array.isArray(rawSession.cookies)) {
+          rawSession.cookies = rawSession.cookies.map((c: any) => ({
+            ...c,
+            value: decryptSecret(c.value) || '',
+          }));
+        }
+
         if (normalizedStations.length > 0 && settings.pinnedSensors?.length) {
           const primaryHome = normalizedStations[0];
           settings.pinnedSensors = settings.pinnedSensors.map((pin) => {
@@ -87,7 +129,7 @@ export class AppStore {
         }
         return {
           settings,
-          session: { ...DEFAULT_SESSION, ...(parsed.session || {}) },
+          session: rawSession,
           cachedStations: normalizedStations,
           lastSyncAt: parsed.lastSyncAt,
         };
@@ -104,9 +146,27 @@ export class AppStore {
 
   private save(): void {
     try {
+      const diskState: PersistedState = {
+        ...this.state,
+        settings: {
+          ...this.state.settings,
+          oauthClientSecret: encryptSecret(
+            this.state.settings.oauthClientSecret
+          ),
+        },
+        session: {
+          ...this.state.session,
+          accessToken: encryptSecret(this.state.session.accessToken),
+          refreshToken: encryptSecret(this.state.session.refreshToken),
+          cookies: (this.state.session.cookies || []).map((c) => ({
+            ...c,
+            value: encryptSecret(c.value) || '',
+          })),
+        },
+      };
       fs.writeFileSync(
         this.filePath,
-        JSON.stringify(this.state, null, 2),
+        JSON.stringify(diskState, null, 2),
         'utf-8'
       );
     } catch (err) {

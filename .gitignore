@@ -20,10 +20,14 @@ $RECYCLE.BIN/
 
 # Environment / Secret / Local DB Files
 .env
-.env.local
+.env.*
 *.secret
+*.pem
+*.key
 credentials.json
 token.json
+winatmo-config*.json
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.db

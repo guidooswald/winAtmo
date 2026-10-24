@@ -51,6 +51,7 @@ export class WebAuthManager {
           partition: NETATMO_PARTITION,
           nodeIntegration: false,
           contextIsolation: true,
+          sandbox: true,
         },
       });
 
@@ -219,6 +220,7 @@ export class WebAuthManager {
           partition: NETATMO_PARTITION,
           nodeIntegration: false,
           contextIsolation: true,
+          sandbox: true,
         },
       });
 

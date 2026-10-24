@@ -147,10 +147,12 @@ function createMainWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
     },
     show: true,
   });
+
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   // Explicitly call show() & focus() after construction to override Win32 STARTUPINFO SW_HIDE when spawned from IDE terminals
   mainWindow.show();
@@ -324,10 +326,12 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
     },
     show: false,
   });
+
+  widgetWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   widgetWindow.setAlwaysOnTop(settings.widgetAlwaysOnTop, 'pop-up-menu');
   widgetWindow.setOpacity(1.0);
@@ -965,9 +969,12 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('shell:open-external', async (_e, url: string) => {
-    if (url.startsWith('https://') || url.startsWith('http://')) {
-      await shell.openExternal(url);
-    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        await shell.openExternal(parsed.toString());
+      }
+    } catch {}
   });
 }
 
