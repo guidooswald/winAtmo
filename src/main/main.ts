@@ -36,7 +36,7 @@ let refreshTimer: NodeJS.Timeout | null = null;
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
-  app.quit();
+  app.exit(0);
 } else {
   app.on('second-instance', () => {
     showMainWindow();
@@ -53,8 +53,10 @@ function getRendererEntryUrl(queryMode?: string): {
   url: string;
   filePath: string;
 } {
-  const isDev = process.env.NODE_ENV === 'development';
-  const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5190';
+  const isDev =
+    Boolean(process.env.VITE_DEV_SERVER_URL) ||
+    process.env.NODE_ENV === 'development';
+  const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
   const filePath = path.join(__dirname, '../renderer/index.html');
   const suffix = queryMode ? `?mode=${queryMode}` : '';
   return {

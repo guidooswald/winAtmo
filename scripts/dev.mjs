@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,16 @@ import { createServer } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
+
+function stopExistingInstances() {
+  if (process.platform === 'win32') {
+    try {
+      execSync('taskkill /F /IM winAtmo.exe /T', { stdio: 'ignore' });
+    } catch {
+      // No running winAtmo.exe instance
+    }
+  }
+}
 
 async function buildMain() {
   await esbuild.build({
@@ -29,6 +39,8 @@ async function buildMain() {
 }
 
 async function startDev() {
+  stopExistingInstances();
+
   console.log('[winAtmo] Building Electron main & preload bundles...');
   await buildMain();
 
@@ -60,6 +72,7 @@ async function startDev() {
     stdio: 'inherit',
     env: {
       ...process.env,
+      NODE_ENV: 'development',
       VITE_DEV_SERVER_URL: devUrl,
     },
   });
