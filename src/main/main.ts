@@ -31,7 +31,13 @@ let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
 let isWidgetExpanded = false;
 let widgetExpandDirection: 'up' | 'down' = 'up';
-let widgetTargetSize = { width: 420, height: 50 };
+let widgetTargetSize = { width: 420, height: 48 };
+let collapsedBoundsBeforeExpand: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -582,49 +588,73 @@ function registerIpcHandlers(): void {
       height: curH,
     });
     const workArea = display.workArea;
-    const target = getDefaultWidgetBounds(expanded);
-    const nextW = Math.max(curW, target.width);
+    const expandedHeight = 215;
 
-    // Determine expand direction when expanding from collapsed state
-    if (expanded && !isWidgetExpanded) {
-      const centerY = curY + curH / 2;
-      const screenMidY = workArea.y + workArea.height / 2;
-      const roomAbove = curY - workArea.y;
-      widgetExpandDirection =
-        centerY < screenMidY || roomAbove < target.height - curH
-          ? 'down'
-          : 'up';
-    }
+    if (expanded) {
+      // Save exact collapsed bounds before expanding so we can restore them when closing charts
+      if (!isWidgetExpanded) {
+        collapsedBoundsBeforeExpand = {
+          x: curX,
+          y: curY,
+          width: curW,
+          height: curH,
+        };
+        const centerY = curY + curH / 2;
+        const screenMidY = workArea.y + workArea.height / 2;
+        const roomAbove = curY - workArea.y;
+        widgetExpandDirection =
+          centerY < screenMidY || roomAbove < expandedHeight - curH
+            ? 'down'
+            : 'up';
+      }
 
-    isWidgetExpanded = expanded;
-    widgetTargetSize = { width: nextW, height: target.height };
+      isWidgetExpanded = true;
+      // Keep the exact current width (never resize width when expanding)
+      widgetTargetSize = { width: curW, height: expandedHeight };
 
-    let newY: number;
-    if (widgetExpandDirection === 'down') {
-      // Towards top of display: keep top edge anchored and expand/collapse downwards
-      newY = Math.max(
-        workArea.y + 4,
-        Math.min(curY, workArea.y + workArea.height - target.height - 4)
-      );
+      let newY: number;
+      if (widgetExpandDirection === 'down') {
+        // Towards top of display: keep top edge (curY) fixed and expand downwards
+        newY = curY;
+      } else {
+        // Towards bottom of display: keep bottom edge fixed and expand upwards
+        const bottomEdge = curY + curH;
+        newY = Math.max(workArea.y + 4, bottomEdge - expandedHeight);
+      }
+
+      widgetWindow.setContentSize(curW, expandedHeight);
+      widgetWindow.setPosition(curX, newY);
     } else {
-      // Towards bottom of display: keep bottom edge anchored and expand/collapse upwards
-      const bottomEdge = curY + curH;
-      newY = Math.max(
-        workArea.y + 4,
-        Math.min(
-          bottomEdge - target.height,
-          workArea.y + workArea.height - target.height - 4
-        )
-      );
+      // Closing charts: restore the initial collapsed position & size before expanding
+      const savedCollapsed = collapsedBoundsBeforeExpand;
+      const collapsedH = savedCollapsed ? savedCollapsed.height : 48;
+      isWidgetExpanded = false;
+      widgetTargetSize = { width: curW, height: collapsedH };
+
+      let restoreY: number;
+      if (
+        savedCollapsed &&
+        Math.abs(curX - savedCollapsed.x) <= 4 &&
+        (widgetExpandDirection === 'down'
+          ? Math.abs(curY - savedCollapsed.y) <= 4
+          : Math.abs(curY + curH - (savedCollapsed.y + savedCollapsed.height)) <= 8)
+      ) {
+        // Widget wasn't dragged elsewhere while expanded -> restore exact initial Y
+        restoreY = savedCollapsed.y;
+      } else if (widgetExpandDirection === 'down') {
+        // Minimize upwards to current top edge
+        restoreY = curY;
+      } else {
+        // Minimize downwards to current bottom edge
+        restoreY = curY + curH - collapsedH;
+      }
+
+      collapsedBoundsBeforeExpand = null;
+      widgetWindow.setContentSize(curW, collapsedH);
+      widgetWindow.setPosition(curX, restoreY);
+      store.updateSettings({ widgetPosition: { x: curX, y: restoreY } });
     }
 
-    const newX = Math.max(
-      workArea.x + 4,
-      Math.min(curX, workArea.x + workArea.width - nextW - 4)
-    );
-
-    widgetWindow.setContentSize(nextW, target.height);
-    widgetWindow.setPosition(newX, newY);
     return widgetExpandDirection;
   });
 

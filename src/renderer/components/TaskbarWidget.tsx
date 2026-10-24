@@ -33,6 +33,15 @@ export const TaskbarWidget: React.FC = () => {
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
   const sensorsStripRef = useRef<HTMLDivElement | null>(null);
+  const expandedRef = useRef<boolean>(false);
+  expandedRef.current = expanded;
+  const preExpandRectRef = useRef<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    dir: 'up' | 'down';
+  } | null>(null);
   const resizeRef = useRef<{
     resizing: boolean;
     startX: number;
@@ -115,13 +124,12 @@ export const TaskbarWidget: React.FC = () => {
         contentWidth += (children.length - 1) * 6;
       }
       const targetWidth = Math.max(220, Math.ceil(contentWidth + 78));
-      const targetHeight = expanded ? 215 : 48;
+      const targetHeight = expandedRef.current ? 215 : 48;
       window.winatmo.resizeWidget(targetWidth, targetHeight);
     }, 30);
     return () => clearTimeout(timer);
   }, [
     pinnedIdsKey,
-    stations.length,
     settings?.temperatureUnit,
     settings?.pressureUnit,
     settings?.windUnit,
@@ -160,16 +168,42 @@ export const TaskbarWidget: React.FC = () => {
 
   const toggleExpand = async () => {
     const next = !expanded;
+    const curX = window.screenX;
+    const curY = window.screenY;
+    const curW = window.innerWidth;
+    const curH = window.innerHeight || 48;
+
     if (next) {
-      const isTopHalf =
-        window.screenY + window.innerHeight / 2 < window.screen.availHeight / 2;
-      setExpandDirection(isTopHalf ? 'down' : 'up');
-    }
-    const dir = await window.winatmo.setWidgetExpanded(next);
-    if (dir === 'up' || dir === 'down') {
+      const isTopHalf = curY + curH / 2 < window.screen.availHeight / 2;
+      const dir: 'up' | 'down' = isTopHalf ? 'down' : 'up';
+      preExpandRectRef.current = { x: curX, y: curY, w: curW, h: curH, dir };
       setExpandDirection(dir);
+      setExpanded(true);
+
+      if (dir === 'down') {
+        // Top half of display: top-left (x, y) stays anchored; simply increase height downwards!
+        window.winatmo.resizeWidget(curW, 215);
+      } else {
+        // Bottom half of display: expand upwards while preserving exact width
+        await window.winatmo.setWidgetExpanded(true);
+        window.winatmo.resizeWidget(curW, 215);
+      }
+    } else {
+      const saved = preExpandRectRef.current;
+      const dir = saved?.dir || expandDirection;
+      const collapsedH = saved?.h || 48;
+      setExpanded(false);
+
+      if (dir === 'down') {
+        // Top half of display: top-left (x, y) stays anchored; simply shrink height upwards!
+        window.winatmo.resizeWidget(curW, collapsedH);
+      } else {
+        // Bottom half of display: collapse downwards back to bottom edge while preserving exact width
+        await window.winatmo.setWidgetExpanded(false);
+        window.winatmo.resizeWidget(curW, collapsedH);
+      }
+      preExpandRectRef.current = null;
     }
-    setExpanded(next);
   };
 
   const handleRefresh = async (e: React.MouseEvent) => {
