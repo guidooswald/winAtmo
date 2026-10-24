@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:window": "explorer.exe run-dev.bat",
     "dev:renderer": "vite",
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/main.ts --bundle --platform=node --target=node22 --outfile=dist/main/main.js --external:electron --external:node:sqlite && esbuild src/main/preload.ts --bundle --platform=node --target=node22 --outfile=dist/main/preload.js --external:electron && node scripts/brand-exe.mjs",
