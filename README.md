@@ -81,3 +81,9 @@ Or double-click **`run.bat`** to build (if needed) and launch the native Windows
 ```powershell
 npm run dev
 ```
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE) • Copyright © 2026 [Guido Oswald](https://guido.swiss)
