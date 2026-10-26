@@ -6,6 +6,18 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 
+function stopExistingInstances() {
+  if (process.platform === 'win32') {
+    try {
+      execSync('taskkill /F /IM winAtmo.exe /T', { stdio: 'ignore' });
+    } catch {
+      // No running winAtmo.exe instance
+    }
+  }
+}
+
+stopExistingInstances();
+
 const electronBin = path.join(
   rootDir,
   'node_modules',
