@@ -21,6 +21,7 @@ export interface WinAtmoAPI {
   toggleWidget: (enabled?: boolean) => Promise<UserSettings>;
   resetWidgetPosition: () => Promise<UserSettings>;
   setWidgetExpanded: (expanded: boolean) => Promise<'up' | 'down'>;
+  getWidgetExpandDirection: () => Promise<'up' | 'down'>;
   moveWidgetBy: (dx: number, dy: number) => void;
   resizeWidget: (width: number, height: number) => void;
 
@@ -85,6 +86,7 @@ export interface WinAtmoAPI {
   onStationsUpdated: (cb: (stations: WeatherStation[]) => void) => () => void;
   onSyncProgress: (cb: (progress: SyncProgress) => void) => () => void;
   onSettingsUpdated: (cb: (settings: UserSettings) => void) => () => void;
+  onWidgetDirectionUpdated: (cb: (dir: 'up' | 'down') => void) => () => void;
   onFocusSensor: (
     cb: (payload: { moduleId: string; metric?: string }) => void
   ) => () => void;
@@ -102,6 +104,8 @@ const api: WinAtmoAPI = {
   resetWidgetPosition: () => ipcRenderer.invoke('widget:reset-position'),
   setWidgetExpanded: (expanded: boolean) =>
     ipcRenderer.invoke('widget:set-expanded', expanded),
+  getWidgetExpandDirection: () =>
+    ipcRenderer.invoke('widget:get-expand-direction'),
   moveWidgetBy: (dx: number, dy: number) =>
     ipcRenderer.send('widget:move-by', { dx, dy }),
   resizeWidget: (width: number, height: number) =>
@@ -148,6 +152,11 @@ const api: WinAtmoAPI = {
     const handler = (_e: any, settings: UserSettings) => cb(settings);
     ipcRenderer.on('settings:updated', handler);
     return () => ipcRenderer.removeListener('settings:updated', handler);
+  },
+  onWidgetDirectionUpdated: (cb) => {
+    const handler = (_e: any, dir: 'up' | 'down') => cb(dir);
+    ipcRenderer.on('widget:direction-updated', handler);
+    return () => ipcRenderer.removeListener('widget:direction-updated', handler);
   },
   onFocusSensor: (cb) => {
     const handler = (
