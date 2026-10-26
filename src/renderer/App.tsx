@@ -270,19 +270,19 @@ const MainStudioApp: React.FC = () => {
             onChange={(e) =>
               handleUpdateSettings({ theme: e.target.value as ThemeId })
             }
-            title="Switch color theme (Dark & Light)"
+            title="Switch complete visual theme & density"
           >
             <optgroup label="Dark Themes">
               {darkThemes.map((t) => (
                 <option key={t.id} value={t.id}>
-                  🌙 {t.name}
+                  🌙 {t.familyTitle}: {t.name} ({t.styleLabel.split('•')[0].trim()})
                 </option>
               ))}
             </optgroup>
             <optgroup label="Light Themes">
               {lightThemes.map((t) => (
                 <option key={t.id} value={t.id}>
-                  ☀️ {t.name}
+                  ☀️ {t.familyTitle}: {t.name} ({t.styleLabel.split('•')[0].trim()})
                 </option>
               ))}
             </optgroup>

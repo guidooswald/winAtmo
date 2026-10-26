@@ -51,7 +51,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   pressureUnit: 'mbar',
   windUnit: 'kph',
   rainUnit: 'mm',
-  theme: 'dark',
+  theme: 'fluent-dark',
   widgetEnabled: true,
   widgetAlwaysOnTop: true,
   widgetLocked: false,

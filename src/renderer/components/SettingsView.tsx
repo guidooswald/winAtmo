@@ -84,6 +84,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setCustomDaysInput(settings.historyDays);
   }, [settings.historyDays]);
 
+  const themeFamilies = useMemo(() => {
+    const familyMap = new Map<
+      string,
+      {
+        id: string;
+        title: string;
+        styleLabel: string;
+        dark?: (typeof THEMES)[0];
+        light?: (typeof THEMES)[0];
+      }
+    >();
+
+    for (const t of THEMES) {
+      if (!familyMap.has(t.family)) {
+        familyMap.set(t.family, {
+          id: t.family,
+          title: t.familyTitle,
+          styleLabel: t.styleLabel,
+        });
+      }
+      const entry = familyMap.get(t.family)!;
+      if (t.mode === 'dark') {
+        entry.dark = t;
+      } else {
+        entry.light = t;
+      }
+    }
+
+    return Array.from(familyMap.values());
+  }, []);
+
   // Build discovered station sensor options for the taskbar icon selector
   const stationSensorOptions = useMemo(() => {
     const list: Array<{ value: string; label: string }> = [];
@@ -828,81 +859,89 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* 4. Appearance, Themes & Units */}
+      {/* 4. Appearance, Themes & Styles */}
       <div className="settings-card">
         <div className="settings-card-header">
           <div className="settings-title-group">
             <Palette size={18} className="accent-icon" />
             <div>
-              <h3>Appearance & Color Themes</h3>
+              <h3>Appearance, Themes & Geometry</h3>
               <p>
-                Choose from 12 popular dark and light color themes for winAtmo
-                Studio and the floating Windows Taskbar Widget.
+                Each theme family completely transforms winAtmo's visual style: corner rounding vs. squared, fonts, density, and spacing — each paired with a Dark and Light mode.
               </p>
             </div>
           </div>
           <span className="active-window-badge">
-            {getThemeDefinition(settings.theme).name}
+            {getThemeDefinition(settings.theme).name} ({getThemeDefinition(settings.theme).styleLabel.split('•')[0].trim()})
           </span>
         </div>
 
-        <div className="theme-category-label">
-          <Moon size={13} /> Popular Dark Themes
-        </div>
-        <div className="theme-cards-grid">
-          {THEMES.filter((t) => t.mode === 'dark').map((theme) => (
-            <button
-              key={theme.id}
-              type="button"
-              className={`theme-swatch-card ${
-                settings.theme === theme.id ? 'active' : ''
-              }`}
-              onClick={() => onUpdateSettings({ theme: theme.id })}
-            >
-              <div className="theme-swatch-info">
-                <span className="theme-swatch-title">{theme.name}</span>
-                <span className="theme-swatch-sub">{theme.subtitle}</span>
+        <div className="theme-families-container">
+          {themeFamilies.map((fam) => (
+            <div key={fam.id} className="theme-family-card">
+              <div className="theme-family-header">
+                <div className="theme-family-title-wrap">
+                  <h4 className="theme-family-title">{fam.title}</h4>
+                  <span className="theme-family-badge">{fam.styleLabel}</span>
+                </div>
               </div>
-              <div className="theme-swatch-dots">
-                {theme.swatches.map((hex, i) => (
-                  <span
-                    key={i}
-                    className="theme-swatch-dot"
-                    style={{ backgroundColor: hex }}
-                  />
-                ))}
+              <div className="theme-family-pair-grid">
+                {fam.dark && (
+                  <button
+                    key={fam.dark.id}
+                    type="button"
+                    className={`theme-swatch-card ${
+                      settings.theme === fam.dark.id ? 'active' : ''
+                    }`}
+                    onClick={() => onUpdateSettings({ theme: fam.dark!.id })}
+                  >
+                    <div className="theme-swatch-info">
+                      <div className="theme-mode-label">
+                        <Moon size={12} />
+                        <span className="theme-swatch-title">{fam.dark.name}</span>
+                      </div>
+                      <span className="theme-swatch-sub">{fam.dark.subtitle}</span>
+                    </div>
+                    <div className="theme-swatch-dots">
+                      {fam.dark.swatches.map((hex, i) => (
+                        <span
+                          key={i}
+                          className="theme-swatch-dot"
+                          style={{ backgroundColor: hex }}
+                        />
+                      ))}
+                    </div>
+                  </button>
+                )}
+                {fam.light && (
+                  <button
+                    key={fam.light.id}
+                    type="button"
+                    className={`theme-swatch-card ${
+                      settings.theme === fam.light.id ? 'active' : ''
+                    }`}
+                    onClick={() => onUpdateSettings({ theme: fam.light!.id })}
+                  >
+                    <div className="theme-swatch-info">
+                      <div className="theme-mode-label">
+                        <Sun size={12} />
+                        <span className="theme-swatch-title">{fam.light.name}</span>
+                      </div>
+                      <span className="theme-swatch-sub">{fam.light.subtitle}</span>
+                    </div>
+                    <div className="theme-swatch-dots">
+                      {fam.light.swatches.map((hex, i) => (
+                        <span
+                          key={i}
+                          className="theme-swatch-dot"
+                          style={{ backgroundColor: hex }}
+                        />
+                      ))}
+                    </div>
+                  </button>
+                )}
               </div>
-            </button>
-          ))}
-        </div>
-
-        <div className="theme-category-label">
-          <Sun size={13} /> Popular Light Themes
-        </div>
-        <div className="theme-cards-grid">
-          {THEMES.filter((t) => t.mode === 'light').map((theme) => (
-            <button
-              key={theme.id}
-              type="button"
-              className={`theme-swatch-card ${
-                settings.theme === theme.id ? 'active' : ''
-              }`}
-              onClick={() => onUpdateSettings({ theme: theme.id })}
-            >
-              <div className="theme-swatch-info">
-                <span className="theme-swatch-title">{theme.name}</span>
-                <span className="theme-swatch-sub">{theme.subtitle}</span>
-              </div>
-              <div className="theme-swatch-dots">
-                {theme.swatches.map((hex, i) => (
-                  <span
-                    key={i}
-                    className="theme-swatch-dot"
-                    style={{ backgroundColor: hex }}
-                  />
-                ))}
-              </div>
-            </button>
+            </div>
           ))}
         </div>
       </div>

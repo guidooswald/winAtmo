@@ -99,41 +99,58 @@ function showMainWindow(focusModuleId?: string, focusMetric?: string): void {
 }
 
 const LIGHT_THEME_IDS = new Set([
+  'fluent-light',
+  'compact-light',
+  'terminal-light',
+  'nord-light',
+  'brutal-light',
+  'soft-light',
+  // Legacy aliases
   'light',
   'catppuccin-latte',
   'solarized-light',
-  'nord-light',
   'rose-pine-dawn',
   'github-light',
 ]);
 
 const THEME_BG_COLORS: Record<string, string> = {
-  dark: '#090d16',
-  'catppuccin-mocha': '#1e1e2e',
-  'tokyo-night': '#1a1b26',
-  dracula: '#282a36',
+  'fluent-dark': '#090d16',
+  'fluent-light': '#f8fafc',
+  'compact-dark': '#0c1017',
+  'compact-light': '#f3f4f6',
+  'terminal-dark': '#05080c',
+  'terminal-light': '#fcfcfc',
   'nord-dark': '#2e3440',
-  'oled-black': '#000000',
-  light: '#f1f5f9',
-  'catppuccin-latte': '#eff1f5',
-  'solarized-light': '#fdf6e3',
-  'nord-light': '#e5e9f0',
-  'rose-pine-dawn': '#faf4ed',
-  'github-light': '#f6f8fa',
+  'nord-light': '#eceff4',
+  'brutal-dark': '#0a0a0a',
+  'brutal-light': '#fafafa',
+  'soft-dark': '#181622',
+  'soft-light': '#fffbeb',
+  // Legacy aliases
+  dark: '#090d16',
+  light: '#f8fafc',
+  'catppuccin-mocha': '#090d16',
+  'catppuccin-latte': '#f8fafc',
+  'tokyo-night': '#05080c',
+  dracula: '#090d16',
+  'oled-black': '#05080c',
+  'solarized-light': '#fffbeb',
+  'rose-pine-dawn': '#fffbeb',
+  'github-light': '#f8fafc',
 };
 
 function applyNativeWindowTheme(themeId?: string): void {
-  const id = themeId || 'dark';
+  const id = themeId || 'fluent-dark';
   const isLight = LIGHT_THEME_IDS.has(id);
   nativeTheme.themeSource = isLight ? 'light' : 'dark';
   if (mainWindow && !mainWindow.isDestroyed()) {
-    const bg = THEME_BG_COLORS[id] || (isLight ? '#f1f5f9' : '#090d16');
+    const bg = THEME_BG_COLORS[id] || (isLight ? '#f8fafc' : '#090d16');
     mainWindow.setBackgroundColor(bg);
   }
 }
 
 function createMainWindow(): void {
-  const currentTheme = store ? store.getSettings().theme : 'dark';
+  const currentTheme = store ? store.getSettings().theme : 'fluent-dark';
   applyNativeWindowTheme(currentTheme);
   const initialBg = THEME_BG_COLORS[currentTheme] || '#090d16';
 

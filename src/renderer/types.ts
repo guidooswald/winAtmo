@@ -191,16 +191,34 @@ export interface AccountInfo {
 }
 
 export type ThemeId =
+  // 1. Modern Fluent (14px Smooth Rounded • Segoe UI)
+  | 'fluent-dark'
+  | 'fluent-light'
+  // 2. Compact Density (Small 11px Font • 6px Gaps • 4px Radius)
+  | 'compact-dark'
+  | 'compact-light'
+  // 3. Cyber Terminal (0px Squared • Cascadia Monospace)
+  | 'terminal-dark'
+  | 'terminal-light'
+  // 4. Nordic Minimalist (10px Balanced • System Sans)
+  | 'nord-dark'
+  | 'nord-light'
+  // 5. Neo-Brutalist (2px Hard Edge • 2px Thick Borders)
+  | 'brutal-dark'
+  | 'brutal-light'
+  // 6. Soft Organic (20px Soft Pill • Quicksand / Rounded)
+  | 'soft-dark'
+  | 'soft-light'
+  // Legacy aliases for backward compatibility:
   | 'dark'
+  | 'light'
   | 'catppuccin-mocha'
+  | 'catppuccin-latte'
   | 'tokyo-night'
   | 'dracula'
   | 'nord-dark'
   | 'oled-black'
-  | 'light'
-  | 'catppuccin-latte'
   | 'solarized-light'
-  | 'nord-light'
   | 'rose-pine-dawn'
   | 'github-light';
 
