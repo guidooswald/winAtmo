@@ -154,9 +154,16 @@ function createMainWindow(): void {
   applyNativeWindowTheme(currentTheme);
   const initialBg = THEME_BG_COLORS[currentTheme] || '#090d16';
 
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+
+  // 30% larger default startup window (1340 x 860 -> 1742 x 1118), safely clamped to display workArea
+  const defaultWidth = Math.min(1742, Math.max(1020, workArea.width - 24));
+  const defaultHeight = Math.min(1118, Math.max(680, workArea.height - 24));
+
   mainWindow = new BrowserWindow({
-    width: 1340,
-    height: 860,
+    width: defaultWidth,
+    height: defaultHeight,
     minWidth: 1020,
     minHeight: 680,
     center: true,

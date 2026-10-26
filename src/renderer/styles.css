@@ -212,6 +212,61 @@ body {
   flex-shrink: 0;
 }
 
+.window-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+}
+
+.window-topbar-theme-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.topbar-theme-palette-icon {
+  color: var(--accent-sky);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.topbar-theme-select {
+  padding: 2px 8px;
+  height: 23px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  border: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-family-app, var(--font-sans));
+  cursor: pointer;
+  outline: none;
+  max-width: 250px;
+  text-overflow: ellipsis;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.topbar-theme-select:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+.topbar-theme-select option {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.topbar-theme-select optgroup {
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .window-topbar-controls {
   display: flex;
   align-items: center;
@@ -262,6 +317,13 @@ body {
   width: 38px;
 }
 
+[data-theme-family="compact"] .topbar-theme-select {
+  height: 20px;
+  font-size: 10px;
+  padding: 1px 6px;
+  max-width: 210px;
+}
+
 [data-theme-family="terminal"] .window-topbar {
   font-family: var(--font-family-mono);
   font-size: 10.5px;
@@ -275,8 +337,14 @@ body {
 
 [data-theme-family="terminal"] .window-topbar-station-badge,
 [data-theme-family="terminal"] .topbar-station-dot,
-[data-theme-family="terminal"] .window-control-btn {
+[data-theme-family="terminal"] .window-control-btn,
+[data-theme-family="terminal"] .topbar-theme-select {
   border-radius: 0;
+}
+
+[data-theme-family="terminal"] .topbar-theme-select {
+  font-family: var(--font-family-mono);
+  text-transform: uppercase;
 }
 
 [data-theme-family="brutal"] .window-topbar {
@@ -294,12 +362,23 @@ body {
   border-left: 1px solid var(--border-subtle);
 }
 
+[data-theme-family="brutal"] .topbar-theme-select {
+  border: 1.5px solid var(--border-strong);
+  border-radius: 2px;
+  font-weight: 700;
+}
+
 [data-theme-family="soft"] .window-topbar {
   font-family: 'Quicksand', var(--font-sans);
 }
 
 [data-theme-family="soft"] .window-topbar-station-badge {
   border-radius: 999px;
+}
+
+[data-theme-family="soft"] .topbar-theme-select {
+  border-radius: 999px;
+  font-family: 'Quicksand', var(--font-sans);
 }
 
 /* Light Mode Polish */

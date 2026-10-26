@@ -224,11 +224,13 @@ const MainStudioApp: React.FC = () => {
         window.winatmo?.platform || 'win32'
       }`}
     >
-      {/* Theme-Synced Window Top Bar */}
+      {/* Theme-Synced Window Top Bar with Integrated Theme Selector & Controls */}
       <WindowTopBar
         title="winAtmo"
         subtitle="Netatmo Weather & Air Quality Studio"
         activeStationName={primaryStationName}
+        currentTheme={settings.theme}
+        onThemeChange={(theme) => handleUpdateSettings({ theme })}
       />
 
       {/* Top Navigation & Status Header */}
@@ -270,30 +272,6 @@ const MainStudioApp: React.FC = () => {
         </nav>
 
         <div className="header-right-controls">
-          <select
-            className="header-theme-select"
-            value={settings.theme}
-            onChange={(e) =>
-              handleUpdateSettings({ theme: e.target.value as ThemeId })
-            }
-            title="Switch complete visual theme & density"
-          >
-            <optgroup label="Dark Themes">
-              {darkThemes.map((t) => (
-                <option key={t.id} value={t.id}>
-                  🌙 {t.familyTitle}: {t.name} ({t.styleLabel.split('•')[0].trim()})
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="Light Themes">
-              {lightThemes.map((t) => (
-                <option key={t.id} value={t.id}>
-                  ☀️ {t.familyTitle}: {t.name} ({t.styleLabel.split('•')[0].trim()})
-                </option>
-              ))}
-            </optgroup>
-          </select>
-
           <button
             className={`header-btn ${settings.widgetEnabled ? 'widget-on' : ''}`}
             onClick={() => window.winatmo.toggleWidget()}

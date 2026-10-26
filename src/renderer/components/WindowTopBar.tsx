@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { CloudSun } from 'lucide-react';
+import { CloudSun, Palette } from 'lucide-react';
+import { ThemeId } from '../types';
+import { THEMES } from '../utils/themes';
 
 interface WindowTopBarProps {
   title?: string;
   subtitle?: string;
   activeStationName?: string;
+  currentTheme?: ThemeId;
+  onThemeChange?: (theme: ThemeId) => void;
 }
 
 const MinimizeIcon: React.FC = () => (
@@ -58,6 +62,8 @@ export const WindowTopBar: React.FC<WindowTopBarProps> = ({
   title = 'winAtmo',
   subtitle = 'Netatmo Weather & Air Quality Studio',
   activeStationName,
+  currentTheme,
+  onThemeChange,
 }) => {
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -92,6 +98,9 @@ export const WindowTopBar: React.FC<WindowTopBarProps> = ({
     window.winatmo?.maximizeWindow();
   };
 
+  const darkThemes = THEMES.filter((t) => t.mode === 'dark');
+  const lightThemes = THEMES.filter((t) => t.mode === 'light');
+
   return (
     <div className="window-topbar" onDoubleClick={handleDoubleClick}>
       <div className="window-topbar-drag">
@@ -117,34 +126,65 @@ export const WindowTopBar: React.FC<WindowTopBarProps> = ({
           </div>
         )}
 
-        <div className="window-topbar-controls">
-          <button
-            className="window-control-btn min"
-            onClick={handleMinimize}
-            title="Minimize"
-            type="button"
-            tabIndex={-1}
-          >
-            <MinimizeIcon />
-          </button>
-          <button
-            className="window-control-btn max"
-            onClick={handleMaximize}
-            title={isMaximized ? 'Restore Down' : 'Maximize'}
-            type="button"
-            tabIndex={-1}
-          >
-            {isMaximized ? <RestoreIcon /> : <MaximizeIcon />}
-          </button>
-          <button
-            className="window-control-btn close"
-            onClick={handleClose}
-            title="Close"
-            type="button"
-            tabIndex={-1}
-          >
-            <CloseIcon />
-          </button>
+        <div className="window-topbar-right">
+          {currentTheme && onThemeChange && (
+            <div className="window-topbar-theme-group">
+              <Palette size={12} className="topbar-theme-palette-icon" />
+              <select
+                className="topbar-theme-select"
+                value={currentTheme}
+                onChange={(e) => onThemeChange(e.target.value as ThemeId)}
+                title="Switch complete visual theme & density"
+              >
+                <optgroup label="Dark Themes">
+                  {darkThemes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      🌙 {t.familyTitle}: {t.name} (
+                      {t.styleLabel.split('•')[0].trim()})
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Light Themes">
+                  {lightThemes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      ☀️ {t.familyTitle}: {t.name} (
+                      {t.styleLabel.split('•')[0].trim()})
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+          )}
+
+          <div className="window-topbar-controls">
+            <button
+              className="window-control-btn min"
+              onClick={handleMinimize}
+              title="Minimize"
+              type="button"
+              tabIndex={-1}
+            >
+              <MinimizeIcon />
+            </button>
+            <button
+              className="window-control-btn max"
+              onClick={handleMaximize}
+              title={isMaximized ? 'Restore Down' : 'Maximize'}
+              type="button"
+              tabIndex={-1}
+            >
+              {isMaximized ? <RestoreIcon /> : <MaximizeIcon />}
+            </button>
+            <button
+              className="window-control-btn close"
+              onClick={handleClose}
+              title="Close"
+              type="button"
+              tabIndex={-1}
+            >
+              <CloseIcon />
+            </button>
+          </div>
         </div>
       </div>
     </div>
