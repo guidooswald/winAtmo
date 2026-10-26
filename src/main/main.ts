@@ -196,8 +196,9 @@ function saveWidgetSize(): void {
   } else {
     const cur = store.getSettings().widgetSize;
     const collapsedH = collapsedBoundsBeforeExpand?.height || cur?.height || 48;
+    const collapsedW = collapsedBoundsBeforeExpand?.width || cur?.width || w;
     store.updateSettings({
-      widgetSize: { width: w, height: collapsedH },
+      widgetSize: { width: collapsedW, height: collapsedH },
     });
   }
 }
@@ -524,8 +525,12 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
         workArea.y + 4,
         Math.min(cur.y, workArea.y + workArea.height - bounds.height - 4)
       );
-      widgetWindow.setContentSize(bounds.width, bounds.height);
-      widgetWindow.setPosition(nextX, nextY);
+      widgetWindow.setBounds({
+        x: nextX,
+        y: nextY,
+        width: bounds.width,
+        height: bounds.height,
+      });
     }
     widgetWindow.showInactive();
     return;
@@ -939,8 +944,9 @@ function registerIpcHandlers(): void {
       }
 
       isWidgetExpanded = true;
-      // Keep current width (never resize width when expanding)
-      widgetTargetSize = { width: curW, height: expandedHeight };
+      const targetWidth = collapsedBoundsBeforeExpand ? collapsedBoundsBeforeExpand.width : curW;
+      // Keep current width strictly fixed (never resize width when expanding)
+      widgetTargetSize = { width: targetWidth, height: expandedHeight };
 
       let newY: number;
       if (widgetExpandDirection === 'down') {
@@ -957,17 +963,23 @@ function registerIpcHandlers(): void {
 
       const newX = Math.max(
         workArea.x + 4,
-        Math.min(curX, workArea.x + workArea.width - curW - 4)
+        Math.min(curX, workArea.x + workArea.width - targetWidth - 4)
       );
 
-      widgetWindow.setContentSize(curW, expandedHeight);
-      widgetWindow.setPosition(newX, newY);
+      // Atomically set position and bounds to avoid Windows clamping width to screen boundary
+      widgetWindow.setBounds({
+        x: newX,
+        y: newY,
+        width: targetWidth,
+        height: expandedHeight,
+      });
     } else {
       // Closing charts: restore the initial collapsed position & size before expanding
       const savedCollapsed = collapsedBoundsBeforeExpand;
       const collapsedH = savedCollapsed ? savedCollapsed.height : 48;
+      const targetWidth = savedCollapsed ? savedCollapsed.width : curW;
       isWidgetExpanded = false;
-      widgetTargetSize = { width: curW, height: collapsedH };
+      widgetTargetSize = { width: targetWidth, height: collapsedH };
 
       let restoreY: number;
       if (
@@ -993,15 +1005,19 @@ function registerIpcHandlers(): void {
       );
       const newX = Math.max(
         workArea.x + 4,
-        Math.min(curX, workArea.x + workArea.width - curW - 4)
+        Math.min(curX, workArea.x + workArea.width - targetWidth - 4)
       );
 
       collapsedBoundsBeforeExpand = null;
-      widgetWindow.setContentSize(curW, collapsedH);
-      widgetWindow.setPosition(newX, restoreY);
+      widgetWindow.setBounds({
+        x: newX,
+        y: restoreY,
+        width: targetWidth,
+        height: collapsedH,
+      });
       store.updateSettings({
         widgetPosition: { x: newX, y: restoreY },
-        widgetSize: { width: curW, height: collapsedH },
+        widgetSize: { width: targetWidth, height: collapsedH },
       });
     }
 
@@ -1014,8 +1030,12 @@ function registerIpcHandlers(): void {
     const [curX, curY] = widgetWindow.getPosition();
     const nextX = Math.round(curX + delta.dx);
     const nextY = Math.round(curY + delta.dy);
-    widgetWindow.setPosition(nextX, nextY);
-    widgetWindow.setContentSize(widgetTargetSize.width, widgetTargetSize.height);
+    widgetWindow.setBounds({
+      x: nextX,
+      y: nextY,
+      width: widgetTargetSize.width,
+      height: widgetTargetSize.height,
+    });
   });
 
   ipcMain.on(
@@ -1034,8 +1054,6 @@ function registerIpcHandlers(): void {
       const h = Math.max(36, Math.round(size.height));
       widgetTargetSize = { width: w, height: h };
 
-      widgetWindow.setContentSize(w, h);
-
       let nextX = curX;
       if (curX + w > workArea.x + workArea.width - 4) {
         nextX = Math.max(workArea.x + 4, workArea.x + workArea.width - w - 8);
@@ -1043,9 +1061,12 @@ function registerIpcHandlers(): void {
         nextX = workArea.x + 4;
       }
 
-      if (nextX !== curX) {
-        widgetWindow.setPosition(nextX, curY);
-      }
+      widgetWindow.setBounds({
+        x: nextX,
+        y: curY,
+        width: w,
+        height: h,
+      });
 
       debouncedSaveWidgetSize();
     }

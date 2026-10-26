@@ -112,7 +112,7 @@ export const TaskbarWidget: React.FC = () => {
   const pinnedIdsKey = activePins.map((p) => p.id).join('|');
 
   const measureAndResize = () => {
-    if (!settings || resizeRef.current.resizing) return;
+    if (!settings || resizeRef.current.resizing || expandedRef.current) return;
     const stripEl = sensorsStripRef.current;
     if (!stripEl) return;
 
