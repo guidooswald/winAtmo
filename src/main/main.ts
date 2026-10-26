@@ -149,8 +149,69 @@ function applyNativeWindowTheme(themeId?: string): void {
   }
 }
 
+let mainBoundsSaveTimeout: NodeJS.Timeout | null = null;
+function saveMainWindowBounds(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
+  const currentSettings = store.getSettings();
+  if (mainWindow.isMaximized()) {
+    const curBounds = currentSettings.mainWindowBounds;
+    store.updateSettings({
+      mainWindowBounds: {
+        width: curBounds?.width || 1340,
+        height: curBounds?.height || 860,
+        x: curBounds?.x,
+        y: curBounds?.y,
+        isMaximized: true,
+      },
+    });
+  } else {
+    const bounds = mainWindow.getBounds();
+    store.updateSettings({
+      mainWindowBounds: {
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y,
+        isMaximized: false,
+      },
+    });
+  }
+}
+
+function debouncedSaveMainBounds(): void {
+  if (mainBoundsSaveTimeout) clearTimeout(mainBoundsSaveTimeout);
+  mainBoundsSaveTimeout = setTimeout(() => {
+    saveMainWindowBounds();
+  }, 250);
+}
+
+let widgetSizeSaveTimeout: NodeJS.Timeout | null = null;
+function saveWidgetSize(): void {
+  if (!widgetWindow || widgetWindow.isDestroyed()) return;
+  const [w, h] = widgetWindow.getContentSize();
+  if (!isWidgetExpanded) {
+    store.updateSettings({
+      widgetSize: { width: w, height: h },
+    });
+  } else {
+    const cur = store.getSettings().widgetSize;
+    const collapsedH = collapsedBoundsBeforeExpand?.height || cur?.height || 48;
+    store.updateSettings({
+      widgetSize: { width: w, height: collapsedH },
+    });
+  }
+}
+
+function debouncedSaveWidgetSize(): void {
+  if (widgetSizeSaveTimeout) clearTimeout(widgetSizeSaveTimeout);
+  widgetSizeSaveTimeout = setTimeout(() => {
+    saveWidgetSize();
+  }, 250);
+}
+
 function createMainWindow(): void {
-  const currentTheme = store ? store.getSettings().theme : 'fluent-dark';
+  const settings = store ? store.getSettings() : null;
+  const currentTheme = settings ? settings.theme : 'fluent-dark';
   applyNativeWindowTheme(currentTheme);
   const initialBg = THEME_BG_COLORS[currentTheme] || '#090d16';
 
@@ -161,12 +222,73 @@ function createMainWindow(): void {
   const defaultWidth = Math.min(1742, Math.max(1020, workArea.width - 24));
   const defaultHeight = Math.min(1118, Math.max(680, workArea.height - 24));
 
+  const savedBounds = settings?.mainWindowBounds;
+  let targetWidth = defaultWidth;
+  let targetHeight = defaultHeight;
+  let targetX: number | undefined;
+  let targetY: number | undefined;
+
+  if (
+    savedBounds &&
+    typeof savedBounds.width === 'number' &&
+    typeof savedBounds.height === 'number'
+  ) {
+    let targetDisplay = primaryDisplay;
+    if (
+      typeof savedBounds.x === 'number' &&
+      typeof savedBounds.y === 'number'
+    ) {
+      const displayCandidate = screen.getDisplayNearestPoint({
+        x: Math.round(savedBounds.x + savedBounds.width / 2),
+        y: Math.round(savedBounds.y + savedBounds.height / 2),
+      });
+      if (displayCandidate) {
+        targetDisplay = displayCandidate;
+      }
+    }
+
+    const targetWorkArea = targetDisplay.workArea;
+    targetWidth = Math.min(
+      targetWorkArea.width,
+      Math.max(1020, Math.round(savedBounds.width))
+    );
+    targetHeight = Math.min(
+      targetWorkArea.height,
+      Math.max(680, Math.round(savedBounds.height))
+    );
+
+    if (
+      typeof savedBounds.x === 'number' &&
+      typeof savedBounds.y === 'number'
+    ) {
+      const posX = Math.round(savedBounds.x);
+      const posY = Math.round(savedBounds.y);
+      if (
+        posX + 100 > targetWorkArea.x &&
+        posX < targetWorkArea.x + targetWorkArea.width - 100 &&
+        posY >= targetWorkArea.y &&
+        posY < targetWorkArea.y + targetWorkArea.height - 100
+      ) {
+        targetX = Math.max(
+          targetWorkArea.x,
+          Math.min(posX, targetWorkArea.x + targetWorkArea.width - targetWidth)
+        );
+        targetY = Math.max(
+          targetWorkArea.y,
+          Math.min(posY, targetWorkArea.y + targetWorkArea.height - targetHeight)
+        );
+      }
+    }
+  }
+
   mainWindow = new BrowserWindow({
-    width: defaultWidth,
-    height: defaultHeight,
+    width: targetWidth,
+    height: targetHeight,
+    x: targetX,
+    y: targetY,
     minWidth: 1020,
     minHeight: 680,
-    center: true,
+    center: targetX === undefined || targetY === undefined,
     backgroundColor: initialBg,
     darkTheme: !LIGHT_THEME_IDS.has(currentTheme),
     autoHideMenuBar: true,
@@ -182,18 +304,27 @@ function createMainWindow(): void {
     show: true,
   });
 
+  if (savedBounds?.isMaximized) {
+    mainWindow.maximize();
+  }
+
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   mainWindow.on('page-title-updated', (e) => {
     e.preventDefault();
   });
 
+  mainWindow.on('resize', debouncedSaveMainBounds);
+  mainWindow.on('moved', debouncedSaveMainBounds);
+
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('window:maximized-change', true);
+    debouncedSaveMainBounds();
   });
 
   mainWindow.on('unmaximize', () => {
     mainWindow?.webContents.send('window:maximized-change', false);
+    debouncedSaveMainBounds();
   });
 
   // Explicitly call show() & focus() after construction to override Win32 STARTUPINFO SW_HIDE when spawned from IDE terminals
@@ -233,8 +364,10 @@ function createMainWindow(): void {
   });
 
   mainWindow.on('close', (e) => {
-    const settings = store.getSettings();
-    if (!isQuitting && settings.minimizeToTray) {
+    if (mainBoundsSaveTimeout) clearTimeout(mainBoundsSaveTimeout);
+    saveMainWindowBounds();
+    const curSettings = store.getSettings();
+    if (!isQuitting && curSettings.minimizeToTray) {
       e.preventDefault();
       mainWindow?.hide();
     }
@@ -277,21 +410,27 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
   const pillWidth = isCompact ? 130 : 156;
   const extraPad = isCompact ? 72 : 78;
 
+  const minSensorsWidth = Math.max(200, pinnedCount * pillWidth + extraPad);
+  const defaultCollapsedHeight = isCompact ? 40 : 48;
+
   let width: number;
   let height: number;
 
   if (expanded) {
+    const savedW = settings.widgetSize?.width;
     width = Math.min(
       workArea.width - 16,
-      Math.max(320, pinnedCount * pillWidth + extraPad)
+      savedW ? Math.max(minSensorsWidth, Math.round(savedW)) : minSensorsWidth
     );
     height = 215;
   } else {
+    const savedW = settings.widgetSize?.width;
+    const savedH = settings.widgetSize?.height;
     width = Math.min(
       workArea.width - 16,
-      Math.max(200, pinnedCount * pillWidth + extraPad)
+      savedW ? Math.max(minSensorsWidth, Math.round(savedW)) : minSensorsWidth
     );
-    height = isCompact ? 40 : 48;
+    height = savedH ? Math.max(36, Math.round(savedH)) : defaultCollapsedHeight;
   }
 
   // Position cleanly docked on the resolved display
@@ -464,6 +603,13 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     }, 250);
   });
 
+  widgetWindow.on('resize', debouncedSaveWidgetSize);
+
+  widgetWindow.on('close', () => {
+    if (widgetSizeSaveTimeout) clearTimeout(widgetSizeSaveTimeout);
+    saveWidgetSize();
+  });
+
   widgetWindow.on('closed', () => {
     widgetWindow = null;
   });
@@ -612,7 +758,10 @@ function updateTrayTooltipAndMenu(): void {
     {
       label: 'Reset Taskbar Widget Position',
       click: () => {
-        const next = store.updateSettings({ widgetPosition: undefined });
+        const next = store.updateSettings({
+          widgetPosition: undefined,
+          widgetSize: undefined,
+        });
         if (widgetWindow && !widgetWindow.isDestroyed()) {
           const b = getDefaultWidgetBounds(false);
           widgetWindow.setBounds(b);
@@ -741,7 +890,10 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('widget:reset-position', () => {
-    const updated = store.updateSettings({ widgetPosition: undefined });
+    const updated = store.updateSettings({
+      widgetPosition: undefined,
+      widgetSize: undefined,
+    });
     if (widgetWindow && !widgetWindow.isDestroyed()) {
       const b = getDefaultWidgetBounds(isWidgetExpanded);
       widgetTargetSize = { width: b.width, height: b.height };
@@ -847,7 +999,10 @@ function registerIpcHandlers(): void {
       collapsedBoundsBeforeExpand = null;
       widgetWindow.setContentSize(curW, collapsedH);
       widgetWindow.setPosition(newX, restoreY);
-      store.updateSettings({ widgetPosition: { x: newX, y: restoreY } });
+      store.updateSettings({
+        widgetPosition: { x: newX, y: restoreY },
+        widgetSize: { width: curW, height: collapsedH },
+      });
     }
 
     return widgetExpandDirection;
@@ -891,6 +1046,8 @@ function registerIpcHandlers(): void {
       if (nextX !== curX) {
         widgetWindow.setPosition(nextX, curY);
       }
+
+      debouncedSaveWidgetSize();
     }
   );
 
@@ -1186,6 +1343,8 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  saveMainWindowBounds();
+  saveWidgetSize();
 });
 
 app.on('window-all-closed', () => {

@@ -132,9 +132,17 @@ export const TaskbarWidget: React.FC = () => {
     const isCompact = settings.theme?.startsWith('compact');
     // Extra room: drag handle (~18px) + gap (~6px) + toggle button (~24px) + gap (~6px) + padding (~16-20px) + grip margin
     const extraRoom = isCompact ? 72 : 82;
-    const targetWidth = Math.max(200, Math.ceil(contentWidth + extraRoom));
-    const collapsedHeight = isCompact ? 40 : 48;
-    const targetHeight = expandedRef.current ? 215 : collapsedHeight;
+    const minContentWidth = Math.max(200, Math.ceil(contentWidth + extraRoom));
+    const defaultCollapsedHeight = isCompact ? 40 : 48;
+
+    const targetWidth = settings.widgetSize?.width
+      ? Math.max(settings.widgetSize.width, minContentWidth)
+      : minContentWidth;
+    const targetHeight = expandedRef.current
+      ? 215
+      : (settings.widgetSize?.height
+          ? Math.max(settings.widgetSize.height, defaultCollapsedHeight)
+          : defaultCollapsedHeight);
 
     window.winatmo.resizeWidget(targetWidth, targetHeight);
   };

@@ -222,6 +222,14 @@ export type ThemeId =
   | 'rose-pine-dawn'
   | 'github-light';
 
+export interface MainWindowBounds {
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+  isMaximized?: boolean;
+}
+
 export interface UserSettings {
   historyDays: number; // Default 14 days, up to 3650+ or max
   historyMaxMode: boolean; // When true, loads from station's date_setup (max Netatmo allows)
@@ -238,6 +246,8 @@ export interface UserSettings {
   widgetOpacity: number;
   widgetCompact: boolean;
   widgetPosition?: { x: number; y: number };
+  widgetSize?: { width: number; height: number };
+  mainWindowBounds?: MainWindowBounds;
   pinnedSensors: PinnedSensorItem[];
   taskbarDisplayMode: 'sensor' | 'icon'; // Default 'sensor' (show sensor reading instead of icon in taskbar)
   taskbarSensorTarget: string; // Default 'outdoor_temp' (outside temperature)
