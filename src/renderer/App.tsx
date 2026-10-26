@@ -227,7 +227,6 @@ const MainStudioApp: React.FC = () => {
       {/* Theme-Synced Window Top Bar with Integrated Theme Selector & Controls */}
       <WindowTopBar
         title="winAtmo"
-        subtitle="Netatmo Weather & Air Quality Studio"
         activeStationName={primaryStationName}
         currentTheme={settings.theme}
         onThemeChange={(theme) => handleUpdateSettings({ theme })}

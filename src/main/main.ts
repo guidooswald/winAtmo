@@ -171,7 +171,7 @@ function createMainWindow(): void {
     darkTheme: !LIGHT_THEME_IDS.has(currentTheme),
     autoHideMenuBar: true,
     frame: false, // Completely remove OS title bar; use custom theme-matched top bar
-    title: 'winAtmo — Netatmo Weather & Air Quality Studio',
+    title: 'winAtmo',
     icon: createTrayNativeImage(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -183,6 +183,10 @@ function createMainWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  mainWindow.on('page-title-updated', (e) => {
+    e.preventDefault();
+  });
 
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('window:maximized-change', true);

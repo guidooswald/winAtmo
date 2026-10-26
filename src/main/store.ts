@@ -52,7 +52,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   windUnit: 'kph',
   rainUnit: 'mm',
   theme: 'fluent-dark',
-  widgetEnabled: true,
+  widgetEnabled: false,
   widgetAlwaysOnTop: true,
   widgetLocked: false,
   widgetOpacity: 0.94,

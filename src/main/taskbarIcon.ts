@@ -22,6 +22,7 @@ export async function initTaskbarIconRenderer(): Promise<void> {
   try {
     iconRendererWindow = new BrowserWindow({
       show: false,
+      skipTaskbar: true,
       width: 64,
       height: 64,
       webPreferences: {

@@ -60,7 +60,7 @@ const CloseIcon: React.FC = () => (
 
 export const WindowTopBar: React.FC<WindowTopBarProps> = ({
   title = 'winAtmo',
-  subtitle = 'Netatmo Weather & Air Quality Studio',
+  subtitle,
   activeStationName,
   currentTheme,
   onThemeChange,
