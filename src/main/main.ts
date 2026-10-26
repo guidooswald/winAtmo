@@ -139,6 +139,59 @@ const THEME_BG_COLORS: Record<string, string> = {
   'github-light': '#f8fafc',
 };
 
+const THEME_TOPBAR_COLORS: Record<
+  string,
+  { color: string; symbolColor: string }
+> = {
+  // 1. Modern Fluent
+  'fluent-dark': { color: '#0f172a', symbolColor: '#f8fafc' },
+  'fluent-light': { color: '#ffffff', symbolColor: '#0f172a' },
+  // 2. Compact Density
+  'compact-dark': { color: '#0f1621', symbolColor: '#f8fafc' },
+  'compact-light': { color: '#ffffff', symbolColor: '#111827' },
+  // 3. Cyber Terminal
+  'terminal-dark': { color: '#080e15', symbolColor: '#22c55e' },
+  'terminal-light': { color: '#ffffff', symbolColor: '#0f172a' },
+  // 4. Nordic Minimalist
+  'nord-dark': { color: '#2e3440', symbolColor: '#eceff4' },
+  'nord-light': { color: '#eceff4', symbolColor: '#2e3440' },
+  // 5. Neo-Brutalist
+  'brutal-dark': { color: '#121212', symbolColor: '#ffffff' },
+  'brutal-light': { color: '#ffffff', symbolColor: '#000000' },
+  // 6. Soft Organic
+  'soft-dark': { color: '#181622', symbolColor: '#f5d0fe' },
+  'soft-light': { color: '#fffbeb', symbolColor: '#78350f' },
+  // Legacy Aliases
+  dark: { color: '#0f172a', symbolColor: '#f8fafc' },
+  light: { color: '#ffffff', symbolColor: '#0f172a' },
+  'catppuccin-mocha': { color: '#0f172a', symbolColor: '#f8fafc' },
+  'catppuccin-latte': { color: '#ffffff', symbolColor: '#0f172a' },
+  'tokyo-night': { color: '#080e15', symbolColor: '#f8fafc' },
+  dracula: { color: '#0f172a', symbolColor: '#f8fafc' },
+  'oled-black': { color: '#05080c', symbolColor: '#f8fafc' },
+  'solarized-light': { color: '#fffbeb', symbolColor: '#78350f' },
+  'rose-pine-dawn': { color: '#fffbeb', symbolColor: '#78350f' },
+  'github-light': { color: '#ffffff', symbolColor: '#0f172a' },
+};
+
+function getTopBarOverlayConfig(themeId?: string): {
+  color: string;
+  symbolColor: string;
+  height: number;
+} {
+  const id = themeId || 'fluent-dark';
+  const isLight = LIGHT_THEME_IDS.has(id);
+  const cfg = THEME_TOPBAR_COLORS[id] || {
+    color: isLight ? '#ffffff' : '#0f172a',
+    symbolColor: isLight ? '#0f172a' : '#f8fafc',
+  };
+  return {
+    color: cfg.color,
+    symbolColor: cfg.symbolColor,
+    height: 32,
+  };
+}
+
 function applyNativeWindowTheme(themeId?: string): void {
   const id = themeId || 'fluent-dark';
   const isLight = LIGHT_THEME_IDS.has(id);
@@ -146,6 +199,22 @@ function applyNativeWindowTheme(themeId?: string): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     const bg = THEME_BG_COLORS[id] || (isLight ? '#f8fafc' : '#090d16');
     mainWindow.setBackgroundColor(bg);
+
+    if (
+      process.platform === 'win32' &&
+      typeof (mainWindow as any).setTitleBarOverlay === 'function'
+    ) {
+      try {
+        const overlay = getTopBarOverlayConfig(id);
+        (mainWindow as any).setTitleBarOverlay({
+          color: overlay.color,
+          symbolColor: overlay.symbolColor,
+          height: overlay.height,
+        });
+      } catch (err) {
+        console.warn('[main] Failed to update titleBarOverlay:', err);
+      }
+    }
   }
 }
 
@@ -153,6 +222,8 @@ function createMainWindow(): void {
   const currentTheme = store ? store.getSettings().theme : 'fluent-dark';
   applyNativeWindowTheme(currentTheme);
   const initialBg = THEME_BG_COLORS[currentTheme] || '#090d16';
+  const isWindows = process.platform === 'win32';
+  const initialTopBar = getTopBarOverlayConfig(currentTheme);
 
   mainWindow = new BrowserWindow({
     width: 1340,
@@ -165,6 +236,16 @@ function createMainWindow(): void {
     autoHideMenuBar: true,
     title: 'winAtmo — Netatmo Weather & Air Quality Studio',
     icon: createTrayNativeImage(),
+    ...(isWindows
+      ? {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            color: initialTopBar.color,
+            symbolColor: initialTopBar.symbolColor,
+            height: initialTopBar.height,
+          },
+        }
+      : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -695,6 +776,11 @@ function registerIpcHandlers(): void {
   ipcMain.on('window:close', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     win?.close();
+  });
+
+  ipcMain.handle('window:is-maximized', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    return win ? win.isMaximized() : false;
   });
 
   ipcMain.on(

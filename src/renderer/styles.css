@@ -107,6 +107,211 @@ body {
   }
 }
 
+/* ========================================================
+   WINDOW TOP BAR (THEME-MATCHED TITLE BAR)
+   ======================================================== */
+.window-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  background: var(--bg-header);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  user-select: none;
+  -webkit-app-region: drag;
+  padding: 0 12px;
+  padding-right: 144px; /* Space reserved for Windows native titleBarOverlay caption buttons */
+  z-index: 10000;
+  flex-shrink: 0;
+  font-family: var(--font-family-app, var(--font-sans));
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+/* Fallback / Non-Windows controls */
+.window-topbar.is-custom-controls {
+  padding-right: 6px;
+}
+
+.app-shell.platform-darwin .window-topbar {
+  padding-left: 80px;
+  padding-right: 12px;
+}
+
+.window-topbar-drag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.window-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.window-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.window-topbar-icon {
+  color: var(--accent-sky);
+  flex-shrink: 0;
+}
+
+.window-topbar-app-name {
+  font-weight: 700;
+  letter-spacing: var(--letter-spacing);
+  text-transform: var(--text-transform-titles);
+}
+
+.window-topbar-separator {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.window-topbar-subtitle {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.window-topbar-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.window-topbar-station-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  border: var(--border-width) solid var(--border-subtle);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.topbar-station-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-emerald);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  flex-shrink: 0;
+}
+
+.window-topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.window-control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.12s ease;
+}
+
+.window-control-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.window-control-btn.close:hover {
+  background: #e11d48;
+  color: #ffffff;
+}
+
+/* Theme variations for window top bar */
+[data-theme-family="compact"] .window-topbar {
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  font-size: 10.5px;
+  padding-left: 8px;
+  padding-right: 140px;
+}
+
+[data-theme-family="terminal"] .window-topbar {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+[data-theme-family="terminal"] .window-topbar-brand {
+  color: var(--accent-emerald);
+}
+
+[data-theme-family="terminal"] .window-topbar-station-badge,
+[data-theme-family="terminal"] .topbar-station-dot {
+  border-radius: 0;
+}
+
+[data-theme-family="brutal"] .window-topbar {
+  border-bottom: 2px solid var(--border-strong);
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+[data-theme-family="brutal"] .window-topbar-station-badge {
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+}
+
+[data-theme-family="soft"] .window-topbar {
+  font-family: 'Quicksand', var(--font-sans);
+}
+
+[data-theme-family="soft"] .window-topbar-station-badge {
+  border-radius: 999px;
+}
+
+/* Light Mode Polish */
+[data-theme-mode="light"] .window-topbar {
+  background: var(--bg-header);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+[data-theme-mode="light"] .window-topbar-brand {
+  color: var(--text-primary);
+}
+
+[data-theme-mode="light"] .window-topbar-subtitle {
+  color: var(--text-muted);
+}
+
+[data-theme-mode="light"] .window-control-btn:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
 /* Header & Navigation */
 .app-header {
   display: flex;
@@ -441,6 +646,11 @@ body {
 
 .header-theme-select:hover {
   border-color: var(--border-strong);
+}
+
+.header-theme-select option {
+  background: var(--bg-card);
+  color: var(--text-primary);
 }
 
 .error-banner {

@@ -15,7 +15,9 @@ export interface WinAtmoAPI {
   minimizeWindow: () => void;
   maximizeWindow: () => void;
   closeWindow: () => void;
+  isMaximized: () => Promise<boolean>;
   openMainWindow: (focusModuleId?: string, focusMetric?: string) => void;
+  platform: string;
 
   // Widget controls
   toggleWidget: (enabled?: boolean) => Promise<UserSettings>;
@@ -96,8 +98,10 @@ const api: WinAtmoAPI = {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
+  isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
   openMainWindow: (focusModuleId?: string, focusMetric?: string) =>
     ipcRenderer.send('window:open-main', { focusModuleId, focusMetric }),
+  platform: process.platform,
 
   toggleWidget: (enabled?: boolean) =>
     ipcRenderer.invoke('widget:toggle', enabled),

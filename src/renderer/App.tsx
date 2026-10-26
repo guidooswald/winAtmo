@@ -25,6 +25,7 @@ import { ChartStudio } from './components/ChartStudio';
 import { SettingsView } from './components/SettingsView';
 import { TaskbarWidget } from './components/TaskbarWidget';
 import { SyncOverlayWindow } from './components/SyncOverlayWindow';
+import { WindowTopBar } from './components/WindowTopBar';
 import { applyThemeToDocument, THEMES } from './utils/themes';
 import { WinAtmoAPI } from '../main/preload';
 
@@ -213,9 +214,23 @@ const MainStudioApp: React.FC = () => {
 
   const darkThemes = THEMES.filter((t) => t.mode === 'dark');
   const lightThemes = THEMES.filter((t) => t.mode === 'light');
+  const primaryStation = stations.length > 0 ? stations[0] : undefined;
+  const primaryStationName =
+    primaryStation?.homeName || primaryStation?.stationName;
 
   return (
-    <div className={`app-shell theme-${settings.theme}`}>
+    <div
+      className={`app-shell theme-${settings.theme} platform-${
+        window.winatmo?.platform || 'win32'
+      }`}
+    >
+      {/* Theme-Synced Window Top Bar */}
+      <WindowTopBar
+        title="winAtmo"
+        subtitle="Netatmo Weather & Air Quality Studio"
+        activeStationName={primaryStationName}
+      />
+
       {/* Top Navigation & Status Header */}
       <header className="app-header">
         <div className="brand-block">
