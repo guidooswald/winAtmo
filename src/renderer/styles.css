@@ -121,8 +121,7 @@ body {
   border-bottom: var(--border-width) solid var(--border-subtle);
   user-select: none;
   -webkit-app-region: drag;
-  padding: 0 12px;
-  padding-right: 144px; /* Space reserved for Windows native titleBarOverlay caption buttons */
+  padding: 0 0 0 12px;
   z-index: 10000;
   flex-shrink: 0;
   font-family: var(--font-family-app, var(--font-sans));
@@ -131,14 +130,8 @@ body {
   transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
-/* Fallback / Non-Windows controls */
-.window-topbar.is-custom-controls {
-  padding-right: 6px;
-}
-
 .app-shell.platform-darwin .window-topbar {
   padding-left: 80px;
-  padding-right: 12px;
 }
 
 .window-topbar-drag {
@@ -156,6 +149,7 @@ body {
   gap: 8px;
   overflow: hidden;
   white-space: nowrap;
+  pointer-events: none;
 }
 
 .window-topbar-brand {
@@ -192,6 +186,7 @@ body {
   align-items: center;
   gap: 8px;
   overflow: hidden;
+  pointer-events: none;
 }
 
 .window-topbar-station-badge {
@@ -220,7 +215,7 @@ body {
 .window-topbar-controls {
   display: flex;
   align-items: center;
-  gap: 2px;
+  height: 100%;
   -webkit-app-region: no-drag;
 }
 
@@ -228,14 +223,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 28px;
+  width: 46px;
+  height: 100%;
   border: none;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.12s ease;
+  outline: none;
+  padding: 0;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .window-control-btn:hover {
@@ -244,8 +240,13 @@ body {
 }
 
 .window-control-btn.close:hover {
-  background: #e11d48;
-  color: #ffffff;
+  background: #e81123 !important;
+  color: #ffffff !important;
+}
+
+.window-control-btn.close:active {
+  background: #bf0f1d !important;
+  color: #ffffff !important;
 }
 
 /* Theme variations for window top bar */
@@ -255,7 +256,10 @@ body {
   max-height: 28px;
   font-size: 10.5px;
   padding-left: 8px;
-  padding-right: 140px;
+}
+
+[data-theme-family="compact"] .window-control-btn {
+  width: 38px;
 }
 
 [data-theme-family="terminal"] .window-topbar {
@@ -270,7 +274,8 @@ body {
 }
 
 [data-theme-family="terminal"] .window-topbar-station-badge,
-[data-theme-family="terminal"] .topbar-station-dot {
+[data-theme-family="terminal"] .topbar-station-dot,
+[data-theme-family="terminal"] .window-control-btn {
   border-radius: 0;
 }
 
@@ -283,6 +288,10 @@ body {
 [data-theme-family="brutal"] .window-topbar-station-badge {
   border-radius: 2px;
   border: 1px solid var(--border-strong);
+}
+
+[data-theme-family="brutal"] .window-control-btn {
+  border-left: 1px solid var(--border-subtle);
 }
 
 [data-theme-family="soft"] .window-topbar {
@@ -310,6 +319,7 @@ body {
 
 [data-theme-mode="light"] .window-control-btn:hover {
   background: rgba(15, 23, 42, 0.08);
+  color: var(--text-primary);
 }
 
 /* Header & Navigation */

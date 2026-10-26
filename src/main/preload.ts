@@ -16,6 +16,7 @@ export interface WinAtmoAPI {
   maximizeWindow: () => void;
   closeWindow: () => void;
   isMaximized: () => Promise<boolean>;
+  onMaximizedChange: (cb: (isMaximized: boolean) => void) => () => void;
   openMainWindow: (focusModuleId?: string, focusMetric?: string) => void;
   platform: string;
 
@@ -99,6 +100,11 @@ const api: WinAtmoAPI = {
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  onMaximizedChange: (cb: (isMaximized: boolean) => void) => {
+    const listener = (_e: any, val: boolean) => cb(val);
+    ipcRenderer.on('window:maximized-change', listener);
+    return () => ipcRenderer.removeListener('window:maximized-change', listener);
+  },
   openMainWindow: (focusModuleId?: string, focusMetric?: string) =>
     ipcRenderer.send('window:open-main', { focusModuleId, focusMetric }),
   platform: process.platform,
