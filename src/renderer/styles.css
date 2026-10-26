@@ -203,6 +203,193 @@ body {
   border: var(--border-width) solid var(--border-strong);
 }
 
+/* ========================================================
+   SYNC & DOWNLOAD OVERLAY WINDOW (FLOATING HUD)
+   ======================================================== */
+.sync-overlay-window {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 320px;
+  max-width: calc(100vw - 48px);
+  padding: 14px 16px;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.48), 0 0 1px 1px rgba(255, 255, 255, 0.05);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  user-select: none;
+  animation: syncOverlaySlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+@keyframes syncOverlaySlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.sync-overlay-window.is-done {
+  border-color: rgba(16, 185, 129, 0.6);
+  box-shadow: 0 16px 40px -8px rgba(16, 185, 129, 0.2);
+}
+
+.sync-overlay-window.is-error {
+  border-color: rgba(244, 63, 94, 0.6);
+  box-shadow: 0 16px 40px -8px rgba(244, 63, 94, 0.22);
+}
+
+.sync-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sync-overlay-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sync-overlay-icon-box {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sync-overlay-icon-box.syncing {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent-sky);
+}
+
+.sync-overlay-icon-box.done {
+  background: rgba(16, 185, 129, 0.18);
+  color: var(--accent-emerald);
+}
+
+.sync-overlay-icon-box.error {
+  background: rgba(244, 63, 94, 0.18);
+  color: var(--accent-rose);
+}
+
+.sync-overlay-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+.sync-overlay-phase {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.sync-overlay-close-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-xs);
+  border: var(--border-width) solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sync-overlay-close-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.sync-overlay-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sync-overlay-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  position: relative;
+  border: var(--border-width) solid var(--border-subtle);
+}
+
+.sync-overlay-progress-bar {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent-sky), var(--accent-blue));
+  transition: width 0.25s ease;
+}
+
+.sync-overlay-progress-bar.done {
+  background: linear-gradient(90deg, var(--accent-emerald), #059669);
+}
+
+.sync-overlay-progress-bar.error {
+  background: var(--accent-rose);
+}
+
+.sync-overlay-progress-bar.indeterminate {
+  width: 40% !important;
+  animation: syncProgressIndeterminate 1.4s infinite ease-in-out;
+}
+
+@keyframes syncProgressIndeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(120%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.sync-overlay-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sync-footer-item strong {
+  color: var(--text-primary);
+}
+
+.sync-footer-item.points {
+  color: var(--accent-sky);
+  font-weight: 600;
+}
+
 .header-btn {
   display: flex;
   align-items: center;
@@ -2045,6 +2232,15 @@ body {
   padding: 5px 6px;
 }
 
+[data-theme-family="compact"] .sync-overlay-window {
+  bottom: 12px;
+  right: 12px;
+  width: 270px;
+  padding: 9px 11px;
+  gap: 5px;
+  font-size: 10.5px;
+}
+
 
 /* 2. CYBER TERMINAL THEMES (Cascadia / monospace font, 0px squared corners, boxy accents) */
 [data-theme-family="terminal"] * {
@@ -2057,6 +2253,11 @@ body {
 [data-theme-family="terminal"] .icon-action-btn,
 [data-theme-family="terminal"] .widget-sensor-pill,
 [data-theme-family="terminal"] .sync-status-pill,
+[data-theme-family="terminal"] .sync-overlay-window,
+[data-theme-family="terminal"] .sync-overlay-icon-box,
+[data-theme-family="terminal"] .sync-overlay-close-btn,
+[data-theme-family="terminal"] .sync-overlay-progress-track,
+[data-theme-family="terminal"] .sync-overlay-progress-bar,
 [data-theme-family="terminal"] .co2-quality-pill,
 [data-theme-family="terminal"] .legend-pill,
 [data-theme-family="terminal"] .active-window-badge,
@@ -2097,6 +2298,7 @@ body {
 [data-theme-family="brutal"] .settings-card,
 [data-theme-family="brutal"] .chart-canvas-card,
 [data-theme-family="brutal"] .station-header-banner,
+[data-theme-family="brutal"] .sync-overlay-window,
 [data-theme-family="brutal"] .chart-toolbar-card {
   border: 2px solid var(--border-subtle) !important;
   box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.35);
@@ -2111,6 +2313,7 @@ body {
 [data-theme-family="brutal"][data-theme-mode="light"] .settings-card,
 [data-theme-family="brutal"][data-theme-mode="light"] .chart-canvas-card,
 [data-theme-family="brutal"][data-theme-mode="light"] .station-header-banner,
+[data-theme-family="brutal"][data-theme-mode="light"] .sync-overlay-window,
 [data-theme-family="brutal"][data-theme-mode="light"] .chart-toolbar-card {
   border: 2px solid #0f172a !important;
   box-shadow: 3px 3px 0px #0f172a;

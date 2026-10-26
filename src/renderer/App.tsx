@@ -24,6 +24,7 @@ import { StationDashboard } from './components/StationDashboard';
 import { ChartStudio } from './components/ChartStudio';
 import { SettingsView } from './components/SettingsView';
 import { TaskbarWidget } from './components/TaskbarWidget';
+import { SyncOverlayWindow } from './components/SyncOverlayWindow';
 import { applyThemeToDocument, THEMES } from './utils/themes';
 import { WinAtmoAPI } from '../main/preload';
 
@@ -254,16 +255,6 @@ const MainStudioApp: React.FC = () => {
         </nav>
 
         <div className="header-right-controls">
-          {syncProgress.active && (
-            <div className="sync-status-pill active">
-              <RefreshCw size={13} className="spin" />
-              <span>
-                {syncProgress.message} (
-                {syncProgress.completedModules}/{syncProgress.totalModules})
-              </span>
-            </div>
-          )}
-
           <select
             className="header-theme-select"
             value={settings.theme}
@@ -464,6 +455,9 @@ const MainStudioApp: React.FC = () => {
           </>
         )}
       </main>
+
+      {/* Floating Sync & Download Overlay Window */}
+      <SyncOverlayWindow progress={syncProgress} />
     </div>
   );
 };
