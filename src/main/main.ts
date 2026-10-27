@@ -408,11 +408,11 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
   }
 
   const workArea = display.workArea;
-  const pillWidth = isCompact ? 130 : 156;
-  const extraPad = isCompact ? 72 : 78;
+  const pillWidth = isCompact ? 95 : 120;
+  const extraPad = isCompact ? 50 : 64;
 
-  const minSensorsWidth = Math.max(200, pinnedCount * pillWidth + extraPad);
-  const defaultCollapsedHeight = isCompact ? 40 : 48;
+  const minSensorsWidth = Math.max(120, pinnedCount * pillWidth + extraPad);
+  const defaultCollapsedHeight = isCompact ? 34 : 42;
 
   let width: number;
   let height: number;
@@ -431,7 +431,7 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
       workArea.width - 16,
       savedW ? Math.max(minSensorsWidth, Math.round(savedW)) : minSensorsWidth
     );
-    height = savedH ? Math.max(36, Math.round(savedH)) : defaultCollapsedHeight;
+    height = savedH ? Math.max(30, Math.round(savedH)) : defaultCollapsedHeight;
   }
 
   // Position cleanly docked on the resolved display
@@ -543,8 +543,8 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
-    minWidth: 200,
-    minHeight: 44,
+    minWidth: 120,
+    minHeight: 32,
     useContentSize: true,
     frame: false,
     transparent: true,
@@ -1049,9 +1049,9 @@ function registerIpcHandlers(): void {
         y: Math.round(curY + curH / 2),
       });
       const workArea = display.workArea;
-      const maxW = Math.max(200, workArea.width - 12);
-      const w = Math.min(maxW, Math.max(180, Math.round(size.width)));
-      const h = Math.max(36, Math.round(size.height));
+      const maxW = Math.max(120, workArea.width - 12);
+      const w = Math.min(maxW, Math.max(120, Math.round(size.width)));
+      const h = Math.max(30, Math.round(size.height));
       widgetTargetSize = { width: w, height: h };
 
       let nextX = curX;
@@ -1277,18 +1277,27 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('settings:update', async (_e, partial: Partial<UserSettings>) => {
     const prev = store.getSettings();
+    const isThemeChange = Boolean(partial.theme && partial.theme !== prev.theme);
+
+    if (isThemeChange) {
+      // Reset stored widgetSize so the new theme automatically recalculates minimal fit for sensors
+      delete partial.widgetSize;
+      store.updateSettings({ widgetSize: undefined });
+    }
+
     const updated = store.updateSettings(partial);
 
     applyNativeWindowTheme(updated.theme);
 
     if (
+      isThemeChange ||
       partial.widgetEnabled !== undefined ||
       partial.widgetAlwaysOnTop !== undefined ||
       partial.widgetOpacity !== undefined ||
       partial.widgetLocked !== undefined ||
       partial.pinnedSensors !== undefined
     ) {
-      createOrUpdateWidgetWindow(partial.pinnedSensors !== undefined);
+      createOrUpdateWidgetWindow(partial.pinnedSensors !== undefined || isThemeChange);
     }
 
     if (partial.refreshIntervalMinutes !== undefined) {

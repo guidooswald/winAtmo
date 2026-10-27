@@ -36,6 +36,8 @@ export const TaskbarWidget: React.FC = () => {
   const sensorsStripRef = useRef<HTMLDivElement | null>(null);
   const expandedRef = useRef<boolean>(false);
   expandedRef.current = expanded;
+  const prevThemeRef = useRef<string | undefined>(undefined);
+  const lastThemeChangeTimeRef = useRef<number>(0);
   const measureTimerRef = useRef<NodeJS.Timeout | null>(null);
   const resizeRef = useRef<{
     resizing: boolean;
@@ -108,6 +110,13 @@ export const TaskbarWidget: React.FC = () => {
     return fallback;
   }, [settings, stations]);
 
+  if (settings && prevThemeRef.current !== undefined && prevThemeRef.current !== settings.theme) {
+    lastThemeChangeTimeRef.current = Date.now();
+  }
+  if (settings) {
+    prevThemeRef.current = settings.theme;
+  }
+
   // Measure exact single-line width of all pinned sensor pills to fit the window seamlessly
   const pinnedIdsKey = activePins.map((p) => p.id).join('|');
 
@@ -130,19 +139,49 @@ export const TaskbarWidget: React.FC = () => {
     }
 
     const isCompact = settings.theme?.startsWith('compact');
-    // Extra room: drag handle (~18px) + gap (~6px) + toggle button (~24px) + gap (~6px) + padding (~16-20px) + grip margin
-    const extraRoom = isCompact ? 72 : 82;
-    const minContentWidth = Math.max(200, Math.ceil(contentWidth + extraRoom));
-    const defaultCollapsedHeight = isCompact ? 40 : 48;
+    const stripContainer = stripEl.parentElement;
+    const dragHandle = stripContainer?.querySelector('.widget-drag-handle') as HTMLElement | null;
+    const controls = stripContainer?.querySelector('.widget-strip-controls') as HTMLElement | null;
+    const dragHandleWidth = dragHandle ? Math.ceil(dragHandle.getBoundingClientRect().width) : (isCompact ? 16 : 18);
+    const controlsWidth = controls ? Math.ceil(controls.getBoundingClientRect().width) : (isCompact ? 22 : 24);
 
-    const targetWidth = settings.widgetSize?.width
-      ? Math.max(settings.widgetSize.width, minContentWidth)
-      : minContentWidth;
+    const parentStyle = stripContainer ? window.getComputedStyle(stripContainer) : null;
+    const padLeft = parentStyle ? parseFloat(parentStyle.paddingLeft) || 0 : (isCompact ? 6 : 8);
+    const padRight = parentStyle ? parseFloat(parentStyle.paddingRight) || 0 : (isCompact ? 6 : 10);
+    const borderLeft = parentStyle ? parseFloat(parentStyle.borderLeftWidth) || 0 : 1;
+    const borderRight = parentStyle ? parseFloat(parentStyle.borderRightWidth) || 0 : 1;
+    const parentGap = parentStyle ? parseFloat(parentStyle.gap) || 0 : 6;
+
+    // Minimum precise width to cleanly frame all sensor pills, drag grip, controls, and theme padding with 1px buffer
+    const minContentWidth = Math.max(
+      120,
+      Math.ceil(
+        padLeft +
+        borderLeft +
+        dragHandleWidth +
+        parentGap +
+        contentWidth +
+        parentGap +
+        controlsWidth +
+        borderRight +
+        padRight +
+        1
+      )
+    );
+
+    const defaultCollapsedHeight = isCompact ? 34 : 42;
+    const isRecentThemeChange = Date.now() - lastThemeChangeTimeRef.current < 1200;
+
+    // When changing themes or on initial measurement, snap strictly to minimal possible size
+    const targetWidth = (isRecentThemeChange || !settings.widgetSize?.width)
+      ? minContentWidth
+      : Math.max(settings.widgetSize.width, minContentWidth);
+
     const targetHeight = expandedRef.current
       ? 215
-      : (settings.widgetSize?.height
-          ? Math.max(settings.widgetSize.height, defaultCollapsedHeight)
-          : defaultCollapsedHeight);
+      : ((isRecentThemeChange || !settings.widgetSize?.height)
+          ? defaultCollapsedHeight
+          : Math.max(settings.widgetSize.height, defaultCollapsedHeight));
 
     window.winatmo.resizeWidget(targetWidth, targetHeight);
   };
@@ -165,19 +204,24 @@ export const TaskbarWidget: React.FC = () => {
       });
     }
 
-    // Follow-up timer to ensure CSS variables and reflow are fully completed
+    // Follow-up timers to ensure CSS variables and font reflow are fully rendered
     if (measureTimerRef.current) {
       clearTimeout(measureTimerRef.current);
     }
     measureTimerRef.current = setTimeout(() => {
       measureAndResize();
-    }, 80);
+    }, 60);
+
+    const timer2 = setTimeout(() => {
+      measureAndResize();
+    }, 150);
 
     return () => {
       cancelAnimationFrame(rafId);
       if (measureTimerRef.current) {
         clearTimeout(measureTimerRef.current);
       }
+      clearTimeout(timer2);
     };
   }, [
     settings?.theme,
