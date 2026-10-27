@@ -252,21 +252,21 @@ const MainStudioApp: React.FC = () => {
             onClick={() => setActiveTab('dashboard')}
           >
             <LayoutDashboard size={15} />
-            <span>Sensors & Dashboard</span>
+            <span>Sensors</span>
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'charts' ? 'active' : ''}`}
             onClick={() => setActiveTab('charts')}
           >
             <LineChart size={15} />
-            <span>Flexible Charts</span>
+            <span>Charts</span>
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setActiveTab('settings')}
           >
             <Settings size={15} />
-            <span>Settings & SQLite</span>
+            <span>Settings</span>
           </button>
         </nav>
 

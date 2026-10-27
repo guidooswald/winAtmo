@@ -302,12 +302,14 @@ export const TaskbarWidget: React.FC = () => {
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!resizeRef.current.resizing) return;
+      const isCompact = settings?.theme?.startsWith('compact');
+      const minH = isCompact ? 34 : 42;
       const nextW = Math.max(
-        200,
+        120,
         resizeRef.current.startW + (e.screenX - resizeRef.current.startX)
       );
       const nextH = Math.max(
-        44,
+        minH,
         resizeRef.current.startH + (e.screenY - resizeRef.current.startY)
       );
       window.winatmo.resizeWidget(nextW, nextH);
@@ -321,7 +323,7 @@ export const TaskbarWidget: React.FC = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, []);
+  }, [settings?.theme]);
 
   if (!settings) return null;
 

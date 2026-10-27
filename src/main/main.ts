@@ -189,13 +189,17 @@ let widgetSizeSaveTimeout: NodeJS.Timeout | null = null;
 function saveWidgetSize(): void {
   if (!widgetWindow || widgetWindow.isDestroyed()) return;
   const [w, h] = widgetWindow.getContentSize();
+  const settings = store.getSettings();
+  const isCompact = settings.theme?.startsWith('compact');
+  const defaultCollapsedHeight = isCompact ? 34 : 42;
+
   if (!isWidgetExpanded) {
     store.updateSettings({
       widgetSize: { width: w, height: h },
     });
   } else {
-    const cur = store.getSettings().widgetSize;
-    const collapsedH = collapsedBoundsBeforeExpand?.height || cur?.height || 48;
+    const cur = settings.widgetSize;
+    const collapsedH = collapsedBoundsBeforeExpand?.height || cur?.height || defaultCollapsedHeight;
     const collapsedW = collapsedBoundsBeforeExpand?.width || cur?.width || w;
     store.updateSettings({
       widgetSize: { width: collapsedW, height: collapsedH },
@@ -408,50 +412,50 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
   }
 
   const workArea = display.workArea;
-  const pillWidth = isCompact ? 95 : 120;
-  const extraPad = isCompact ? 50 : 64;
+  const pillWidth = isCompact ? 80 : 95;
+  const extraPad = isCompact ? 40 : 48;
 
   const minSensorsWidth = Math.max(120, pinnedCount * pillWidth + extraPad);
   const defaultCollapsedHeight = isCompact ? 34 : 42;
+
+  const savedW = settings.widgetSize?.width;
+  const savedH = settings.widgetSize?.height;
 
   let width: number;
   let height: number;
 
   if (expanded) {
-    const savedW = settings.widgetSize?.width;
     width = Math.min(
-      workArea.width - 16,
-      savedW ? Math.max(minSensorsWidth, Math.round(savedW)) : minSensorsWidth
+      workArea.width,
+      savedW ? Math.max(120, Math.round(savedW)) : minSensorsWidth
     );
     height = 215;
   } else {
-    const savedW = settings.widgetSize?.width;
-    const savedH = settings.widgetSize?.height;
     width = Math.min(
-      workArea.width - 16,
-      savedW ? Math.max(minSensorsWidth, Math.round(savedW)) : minSensorsWidth
+      workArea.width,
+      savedW ? Math.max(120, Math.round(savedW)) : minSensorsWidth
     );
     height = savedH ? Math.max(30, Math.round(savedH)) : defaultCollapsedHeight;
   }
 
-  // Position cleanly docked on the resolved display
+  // Exact saved position if available
   const saved =
     settings.widgetPosition &&
-    settings.widgetPosition.x >= workArea.x - 50 &&
-    settings.widgetPosition.x <= workArea.x + workArea.width &&
-    settings.widgetPosition.y >= workArea.y - 50 &&
-    settings.widgetPosition.y <= workArea.y + workArea.height
+    settings.widgetPosition.x >= workArea.x - 200 &&
+    settings.widgetPosition.x <= workArea.x + workArea.width + 100 &&
+    settings.widgetPosition.y >= workArea.y - 200 &&
+    settings.widgetPosition.y <= workArea.y + workArea.height + 100
       ? settings.widgetPosition
       : undefined;
 
   let x = saved ? saved.x : workArea.x + workArea.width - width - 16;
   let y = saved
-    ? ExpandedYAdjustment(saved.y, height, workArea)
+    ? (expanded ? ExpandedYAdjustment(saved.y, height, workArea) : saved.y)
     : workArea.y + workArea.height - height - 8;
 
-  // Ensure inside visible bounds of this specific screen
-  x = Math.max(workArea.x + 4, Math.min(x, workArea.x + workArea.width - width - 4));
-  y = Math.max(workArea.y + 4, Math.min(y, workArea.y + workArea.height - height - 4));
+  // Ensure inside visible bounds of this specific screen without artificial offsets
+  x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - width));
+  y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - height));
 
   return { x, y, width, height };
 }
@@ -518,12 +522,12 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
       });
       const workArea = display.workArea;
       const nextX = Math.max(
-        workArea.x + 4,
-        Math.min(cur.x, workArea.x + workArea.width - bounds.width - 4)
+        workArea.x,
+        Math.min(cur.x, workArea.x + workArea.width - bounds.width)
       );
       const nextY = Math.max(
-        workArea.y + 4,
-        Math.min(cur.y, workArea.y + workArea.height - bounds.height - 4)
+        workArea.y,
+        Math.min(cur.y, workArea.y + workArea.height - bounds.height)
       );
       widgetWindow.setBounds({
         x: nextX,
@@ -544,7 +548,7 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     width: bounds.width,
     height: bounds.height,
     minWidth: 120,
-    minHeight: 32,
+    minHeight: 30,
     useContentSize: true,
     frame: false,
     transparent: true,
@@ -590,6 +594,7 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
 
   widgetWindow.once('ready-to-show', () => {
     widgetWindow?.showInactive();
+    widgetWindow?.on('resize', debouncedSaveWidgetSize);
   });
 
   let moveSaveTimeout: NodeJS.Timeout | null = null;
@@ -607,8 +612,6 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
       }
     }, 250);
   });
-
-  widgetWindow.on('resize', debouncedSaveWidgetSize);
 
   widgetWindow.on('close', () => {
     if (widgetSizeSaveTimeout) clearTimeout(widgetSizeSaveTimeout);
@@ -976,7 +979,10 @@ function registerIpcHandlers(): void {
     } else {
       // Closing charts: restore the initial collapsed position & size before expanding
       const savedCollapsed = collapsedBoundsBeforeExpand;
-      const collapsedH = savedCollapsed ? savedCollapsed.height : 48;
+      const curSettings = store.getSettings();
+      const isCompact = curSettings.theme?.startsWith('compact');
+      const defaultH = isCompact ? 34 : 42;
+      const collapsedH = savedCollapsed ? savedCollapsed.height : defaultH;
       const targetWidth = savedCollapsed ? savedCollapsed.width : curW;
       isWidgetExpanded = false;
       widgetTargetSize = { width: targetWidth, height: collapsedH };
@@ -1000,12 +1006,12 @@ function registerIpcHandlers(): void {
       }
 
       restoreY = Math.max(
-        workArea.y + 4,
-        Math.min(restoreY, workArea.y + workArea.height - collapsedH - 4)
+        workArea.y,
+        Math.min(restoreY, workArea.y + workArea.height - collapsedH)
       );
       const newX = Math.max(
-        workArea.x + 4,
-        Math.min(curX, workArea.x + workArea.width - targetWidth - 4)
+        workArea.x,
+        Math.min(curX, workArea.x + workArea.width - targetWidth)
       );
 
       collapsedBoundsBeforeExpand = null;
@@ -1049,16 +1055,16 @@ function registerIpcHandlers(): void {
         y: Math.round(curY + curH / 2),
       });
       const workArea = display.workArea;
-      const maxW = Math.max(120, workArea.width - 12);
+      const maxW = Math.max(120, workArea.width);
       const w = Math.min(maxW, Math.max(120, Math.round(size.width)));
       const h = Math.max(30, Math.round(size.height));
       widgetTargetSize = { width: w, height: h };
 
       let nextX = curX;
-      if (curX + w > workArea.x + workArea.width - 4) {
-        nextX = Math.max(workArea.x + 4, workArea.x + workArea.width - w - 8);
-      } else if (curX < workArea.x + 4) {
-        nextX = workArea.x + 4;
+      if (curX + w > workArea.x + workArea.width) {
+        nextX = Math.max(workArea.x, workArea.x + workArea.width - w);
+      } else if (curX < workArea.x) {
+        nextX = workArea.x;
       }
 
       widgetWindow.setBounds({
