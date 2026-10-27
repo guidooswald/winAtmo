@@ -2198,6 +2198,20 @@ body {
   flex-shrink: 0;
 }
 
+.widget-trend-wrapper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+.widget-trend-wrapper svg {
+  display: block;
+  flex-shrink: 0;
+}
+
 .widget-mod-short {
   color: var(--text-secondary);
   font-size: 11px;

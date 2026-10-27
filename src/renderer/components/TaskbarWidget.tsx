@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowDownRight,
+  ArrowRight,
   ArrowUpRight,
   ChevronDown,
   ChevronUp,
@@ -9,6 +10,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import {
+  DashboardReadings,
   MeasureSeries,
   MetricType,
   PinnedSensorItem,
@@ -439,6 +441,8 @@ export const TaskbarWidget: React.FC = () => {
               const mod = st?.modules.find((m) => m.id === pin.moduleId);
               const d = mod?.dashboard;
               const liveVal = extractLiveMetricValue(d, pin.metric);
+              const sparkKey = `${pin.stationId}::${pin.moduleId}::${pin.metric}`;
+              const spark = sparklines[sparkKey];
               const color =
                 pin.color ||
                 METRIC_METADATA[pin.metric]?.defaultColor ||
@@ -458,22 +462,13 @@ export const TaskbarWidget: React.FC = () => {
                   }
                   title={`${pin.moduleName} (${METRIC_METADATA[pin.metric]?.label}) — Click to open chart`}
                 >
-                  <span
-                    className="widget-dot"
-                    style={{ backgroundColor: co2DotColor }}
-                  />
+                  {renderWidgetTrendArrow(pin.metric, d, spark, co2DotColor)}
                   <span className="widget-mod-short">
                     {pin.customLabel || truncateLabel(pin.moduleName, 10)}
                   </span>
                   <strong className="widget-val-text">
                     {formatMetricValue(liveVal, pin.metric, settings)}
                   </strong>
-                  {pin.metric === 'temperature' && d?.temp_trend === 'up' && (
-                    <ArrowUpRight size={11} className="trend-up-mini" />
-                  )}
-                  {pin.metric === 'temperature' && d?.temp_trend === 'down' && (
-                    <ArrowDownRight size={11} className="trend-down-mini" />
-                  )}
                 </div>
               );
             })
@@ -532,4 +527,50 @@ function buildMiniSparkPath(vals: number[], w: number, h: number): string {
       return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(' ');
+}
+
+function resolveSensorTrend(
+  metric: MetricType,
+  d?: DashboardReadings,
+  spark?: number[]
+): 'up' | 'down' | 'stable' {
+  if (metric === 'temperature' && d?.temp_trend) {
+    return d.temp_trend;
+  }
+  if (metric === 'pressure' && d?.pressure_trend) {
+    return d.pressure_trend;
+  }
+  if (spark && spark.length >= 2) {
+    const first = spark[0];
+    const last = spark[spark.length - 1];
+    const diff = last - first;
+    const threshold = Math.max(0.01, Math.abs(first) * 0.02);
+    if (diff > threshold) return 'up';
+    if (diff < -threshold) return 'down';
+    return 'stable';
+  }
+  return 'stable';
+}
+
+function renderWidgetTrendArrow(
+  metric: MetricType,
+  d?: DashboardReadings,
+  spark?: number[],
+  color?: string
+) {
+  const trend = resolveSensorTrend(metric, d, spark);
+  const trendLabel =
+    trend === 'up' ? 'Rising' : trend === 'down' ? 'Falling' : 'Stable';
+
+  return (
+    <span
+      className={`widget-trend-wrapper ${trend}`}
+      style={{ color }}
+      title={`Trend: ${trendLabel}`}
+    >
+      {trend === 'up' && <ArrowUpRight size={12} strokeWidth={2.2} />}
+      {trend === 'down' && <ArrowDownRight size={12} strokeWidth={2.2} />}
+      {trend === 'stable' && <ArrowRight size={12} strokeWidth={2.2} />}
+    </span>
+  );
 }
