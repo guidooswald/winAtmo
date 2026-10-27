@@ -134,9 +134,9 @@ export function resolveTaskbarReading(
         if (co2 >= 1000) {
           text = `${(co2 / 1000).toFixed(1)}k`;
         }
-        let color = '#10b981'; // Green
-        if (co2 >= 1500) color = '#ef4444'; // Red alert
-        else if (co2 >= 1000) color = '#f59e0b'; // Amber warning
+        let color = '#34d399'; // Subtle emerald (<1000 ppm)
+        if (co2 >= 1500) color = '#f87171'; // Subtle soft coral (alert)
+        else if (co2 >= 1000) color = '#fbbf24'; // Subtle soft amber (warning)
 
         return {
           text,
@@ -199,7 +199,7 @@ export function resolveTaskbarReading(
         return {
           text,
           fullLabel: `${st.stationName} Pressure: ${p.toFixed(1)} ${settings.pressureUnit}`,
-          color: '#8b5cf6',
+          color: '#a78bfa', // Subtle soft lavender
           stationName: st.stationName,
           moduleName: mod.moduleName,
           metric: 'pressure',
@@ -252,7 +252,7 @@ export function resolveTaskbarReading(
           const co2 = rawVal;
           const text = co2 >= 1000 ? `${(co2 / 1000).toFixed(1)}k` : `${co2}`;
           const color =
-            co2 >= 1500 ? '#ef4444' : co2 >= 1000 ? '#f59e0b' : '#10b981';
+            co2 >= 1500 ? '#f87171' : co2 >= 1000 ? '#fbbf24' : '#34d399';
           return {
             text,
             fullLabel: `${mod.moduleName} CO₂: ${co2} ppm`,
@@ -262,10 +262,59 @@ export function resolveTaskbarReading(
             metric,
           };
         }
+        if (metric === 'pressure') {
+          const text =
+            settings.pressureUnit === 'inHg'
+              ? rawVal.toFixed(1)
+              : `${Math.round(rawVal)}`;
+          return {
+            text,
+            fullLabel: `${mod.moduleName} Pressure: ${rawVal.toFixed(1)} ${settings.pressureUnit}`,
+            color: '#a78bfa',
+            stationName: st?.stationName || '',
+            moduleName: mod.moduleName,
+            metric,
+          };
+        }
+        if (metric === 'noise') {
+          const color =
+            rawVal >= 65 ? '#f87171' : rawVal >= 50 ? '#fbbf24' : '#34d399';
+          return {
+            text: `${Math.round(rawVal)}`,
+            fullLabel: `${mod.moduleName} Noise: ${Math.round(rawVal)} dB`,
+            color,
+            stationName: st?.stationName || '',
+            moduleName: mod.moduleName,
+            metric,
+          };
+        }
+        if (metric === 'rain') {
+          const color = rawVal > 0 ? '#38bdf8' : '#cbd5e1';
+          return {
+            text: `${rawVal.toFixed(1)}`,
+            fullLabel: `${mod.moduleName} Rain: ${rawVal.toFixed(1)} mm`,
+            color,
+            stationName: st?.stationName || '',
+            moduleName: mod.moduleName,
+            metric,
+          };
+        }
+        if (metric === 'windstrength') {
+          const color =
+            rawVal >= 35 ? '#f87171' : rawVal >= 15 ? '#38bdf8' : '#2dd4bf';
+          return {
+            text: `${Math.round(rawVal)}`,
+            fullLabel: `${mod.moduleName} Wind: ${Math.round(rawVal)}`,
+            color,
+            stationName: st?.stationName || '',
+            moduleName: mod.moduleName,
+            metric,
+          };
+        }
         return {
           text: `${Math.round(rawVal)}`,
           fullLabel: `${mod.moduleName}: ${rawVal}`,
-          color: '#0ea5e9',
+          color: '#38bdf8',
           stationName: st?.stationName || '',
           moduleName: mod.moduleName,
           metric,
@@ -293,16 +342,16 @@ function formatTemperatureReading(
     text = `${Math.round(val)}`;
   }
 
-  // Semantic color based on Celsius temperature:
-  let color = '#10b981'; // Comfortable (15 - 23°C / 59 - 73°F)
+  // Subtle semantic color based on Celsius temperature:
+  let color = '#34d399'; // Comfortable (15 - 23°C / 59 - 73°F) - subtle soft emerald
   if (rawCelsius < 0) {
-    color = '#38bdf8'; // Freezing / Ice cyan
+    color = '#7dd3fc'; // Freezing / Frost - subtle ice cyan
   } else if (rawCelsius < 15) {
-    color = '#0ea5e9'; // Cool / Sky blue
+    color = '#38bdf8'; // Cool / Chilly - subtle sky blue
   } else if (rawCelsius >= 28) {
-    color = '#ef4444'; // Hot / Crimson
+    color = '#f87171'; // Hot - subtle soft coral
   } else if (rawCelsius >= 23) {
-    color = '#f59e0b'; // Warm / Amber
+    color = '#fbbf24'; // Warm - subtle soft amber
   }
 
   const fullLabel = `${moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`;
@@ -323,9 +372,9 @@ function formatHumidityReading(
   moduleName: string
 ): TaskbarReadingResult {
   const rounded = Math.round(hum);
-  let color = '#0ea5e9';
-  if (rounded < 30) color = '#f59e0b';
-  else if (rounded > 70) color = '#3b82f6';
+  let color = '#38bdf8'; // Optimal 30-65% - subtle cyan
+  if (rounded < 30) color = '#fbbf24'; // Dry - subtle amber
+  else if (rounded > 65) color = '#60a5fa'; // High - subtle cornflower blue
 
   return {
     text: `${rounded}%`,
@@ -358,45 +407,46 @@ export async function generateTaskbarIcon(
           const ctx = canvas.getContext('2d');
           ctx.clearRect(0, 0, 32, 32);
 
-          // Edge-to-edge rounded badge for maximum drawing area
-          ctx.fillStyle = '#090d16';
-          ctx.beginPath();
-          ctx.roundRect(0.5, 0.5, 31, 31, 5);
-          ctx.fill();
+          const str = ${JSON.stringify(reading.text)};
+          const textColor = ${JSON.stringify(reading.color)};
 
-          // Soft inner gradient
-          const grad = ctx.createLinearGradient(0, 0, 0, 32);
-          grad.addColorStop(0, 'rgba(255, 255, 255, 0.12)');
-          grad.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.roundRect(0.75, 0.75, 30.5, 30.5, 4.5);
-          ctx.fill();
-
-          // Accent border with sensor semantic status color
-          ctx.strokeStyle = '${reading.color}';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.roundRect(0.75, 0.75, 30.5, 30.5, 4.5);
-          ctx.stroke();
-
-          // Dynamic font maximizer: calculate largest font size that fits into 29.5px
-          const str = '${reading.text}';
-          let fontSize = 24;
+          // Dynamic font maximizer: calculate largest font size that fits into 27.5px width & 23px height
+          let fontSize = 23;
           ctx.font = 'bold ' + fontSize + 'px "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
-          while ((ctx.measureText(str).width > 29.5 || fontSize > 24) && fontSize > 8) {
+          while ((ctx.measureText(str).width > 27.5 || fontSize > 23) && fontSize > 8) {
             fontSize -= 0.5;
             ctx.font = 'bold ' + fontSize + 'px "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
           }
 
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
-          ctx.shadowBlur = 2;
-          ctx.shadowOffsetY = 1;
-
-          ctx.fillStyle = '#ffffff';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(str, 16, 16);
+          const x = 16;
+          const y = 16;
+
+          // 1. Dark outline + drop shadow to guarantee readability on white/light backgrounds
+          ctx.save();
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+          ctx.shadowBlur = 3.5;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 1;
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+          ctx.lineWidth = 2.2;
+          ctx.lineJoin = 'round';
+          ctx.miterLimit = 2;
+          ctx.strokeText(str, x, y);
+          ctx.restore();
+
+          // 2. Secondary soft shadow under fill for depth
+          ctx.save();
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+          ctx.shadowBlur = 2;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0.5;
+
+          // 3. Fill text with subtle semantic color
+          ctx.fillStyle = textColor;
+          ctx.fillText(str, x, y);
+          ctx.restore();
 
           return canvas.toDataURL('image/png');
         })()
@@ -426,34 +476,37 @@ function createFallbackBitmapReadingIcon(
 
   // Parse color hex to RGB
   const hex = reading.color.replace('#', '');
-  const cr = parseInt(hex.substring(0, 2), 16) || 16;
-  const cg = parseInt(hex.substring(2, 4), 16) || 185;
-  const cb = parseInt(hex.substring(4, 6), 16) || 129;
+  const cr = parseInt(hex.substring(0, 2), 16) || 52;
+  const cg = parseInt(hex.substring(2, 4), 16) || 211;
+  const cb = parseInt(hex.substring(4, 6), 16) || 153;
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const idx = (y * size + x) * 4;
-      // Distance from center 15.5, 15.5
       const dx = x - 15.5;
       const dy = y - 15.5;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist <= 14.5) {
-        const isBorder = dist >= 12.5;
-        if (isBorder) {
-          buf[idx] = cb; // B
-          buf[idx + 1] = cg; // G
-          buf[idx + 2] = cr; // R
-          buf[idx + 3] = 255; // A
-        } else {
-          // Dark background
-          buf[idx] = 22; // B
-          buf[idx + 1] = 13; // G
-          buf[idx + 2] = 9; // R
-          buf[idx + 3] = 240; // A
-        }
+      // Subtle colored badge with dark shadow ring and transparent background
+      if (dist <= 13.5 && dist >= 8.5) {
+        buf[idx] = cb; // B
+        buf[idx + 1] = cg; // G
+        buf[idx + 2] = cr; // R
+        buf[idx + 3] = 240; // A
+      } else if (dist < 8.5 && dist >= 7.0) {
+        // Subtle dark shadow inner rim
+        buf[idx] = 0;
+        buf[idx + 1] = 0;
+        buf[idx + 2] = 0;
+        buf[idx + 3] = 160;
+      } else if (dist > 13.5 && dist <= 15.0) {
+        // Subtle dark shadow outer rim
+        buf[idx] = 0;
+        buf[idx + 1] = 0;
+        buf[idx + 2] = 0;
+        buf[idx + 3] = 160;
       } else {
-        buf[idx + 3] = 0;
+        buf[idx + 3] = 0; // Transparent
       }
     }
   }

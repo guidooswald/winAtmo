@@ -182,7 +182,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           const t = outdoor.dashboard.Temperature;
           const val = isF ? (t * 9) / 5 + 32 : t;
           const color =
-            t < 0 ? '#38bdf8' : t < 15 ? '#0ea5e9' : t >= 28 ? '#ef4444' : t >= 23 ? '#f59e0b' : '#10b981';
+            t < 0
+              ? '#7dd3fc'
+              : t < 15
+              ? '#38bdf8'
+              : t >= 28
+              ? '#f87171'
+              : t >= 23
+              ? '#fbbf24'
+              : '#34d399';
           return {
             text: val >= 100 || val <= -100 ? `${Math.round(val)}` : val.toFixed(1),
             color,
@@ -192,7 +200,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
       return {
         text: isF ? '64.4' : '18.2',
-        color: '#10b981',
+        color: '#34d399',
         label: `Outside Temp: ${isF ? '64.4°F' : '18.2°C'}`,
       };
     }
@@ -208,7 +216,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           const t = main.dashboard.Temperature;
           const val = isF ? (t * 9) / 5 + 32 : t;
           const color =
-            t < 0 ? '#38bdf8' : t < 15 ? '#0ea5e9' : t >= 28 ? '#ef4444' : t >= 23 ? '#f59e0b' : '#10b981';
+            t < 0
+              ? '#7dd3fc'
+              : t < 15
+              ? '#38bdf8'
+              : t >= 28
+              ? '#f87171'
+              : t >= 23
+              ? '#fbbf24'
+              : '#34d399';
           return {
             text: val >= 100 || val <= -100 ? `${Math.round(val)}` : val.toFixed(1),
             color,
@@ -218,7 +234,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
       return {
         text: isF ? '70.5' : '21.4',
-        color: '#10b981',
+        color: '#34d399',
         label: `Indoor Temp: ${isF ? '70.5°F' : '21.4°C'}`,
       };
     }
@@ -230,11 +246,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           const co2 = mod.dashboard.CO2;
           const text = co2 >= 1000 ? `${(co2 / 1000).toFixed(1)}k` : `${co2}`;
           const color =
-            co2 >= 1500 ? '#ef4444' : co2 >= 1000 ? '#f59e0b' : '#10b981';
+            co2 >= 1500 ? '#f87171' : co2 >= 1000 ? '#fbbf24' : '#34d399';
           return { text, color, label: `${mod.moduleName} CO₂: ${co2} ppm` };
         }
       }
-      return { text: '650', color: '#10b981', label: 'CO₂: 650 ppm' };
+      return { text: '650', color: '#34d399', label: 'CO₂: 650 ppm' };
     }
 
     if (target === 'outdoor_humidity' || target === 'indoor_humidity') {
@@ -242,11 +258,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         const mod = st.modules.find((m) => m.dashboard?.Humidity !== undefined);
         if (mod?.dashboard?.Humidity !== undefined) {
           const h = Math.round(mod.dashboard.Humidity);
-          const color = h < 30 ? '#f59e0b' : h > 70 ? '#3b82f6' : '#0ea5e9';
+          const color = h < 30 ? '#fbbf24' : h > 65 ? '#60a5fa' : '#38bdf8';
           return { text: `${h}%`, color, label: `${mod.moduleName} Humidity: ${h}%` };
         }
       }
-      return { text: '55%', color: '#0ea5e9', label: 'Humidity: 55%' };
+      return { text: '55%', color: '#38bdf8', label: 'Humidity: 55%' };
     }
 
     if (target === 'pressure') {
@@ -258,14 +274,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             settings.pressureUnit === 'inHg' ? p.toFixed(1) : `${Math.round(p)}`;
           return {
             text,
-            color: '#8b5cf6',
+            color: '#a78bfa',
             label: `Pressure: ${p.toFixed(1)} ${settings.pressureUnit}`,
           };
         }
       }
       return {
         text: '1015',
-        color: '#8b5cf6',
+        color: '#a78bfa',
         label: `Pressure: 1015 ${settings.pressureUnit}`,
       };
     }
@@ -285,30 +301,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             ? d.CO2
             : metric === 'pressure'
             ? d.Pressure
-            : d.Noise;
+            : metric === 'noise'
+            ? d.Noise
+            : metric === 'rain'
+            ? d.Rain
+            : metric === 'windstrength'
+            ? d.WindStrength
+            : undefined;
         if (raw !== undefined) {
           if (metric === 'temperature') {
             const val = isF ? (raw * 9) / 5 + 32 : raw;
-            const rounded = Math.round(val);
             const color =
               raw < 0
-                ? '#38bdf8'
+                ? '#7dd3fc'
                 : raw < 15
-                ? '#0ea5e9'
+                ? '#38bdf8'
                 : raw >= 28
-                ? '#ef4444'
+                ? '#f87171'
                 : raw >= 23
-                ? '#f59e0b'
-                : '#10b981';
+                ? '#fbbf24'
+                : '#34d399';
             return {
               text: val >= 100 || val <= -100 ? `${Math.round(val)}` : val.toFixed(1),
               color,
               label: `${mod.moduleName}: ${val.toFixed(1)}°${settings.temperatureUnit}`,
             };
           }
+          if (metric === 'humidity') {
+            const h = Math.round(raw);
+            const color = h < 30 ? '#fbbf24' : h > 65 ? '#60a5fa' : '#38bdf8';
+            return { text: `${h}%`, color, label: `${mod.moduleName} Humidity: ${h}%` };
+          }
+          if (metric === 'co2') {
+            const text = raw >= 1000 ? `${(raw / 1000).toFixed(1)}k` : `${raw}`;
+            const color =
+              raw >= 1500 ? '#f87171' : raw >= 1000 ? '#fbbf24' : '#34d399';
+            return { text, color, label: `${mod.moduleName} CO₂: ${raw} ppm` };
+          }
+          if (metric === 'pressure') {
+            const text =
+              settings.pressureUnit === 'inHg' ? raw.toFixed(1) : `${Math.round(raw)}`;
+            return {
+              text,
+              color: '#a78bfa',
+              label: `${mod.moduleName} Pressure: ${raw.toFixed(1)} ${settings.pressureUnit}`,
+            };
+          }
+          if (metric === 'noise') {
+            const color = raw >= 65 ? '#f87171' : raw >= 50 ? '#fbbf24' : '#34d399';
+            return {
+              text: `${Math.round(raw)}`,
+              color,
+              label: `${mod.moduleName} Noise: ${Math.round(raw)} dB`,
+            };
+          }
+          if (metric === 'rain') {
+            const color = raw > 0 ? '#38bdf8' : '#cbd5e1';
+            return {
+              text: `${raw.toFixed(1)}`,
+              color,
+              label: `${mod.moduleName} Rain: ${raw.toFixed(1)} mm`,
+            };
+          }
+          if (metric === 'windstrength') {
+            const color = raw >= 35 ? '#f87171' : raw >= 15 ? '#38bdf8' : '#2dd4bf';
+            return {
+              text: `${Math.round(raw)}`,
+              color,
+              label: `${mod.moduleName} Wind: ${Math.round(raw)}`,
+            };
+          }
           return {
             text: `${Math.round(raw)}`,
-            color: '#0ea5e9',
+            color: '#38bdf8',
             label: `${mod.moduleName}: ${raw}`,
           };
         }
@@ -317,7 +382,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     return {
       text: isF ? '64°' : '18°',
-      color: '#10b981',
+      color: '#34d399',
       label: `Outside Temp: ${isF ? '64.4°F' : '18.0°C'}`,
     };
   }, [stations, settings]);
@@ -780,37 +845,95 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </select>
               </div>
 
-              {/* Live Preview Badge */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: 'var(--bg-subtle)', borderRadius: 8, border: '1px solid var(--border-subtle)', marginTop: 14 }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  Tray Preview:
-                </div>
+              {/* Live Preview on Taskbar simulated swatches */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '8px 14px',
+                  background: 'var(--bg-subtle)',
+                  borderRadius: 8,
+                  border: '1px solid var(--border-subtle)',
+                  marginTop: 14,
+                  flexWrap: 'wrap',
+                }}
+              >
                 <div
                   style={{
-                    width: 32,
-                    height: 32,
+                    fontSize: '11px',
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  Tray Preview:
+                </div>
+                {/* Dark Taskbar Swatch */}
+                <div
+                  title="Preview on Dark Taskbar (no black box background)"
+                  style={{
+                    width: 34,
+                    height: 34,
                     borderRadius: 5,
-                    background: '#090d16',
-                    border: `1.5px solid ${previewInfo.color}`,
+                    background: '#1f2430',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#ffffff',
+                    color: previewInfo.color,
                     fontWeight: 700,
                     fontSize:
                       previewInfo.text.length <= 3
                         ? 16.5
                         : previewInfo.text.length === 4
-                        ? 14.5
+                        ? 14
                         : 11.5,
-                    boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+                    textShadow:
+                      '0 1px 3px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9)',
                     fontFamily:
                       '"Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
+                    userSelect: 'none',
                   }}
                 >
                   {previewInfo.text}
                 </div>
-                <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {/* Light Taskbar Swatch */}
+                <div
+                  title="Preview on Light Taskbar (no black box background)"
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 5,
+                    background: '#f8fafc',
+                    border: '1px solid rgba(0, 0, 0, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: previewInfo.color,
+                    fontWeight: 700,
+                    fontSize:
+                      previewInfo.text.length <= 3
+                        ? 16.5
+                        : previewInfo.text.length === 4
+                        ? 14
+                        : 11.5,
+                    textShadow:
+                      '0 1px 3px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9), 0 0 1px rgba(0, 0, 0, 0.95)',
+                    fontFamily:
+                      '"Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
+                    userSelect: 'none',
+                  }}
+                >
+                  {previewInfo.text}
+                </div>
+                <div
+                  style={{
+                    fontSize: '12.5px',
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                  }}
+                >
                   {previewInfo.label}
                 </div>
               </div>
