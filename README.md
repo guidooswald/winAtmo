@@ -101,3 +101,9 @@ npm run dev
 
 - **License:** Released under the [MIT License](LICENSE) • Copyright © 2026 [Guido Oswald](https://guido.swiss)
 - **Privacy Policy:** See [PRIVACY.md](PRIVACY.md) for data handling and security disclosures.
+
+---
+
+## Disclaimer
+
+winAtmo is an independent, non-commercial, open-source project and is not affiliated with, endorsed by, or sponsored by Netatmo SAS or Legrand. "Netatmo" is a registered trademark of Netatmo SAS.

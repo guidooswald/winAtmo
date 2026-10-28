@@ -48,17 +48,25 @@ No requests are ever made to any other analytics, logging, advertising, or third
 
 ---
 
-## 4. Third-Party Privacy Policies
+## 4. Third-Party Privacy Policies & Terms
 
-Your use of Netatmo services through winAtmo is governed by Netatmo's Terms of Service and Privacy Policy:
-- [Netatmo / Legrand Privacy Policy](https://www.netatmo.com/privacy)
+Your use of Netatmo cloud services and APIs through winAtmo is governed by Netatmo's official agreements:
+- **Netatmo Privacy Policy:** [https://legals.netatmo.com/?goto=privacy](https://legals.netatmo.com/?goto=privacy)
+- **Netatmo Terms of Use:** [https://legals.netatmo.com/?goto=terms](https://legals.netatmo.com/?goto=terms)
+- **Netatmo Connect API Documentation:** [https://dev.netatmo.com/](https://dev.netatmo.com/)
 
 If you obtain winAtmo via the Microsoft Store, your download is subject to Microsoft's Privacy Statement:
-- [Microsoft Privacy Statement](https://privacy.microsoft.com/)
+- **Microsoft Privacy Statement:** [https://privacy.microsoft.com/](https://privacy.microsoft.com/)
 
 ---
 
-## 5. Data Retention & Deletion
+## 5. Non-Affiliation & Trademark Disclaimer
+
+winAtmo is an independent, non-commercial, open-source client application. It is not affiliated with, endorsed by, certified by, or sponsored by Netatmo SAS or Legrand. "Netatmo" is a registered trademark of Netatmo SAS. All product names, logos, and brands are property of their respective owners.
+
+---
+
+## 6. Data Retention & Deletion
 
 You retain full ownership and control over your data:
 - **Revoking Access:** You can revoke winAtmo's access at any time by signing out within the app or by revoking third-party app permissions in your Netatmo account portal at [my.netatmo.com](https://my.netatmo.com).
@@ -70,19 +78,19 @@ You retain full ownership and control over your data:
 
 ---
 
-## 6. Children's Privacy
+## 7. Children's Privacy
 
 winAtmo does not collect any personal data from anyone, including children under the age of 13 (or under the applicable age of digital consent).
 
 ---
 
-## 7. Changes to this Privacy Policy
+## 8. Changes to this Privacy Policy
 
 If any changes are made to this Privacy Policy, the updated document will be published directly in the winAtmo repository with an updated revision date.
 
 ---
 
-## 8. Contact & Inquiries
+## 9. Contact & Inquiries
 
 For questions, feedback, or inquiries regarding winAtmo or this Privacy Policy, please open an issue on GitHub:
 - **GitHub Repository:** [https://github.com/guidooswald/winAtmo](https://github.com/guidooswald/winAtmo)
