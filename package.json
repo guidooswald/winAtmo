@@ -12,7 +12,51 @@
     "build:main": "esbuild src/main/main.ts --bundle --platform=node --target=node22 --outfile=dist/main/main.js --external:electron --external:node:sqlite && esbuild src/main/preload.ts --bundle --platform=node --target=node22 --outfile=dist/main/preload.js --external:electron && node scripts/brand-exe.mjs",
     "build": "npm run build:renderer && npm run build:main",
     "start": "node scripts/start.mjs",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "generate:icons": "powershell -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
+    "build:msix": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "guidooswald.winAtmo",
+    "productName": "winAtmo",
+    "directories": {
+      "output": "dist/msix",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "appx",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "appx": {
+      "identityName": "guidooswald.winAtmo",
+      "publisher": "CN=4B938E11-DD71-4D17-BB73-B7B777963388",
+      "publisherDisplayName": "guidooswald",
+      "applicationId": "winAtmo",
+      "displayName": "winAtmo",
+      "languages": [
+        "en-US",
+        "de-DE",
+        "fr-FR",
+        "it-IT",
+        "es-ES"
+      ],
+      "backgroundColor": "#0f172a",
+      "showNameOnTiles": false,
+      "minVersion": "10.0.17763.0",
+      "maxVersionTested": "10.0.26100.0",
+      "artifactName": "${productName}-${version}-${arch}.msix"
+    }
   },
   "keywords": [
     "netatmo",
@@ -36,6 +80,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
