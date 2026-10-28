@@ -271,6 +271,10 @@ Write-Host "Rendering Master Icon (512x512)..."
 $icon512 = Render-WinAtmoIcon -size 512
 $icon512.Save((Join-Path $buildDir "icon.png"), [System.Drawing.Imaging.ImageFormat]::Png)
 
+Write-Host "Rendering Store Listing App Tile (300x300)..."
+$tile300 = Render-WinAtmoIcon -size 300
+$tile300.Save((Join-Path $buildDir "StoreTile300x300.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+
 Write-Host "Rendering Windows Store Assets in build/appx/..."
 $storeLogo = Render-WinAtmoIcon -size 50
 $storeLogo.Save((Join-Path $appxDir "StoreLogo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
@@ -292,6 +296,7 @@ $icon16 = Render-WinAtmoIcon -size 16
 Write-IcoFile -outputPath (Join-Path $buildDir "icon.ico") -bitmaps @($icon256, $icon48, $icon32, $icon16)
 
 $icon512.Dispose()
+$tile300.Dispose()
 $storeLogo.Dispose()
 $square44.Dispose()
 $square150.Dispose()
