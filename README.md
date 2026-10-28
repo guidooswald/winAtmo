@@ -97,6 +97,7 @@ npm run dev
 
 ---
 
-## License
+## License & Privacy
 
-Released under the [MIT License](LICENSE) • Copyright © 2026 [Guido Oswald](https://guido.swiss)
+- **License:** Released under the [MIT License](LICENSE) • Copyright © 2026 [Guido Oswald](https://guido.swiss)
+- **Privacy Policy:** See [PRIVACY.md](PRIVACY.md) for data handling and security disclosures.
