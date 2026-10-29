@@ -128,6 +128,7 @@ body {
   font-size: 11.5px;
   color: var(--text-secondary);
   transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  position: relative;
 }
 
 .app-shell.platform-darwin .window-topbar {
@@ -141,6 +142,7 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  position: relative;
 }
 
 .window-topbar-left {
@@ -182,30 +184,37 @@ body {
 }
 
 .window-topbar-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
   gap: 8px;
   overflow: hidden;
   pointer-events: none;
+  z-index: 5;
 }
 
 .window-topbar-station-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 9px;
+  padding: 2.5px 11px;
   border-radius: var(--radius-pill);
   background: var(--bg-surface);
   border: var(--border-width) solid var(--border-subtle);
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
   white-space: nowrap;
+  letter-spacing: 0.2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .topbar-station-dot {
-  width: 6px;
-  height: 6px;
+  width: 6.5px;
+  height: 6.5px;
   border-radius: 50%;
   background: var(--accent-emerald);
   box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
@@ -411,12 +420,14 @@ body {
   backdrop-filter: blur(14px);
   border-bottom: var(--border-width) solid var(--border-subtle);
   flex-shrink: 0;
+  position: relative;
 }
 
 .brand-block {
   display: flex;
   align-items: center;
   gap: 12px;
+  z-index: 2;
 }
 
 .brand-logo-icon {
@@ -445,12 +456,24 @@ body {
 }
 
 .main-nav-tabs {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   gap: 6px;
   background: var(--bg-surface);
   padding: 4px;
   border-radius: var(--radius-md);
   border: var(--border-width) solid var(--border-subtle);
+  z-index: 5;
+}
+
+.header-right-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 2;
 }
 
 .nav-tab-btn {

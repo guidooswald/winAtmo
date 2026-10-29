@@ -216,7 +216,7 @@ const MainStudioApp: React.FC = () => {
   const lightThemes = THEMES.filter((t) => t.mode === 'light');
   const primaryStation = stations.length > 0 ? stations[0] : undefined;
   const primaryStationName =
-    primaryStation?.homeName || primaryStation?.stationName;
+    primaryStation?.stationName || primaryStation?.homeName;
 
   return (
     <div
