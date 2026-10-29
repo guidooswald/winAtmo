@@ -52,6 +52,37 @@ type ChartLayoutMode = 'overlay' | 'stacked';
 type ChartCurveStyle = 'area' | 'line' | 'bar' | 'step';
 type RangePreset = '24h' | '3d' | '7d' | '14d' | '30d' | '90d' | '1y' | 'max' | 'custom';
 
+function getOptimalScale(
+  preset: RangePreset,
+  sDate?: string,
+  eDate?: string
+): NetatmoScale {
+  if (preset === '24h' || preset === '3d' || preset === '7d' || preset === '14d') {
+    return '30min';
+  }
+  if (preset === '30d') {
+    return '1hour';
+  }
+  if (preset === '90d') {
+    return '3hours';
+  }
+  if (preset === '1y' || preset === 'max') {
+    return '1day';
+  }
+  if (preset === 'custom' && sDate && eDate) {
+    const s = Math.floor(new Date(sDate + 'T00:00:00').getTime() / 1000);
+    const e = Math.floor(new Date(eDate + 'T23:59:59').getTime() / 1000);
+    if (!Number.isNaN(s) && !Number.isNaN(e) && s < e) {
+      const spanDays = (e - s) / 86400;
+      if (spanDays <= 21) return '30min';
+      if (spanDays <= 60) return '1hour';
+      if (spanDays <= 180) return '3hours';
+      return '1day';
+    }
+  }
+  return '30min';
+}
+
 export const ChartStudio: React.FC<ChartStudioProps> = ({
   stations,
   settings,
@@ -60,7 +91,9 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
 }) => {
   const [selectedCurves, setSelectedCurves] = useState<SelectedCurve[]>([]);
   const [rangePreset, setRangePreset] = useState<RangePreset>('7d');
-  const [scaleMode, setScaleMode] = useState<'auto' | NetatmoScale>('auto');
+  const [currentScale, setCurrentScale] = useState<NetatmoScale>(() =>
+    getOptimalScale('7d')
+  );
   const [layoutMode, setLayoutMode] = useState<ChartLayoutMode>('overlay');
   const [curveStyle, setCurveStyle] = useState<ChartCurveStyle>('area');
   const [smoothMovingAvg, setSmoothMovingAvg] = useState<boolean>(false);
@@ -428,24 +461,17 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
       }
     }
 
-    const spanDays = (end - begin) / 86400;
-    let resolvedScale: NetatmoScale = '30min';
-    if (scaleMode !== 'auto') {
-      resolvedScale = scaleMode;
-    } else {
-      if (spanDays <= 3) resolvedScale = '30min';
-      else if (spanDays <= 21) resolvedScale = '30min';
-      else if (spanDays <= 60) resolvedScale = '1hour';
-      else if (spanDays <= 180) resolvedScale = '3hours';
-      else resolvedScale = '1day';
-    }
-
     return {
       dateBegin: begin,
       dateEnd: end,
-      effectiveScale: resolvedScale,
+      effectiveScale: currentScale,
     };
-  }, [rangePreset, customStartDate, customEndDate, scaleMode, stations]);
+  }, [rangePreset, customStartDate, customEndDate, currentScale, stations]);
+
+  // Automatically update resolution whenever the time range changes
+  useEffect(() => {
+    setCurrentScale(getOptimalScale(rangePreset, customStartDate, customEndDate));
+  }, [rangePreset, customStartDate, customEndDate]);
 
   // Fetch series from SQLite / Netatmo whenever curves, range, or scale change
   const loadChartData = async (forceRemoteFetch = false) => {
@@ -815,18 +841,17 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
             <div className="pill-group">
               {(
                 [
-                  ['auto', `Auto (${effectiveScale})`],
                   ['max', '5m (Max)'],
                   ['30min', '30m'],
                   ['1hour', '1h'],
                   ['3hours', '3h'],
                   ['1day', '1d'],
-                ] as Array<['auto' | NetatmoScale, string]>
+                ] as Array<[NetatmoScale, string]>
               ).map(([key, label]) => (
                 <button
                   key={key}
-                  className={`pill-btn ${scaleMode === key ? 'active' : ''}`}
-                  onClick={() => setScaleMode(key)}
+                  className={`pill-btn ${currentScale === key ? 'active' : ''}`}
+                  onClick={() => setCurrentScale(key)}
                 >
                   {label}
                 </button>
