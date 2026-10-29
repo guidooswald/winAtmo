@@ -57,7 +57,10 @@ function getOptimalScale(
   sDate?: string,
   eDate?: string
 ): NetatmoScale {
-  if (preset === '24h' || preset === '3d' || preset === '7d' || preset === '14d') {
+  if (preset === '24h') {
+    return 'max';
+  }
+  if (preset === '3d' || preset === '7d' || preset === '14d') {
     return '30min';
   }
   if (preset === '30d') {
@@ -74,6 +77,7 @@ function getOptimalScale(
     const e = Math.floor(new Date(eDate + 'T23:59:59').getTime() / 1000);
     if (!Number.isNaN(s) && !Number.isNaN(e) && s < e) {
       const spanDays = (e - s) / 86400;
+      if (spanDays <= 1.2) return 'max';
       if (spanDays <= 21) return '30min';
       if (spanDays <= 60) return '1hour';
       if (spanDays <= 180) return '3hours';
