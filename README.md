@@ -1,5 +1,9 @@
 # winAtmo
 
+<a href="https://apps.microsoft.com/detail/9P5LDB7WCKFG">
+  <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download from Microsoft Store" width="220" />
+</a>
+
 Native Windows desktop application for **Netatmo Personal Weather Stations** (`NAMain`, `NAModule1` Outdoor, `NAModule2` Wind Anemometer, `NAModule3` Rain Gauge, `NAModule4` Indoor Module, and `NHC` Healthy Home Coach / Smart Indoor Air Quality Monitor), built with Electron, React, TypeScript, and native SQLite (`node:sqlite`).
 
 ---
@@ -76,21 +80,40 @@ winAtmo employs a secure, high-performance multi-process architecture:
 
 ---
 
-## Getting Started
+## Installation & Getting Started
 
-### Prerequisites
+### Option 1: Microsoft Store (Recommended)
+
+For the easiest install, zero dependencies, and automatic background updates, get **winAtmo** directly from the Microsoft Store:
+
+<a href="https://apps.microsoft.com/detail/9P5LDB7WCKFG">
+  <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download from Microsoft Store" width="220" />
+</a>
+
+- **Direct Store Page:** [https://apps.microsoft.com/detail/9P5LDB7WCKFG](https://apps.microsoft.com/detail/9P5LDB7WCKFG)
+
+---
+
+### Option 2: Run from Source / GitHub
+
+#### Prerequisites
 - Windows 10 or Windows 11
 - Node.js 22+
 
-### Installation & Build
+#### Installation & Build
 ```powershell
+# Clone the repository
+git clone https://github.com/guidooswald/winAtmo.git
+cd winAtmo
+
+# Install dependencies and launch
 npm install
 npm run build
 npm start
 ```
 Or double-click **`run.bat`** to build (if needed) and launch the native Windows app.
 
-### Development Mode (Hot Reload)
+#### Development Mode (Hot Reload)
 ```powershell
 npm run dev
 ```
