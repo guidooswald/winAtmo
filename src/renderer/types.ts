@@ -254,6 +254,7 @@ export interface UserSettings {
   oauthClientId?: string;
   oauthClientSecret?: string;
   minimizeToTray: boolean;
+  launchOnStartup: boolean;
 }
 
 export interface StoredCookie {

@@ -689,7 +689,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
 
-        <div className="settings-grid-3">
+        <div className="settings-grid-2">
           <label className="checkbox-row">
             <input
               type="checkbox"
@@ -724,6 +724,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               }
             />
             <span>Keep Running in System Tray on Window Close</span>
+          </label>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.launchOnStartup)}
+              onChange={(e) =>
+                onUpdateSettings({ launchOnStartup: e.target.checked })
+              }
+            />
+            <span>Start winAtmo automatically on Windows login</span>
           </label>
         </div>
 

@@ -61,6 +61,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   taskbarDisplayMode: 'sensor',
   taskbarSensorTarget: 'outdoor_temp',
   minimizeToTray: true,
+  launchOnStartup: false,
 };
 
 const DEFAULT_SESSION: SessionData = {

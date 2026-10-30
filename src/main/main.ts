@@ -12,6 +12,7 @@ import {
 } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'child_process';
 import { AppStore } from './store';
 import { TimeSeriesDatabase } from './database';
 import { NetatmoClient } from './netatmoClient';
@@ -62,6 +63,63 @@ let store: AppStore;
 let db: TimeSeriesDatabase;
 let client: NetatmoClient;
 let webAuth: WebAuthManager;
+
+/**
+ * Configures the application to launch at Windows user login.
+ * Supports both standalone/unpackaged Win32 execution (registry Run key)
+ * and packaged Windows Store (MSIX / Centennial windows.startupTask).
+ */
+function applyStartupRegistration(enabled: boolean): void {
+  // 1. Unpackaged / standard Win32 environment (Electron loginItemSettings)
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      path: process.execPath,
+      args: ['--autostart'],
+    });
+  } catch (err) {
+    console.warn('[Startup] Failed to set electron login item settings:', err);
+  }
+
+  // 2. Windows Store / MSIX packaged environment (Desktop Bridge windows.startupTask)
+  // When running inside an MSIX container, process.windowsStore is true.
+  if (process.windowsStore) {
+    try {
+      const psScript = `
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime
+        $type = [System.Type]::GetType('Windows.ApplicationModel.StartupTask, Windows.ApplicationModel, ContentType=WindowsRuntime')
+        if ($type -ne $null) {
+          $asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } | Select-Object -First 1
+          if ($asTaskGeneric -ne $null) {
+            $asTask = $asTaskGeneric.MakeGenericMethod($type)
+            $op = $type.GetMethod('GetAsync', [Type[]]@([string])).Invoke($null, @('winAtmoStartup'))
+            $task = $asTask.Invoke($null, @($op))
+            $st = $task.Result
+            if ($st -ne $null) {
+              if ('${enabled ? 'true' : 'false'}' -eq 'true') {
+                $st.RequestEnableAsync() | Out-Null
+              } else {
+                $st.Disable()
+              }
+            }
+          }
+        }
+      `;
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', psScript],
+        { windowsHide: true },
+        (err) => {
+          if (err) {
+            console.warn('[Startup] MSIX StartupTask helper note:', err.message);
+          }
+        }
+      );
+    } catch (msixErr) {
+      console.warn('[Startup] MSIX StartupTask execution error:', msixErr);
+    }
+  }
+}
 
 function getRendererEntryUrl(queryMode?: string): {
   isDev: boolean;
@@ -214,7 +272,7 @@ function debouncedSaveWidgetSize(): void {
   }, 250);
 }
 
-function createMainWindow(): void {
+function createMainWindow(shouldShow = true): void {
   const settings = store ? store.getSettings() : null;
   const currentTheme = settings ? settings.theme : 'fluent-dark';
   applyNativeWindowTheme(currentTheme);
@@ -306,10 +364,10 @@ function createMainWindow(): void {
       contextIsolation: true,
       sandbox: true,
     },
-    show: true,
+    show: shouldShow,
   });
 
-  if (savedBounds?.isMaximized) {
+  if (savedBounds?.isMaximized && shouldShow) {
     mainWindow.maximize();
   }
 
@@ -783,6 +841,21 @@ function updateTrayTooltipAndMenu(): void {
       click: async () => {
         await client.syncHistoricalData();
         broadcastToAllWindows('stations:updated', store.getCachedStations());
+        updateTrayTooltipAndMenu();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Start with Windows',
+      type: 'checkbox',
+      checked: Boolean(settings.launchOnStartup),
+      click: () => {
+        const nextVal = !settings.launchOnStartup;
+        const next = store.updateSettings({
+          launchOnStartup: nextVal,
+        });
+        applyStartupRegistration(nextVal);
+        broadcastToAllWindows('settings:updated', next);
         updateTrayTooltipAndMenu();
       },
     },
@@ -1310,6 +1383,13 @@ function registerIpcHandlers(): void {
       setupRefreshSchedule();
     }
 
+    if (
+      partial.launchOnStartup !== undefined &&
+      partial.launchOnStartup !== prev.launchOnStartup
+    ) {
+      applyStartupRegistration(Boolean(partial.launchOnStartup));
+    }
+
     broadcastToAllWindows('settings:updated', updated);
     updateTrayTooltipAndMenu();
 
@@ -1361,10 +1441,17 @@ app.whenReady().then(async () => {
   });
   updateTrayTooltipAndMenu();
 
-  // Launch Main Window & Taskbar Widget
-  createMainWindow();
+  const isAutostart = process.argv.includes('--autostart');
+
+  // Launch Main Window & Taskbar Widget (if autostarted by Windows, start hidden in tray/widget)
+  createMainWindow(!isAutostart);
   createOrUpdateWidgetWindow();
   setupRefreshSchedule();
+
+  // Ensure OS startup registration reflects current user setting
+  if (store.getSettings().launchOnStartup) {
+    applyStartupRegistration(true);
+  }
 
   // If user is already logged in, kick off an initial sync in background
   if (store.getSession().loggedIn) {
