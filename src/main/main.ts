@@ -72,10 +72,18 @@ let webAuth: WebAuthManager;
 function applyStartupRegistration(enabled: boolean): void {
   // 1. Unpackaged / standard Win32 environment (Electron loginItemSettings)
   try {
+    const isBundledApp =
+      fs.existsSync(path.join(process.resourcesPath, 'app.asar')) ||
+      fs.existsSync(path.join(process.resourcesPath, 'app'));
+
+    const startupArgs = isBundledApp
+      ? ['--autostart']
+      : [path.resolve(app.getAppPath()), '--autostart'];
+
     app.setLoginItemSettings({
       openAtLogin: enabled,
       path: process.execPath,
-      args: ['--autostart'],
+      args: startupArgs,
     });
   } catch (err) {
     console.warn('[Startup] Failed to set electron login item settings:', err);
