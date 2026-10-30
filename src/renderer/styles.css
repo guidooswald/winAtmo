@@ -1010,6 +1010,50 @@ body {
 .station-sub {
   font-size: 12.5px;
   color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.station-sub-sep {
+  opacity: 0.5;
+  user-select: none;
+}
+
+.station-location-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(56, 189, 248, 0.08);
+  border: var(--border-width) solid rgba(56, 189, 248, 0.25);
+  padding: 2px 7px;
+  margin: 0;
+  border-radius: var(--radius-xs);
+  color: var(--accent-sky);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.station-location-btn:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: var(--accent-sky);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.location-pin-icon {
+  color: var(--accent-sky);
+  flex-shrink: 0;
+}
+
+.location-ext-icon {
+  opacity: 0.7;
+  flex-shrink: 0;
 }
 
 .station-meta-badges {
@@ -1028,6 +1072,19 @@ body {
   background: var(--bg-surface);
   border: var(--border-width) solid var(--border-subtle);
   color: var(--text-secondary);
+}
+
+.meta-badge.clickable {
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.meta-badge.clickable:hover {
+  background: var(--bg-elevated);
+  color: var(--accent-sky);
+  border-color: var(--accent-sky);
+  transform: translateY(-1px);
 }
 
 .meta-badge.online {

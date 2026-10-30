@@ -44,6 +44,18 @@ declare const __APP_BUILD__: number | undefined;
 declare const __APP_COMMIT__: string | undefined;
 declare const __APP_DATE__: string | undefined;
 
+function getWeathermapUrl(station: WeatherStation): string {
+  const loc = station.place?.location;
+  if (loc && Array.isArray(loc) && loc.length >= 2) {
+    const lon = Number(loc[0]);
+    const lat = Number(loc[1]);
+    if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+      return `https://weathermap.netatmo.com/?zoom=13&lat=${lat}&lng=${lon}&lon=${lon}`;
+    }
+  }
+  return 'https://weathermap.netatmo.com/';
+}
+
 interface StationDashboardProps {
   stations: WeatherStation[];
   settings: UserSettings;
@@ -204,25 +216,52 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
           return true;
         });
 
+        const locationParts = [station.place?.city, station.place?.country].filter(Boolean);
+        const locationText =
+          locationParts.length > 0
+            ? locationParts.join(', ')
+            : station.place?.location
+              ? 'Weathermap'
+              : null;
+        const weathermapUrl = getWeathermapUrl(station);
+
         return (
           <section key={station.id} className="station-section">
             <div className="station-header-banner">
               <div className="station-title-block">
                 <h2>{station.homeName}</h2>
-                <span className="station-sub">
-                  {station.stationName}
-                  {station.place?.city ? ` • ${station.place.city}` : ''}
-                  {station.place?.country ? `, ${station.place.country}` : ''}
+                <div className="station-sub">
+                  <span>{station.stationName}</span>
+                  {locationText && (
+                    <>
+                      <span className="station-sub-sep">•</span>
+                      <button
+                        type="button"
+                        className="station-location-btn"
+                        onClick={() => window.winatmo.openExternal(weathermapUrl)}
+                        title={`Open ${locationText} on Netatmo Weathermap`}
+                      >
+                        <MapPin size={12} className="location-pin-icon" />
+                        <span>{locationText}</span>
+                        <ExternalLink size={10} className="location-ext-icon" />
+                      </button>
+                    </>
+                  )}
                   {station.place?.altitude !== undefined
                     ? ` • ${station.place.altitude}m alt`
                     : ''}
-                </span>
+                </div>
               </div>
               <div className="station-meta-badges">
                 {station.place?.timezone && (
-                  <span className="meta-badge">
+                  <button
+                    type="button"
+                    className="meta-badge clickable"
+                    onClick={() => window.winatmo.openExternal(weathermapUrl)}
+                    title={`Open on Netatmo Weathermap (${station.place.timezone})`}
+                  >
                     <MapPin size={12} /> {station.place.timezone}
-                  </span>
+                  </button>
                 )}
                 <span className="meta-badge">
                   Setup:{' '}
