@@ -223,11 +223,11 @@ export class NetatmoClient {
     const token = await this.ensureAccessToken(false);
     const session = this.store.getSession();
 
-    const preferredBase = session.apiBase || 'app.netatmo.net';
+    const preferredBase = session.apiBase || 'api.netatmo.com';
     const fallbackBase =
-      preferredBase === 'app.netatmo.net'
-        ? 'api.netatmo.com'
-        : 'app.netatmo.net';
+      preferredBase === 'api.netatmo.com'
+        ? 'app.netatmo.net'
+        : 'api.netatmo.com';
 
     const searchParams = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
@@ -237,17 +237,26 @@ export class NetatmoClient {
     }
     const qs = searchParams.toString();
 
+    let lastNetworkErr: any = null;
+
     for (const base of [preferredBase, fallbackBase]) {
       const url = `https://${base}/api/${endpoint}${qs ? '?' + qs : ''}`;
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-        },
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${token}`,
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+          },
+        });
+      } catch (netErr: any) {
+        lastNetworkErr = netErr;
+        // Network or DNS error on this domain (e.g. ENOTFOUND or timeout); try fallback domain
+        continue;
+      }
 
       if (res.status === 401 || res.status === 403) {
         let errCode = 0;
@@ -279,6 +288,20 @@ export class NetatmoClient {
         }
         return json;
       }
+    }
+
+    if (lastNetworkErr) {
+      const isDnsOrOffline =
+        lastNetworkErr.code === 'ENOTFOUND' ||
+        lastNetworkErr.code === 'ECONNREFUSED' ||
+        lastNetworkErr.code === 'EAI_AGAIN' ||
+        lastNetworkErr.message?.includes('fetch failed');
+      if (isDnsOrOffline) {
+        throw new Error(
+          `Netatmo server unreachable (${lastNetworkErr.code || 'offline'}). Check internet connection.`
+        );
+      }
+      throw lastNetworkErr;
     }
 
     throw new Error(`Netatmo API request to /${endpoint} failed.`);
