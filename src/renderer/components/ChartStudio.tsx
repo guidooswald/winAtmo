@@ -3,6 +3,8 @@ import {
   Activity,
   BarChart3,
   Calendar,
+  Cloud,
+  Database,
   Download,
   Layers,
   LineChart,
@@ -116,10 +118,19 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
   const [seriesData, setSeriesData] = useState<MeasureSeries[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingElapsed, setLoadingElapsed] = useState<number>(0);
+  const [querySource, setQuerySource] = useState<'local_database' | 'netatmo_api' | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [activePreset, setActivePreset] = useState<string | null>(null);
 
   const querySeqRef = useRef<number>(0);
+
+  // Listen for real-time query source notifications from the backend
+  useEffect(() => {
+    const unsub = window.winatmo.onMeasureQueryStatus?.((status) => {
+      setQuerySource(status.source);
+    });
+    return () => unsub?.();
+  }, []);
 
   // Track elapsed loading time to provide smart feedback on long-running queries
   useEffect(() => {
@@ -494,6 +505,23 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     setCurrentScale(getOptimalScale(rangePreset, customStartDate, customEndDate));
   }, [rangePreset, customStartDate, customEndDate]);
 
+  const formatScaleName = (scale: NetatmoScale): string => {
+    switch (scale) {
+      case 'max':
+        return '5m (Max)';
+      case '30min':
+        return '30m';
+      case '1hour':
+        return '1h';
+      case '3hours':
+        return '3h';
+      case '1day':
+        return '1d';
+      default:
+        return scale;
+    }
+  };
+
   // Fetch series from SQLite / Netatmo whenever curves, range, or scale change
   const loadChartData = async (forceRemoteFetch = false) => {
     if (selectedCurves.length === 0) {
@@ -502,6 +530,8 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     }
     const seq = ++querySeqRef.current;
     setLoading(true);
+    setQuerySource(null);
+    const startTime = Date.now();
     try {
       const res = await window.winatmo.queryMeasureSeries({
         items: selectedCurves.map((c) => ({
@@ -517,7 +547,19 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
         forceRemoteFetch,
       });
       if (seq === querySeqRef.current) {
-        setSeriesData(res);
+        if (res.length > 0 && res[0].source) {
+          setQuerySource(res[0].source);
+        }
+        // Ensure the loading dialog stays visible for a minimum of 550ms so user
+        // can clearly see and read whether the query hit the local database or Netatmo API
+        const elapsed = Date.now() - startTime;
+        const minDisplayTime = 550;
+        if (elapsed < minDisplayTime) {
+          await new Promise((r) => setTimeout(r, minDisplayTime - elapsed));
+        }
+        if (seq === querySeqRef.current) {
+          setSeriesData(res);
+        }
       }
     } catch (err) {
       if (seq === querySeqRef.current) {
@@ -879,7 +921,14 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                 <button
                   key={key}
                   className={`pill-btn ${currentScale === key ? 'active' : ''}`}
-                  onClick={() => setCurrentScale(key)}
+                  onClick={() => {
+                    if (currentScale === key) {
+                      loadChartData(false);
+                    } else {
+                      setCurrentScale(key);
+                    }
+                  }}
+                  title={`Switch to ${label} resolution`}
                 >
                   {label}
                 </button>
@@ -1101,11 +1150,21 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                 {loading ? (
                   <span className="chart-loading-hint-badge">
                     <RefreshCw size={11} className="spin" />
-                    <span>
-                      {loadingElapsed > 1200
-                        ? 'Syncing Netatmo Cloud...'
-                        : 'Querying SQLite database...'}
-                    </span>
+                    {querySource === 'netatmo_api' ? (
+                      <span>
+                        <Cloud size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                        Netatmo API: Fetching {formatScaleName(effectiveScale)} data...
+                      </span>
+                    ) : querySource === 'local_database' ? (
+                      <span>
+                        <Database size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                        Local Database: Reading {formatScaleName(effectiveScale)} data...
+                      </span>
+                    ) : (
+                      <span>
+                        Querying {formatScaleName(effectiveScale)} data...
+                      </span>
+                    )}
                     <span className="loading-elapsed">
                       {(loadingElapsed / 1000).toFixed(1)}s
                     </span>
@@ -1120,14 +1179,40 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
             <div className="hover-inspector-bar">
               {loading ? (
                 <span className="hover-placeholder chart-querying-indicator">
-                  <RefreshCw size={12} className="spin" />
-                  <span>
-                    Querying{' '}
-                    {rangePreset === 'custom'
-                      ? 'custom date'
-                      : rangePreset.toUpperCase()}{' '}
-                    measurements ({effectiveScale} intervals)...
-                  </span>
+                  {querySource === 'netatmo_api' ? (
+                    <>
+                      <Cloud size={13} style={{ color: '#38bdf8' }} />
+                      <span>
+                        <strong>Netatmo API:</strong> Downloading{' '}
+                        {rangePreset === 'custom'
+                          ? 'custom date'
+                          : rangePreset.toUpperCase()}{' '}
+                        measurements at {formatScaleName(effectiveScale)} resolution from cloud...
+                      </span>
+                    </>
+                  ) : querySource === 'local_database' ? (
+                    <>
+                      <Database size={13} style={{ color: '#4ade80' }} />
+                      <span>
+                        <strong>Local Database:</strong> Reading cached{' '}
+                        {rangePreset === 'custom'
+                          ? 'custom date'
+                          : rangePreset.toUpperCase()}{' '}
+                        measurements at {formatScaleName(effectiveScale)} resolution from SQLite...
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={12} className="spin" />
+                      <span>
+                        Querying{' '}
+                        {rangePreset === 'custom'
+                          ? 'custom date'
+                          : rangePreset.toUpperCase()}{' '}
+                        measurements ({formatScaleName(effectiveScale)} resolution)...
+                      </span>
+                    </>
+                  )}
                 </span>
               ) : hoveredTimestamp ? (
                 <>
@@ -1284,23 +1369,70 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
               {loading && (
                 <div className="chart-loading-overlay">
                   <div className="chart-loading-box">
+                    <div className="chart-loading-source-pill">
+                      {querySource === 'netatmo_api' ? (
+                        <span className="source-badge api">
+                          <Cloud size={13} />
+                          <span>Netatmo Cloud API</span>
+                        </span>
+                      ) : querySource === 'local_database' ? (
+                        <span className="source-badge db">
+                          <Database size={13} />
+                          <span>Local SQLite Database</span>
+                        </span>
+                      ) : (
+                        <span className="source-badge pending">
+                          <RefreshCw size={12} className="spin" />
+                          <span>Resolving Source...</span>
+                        </span>
+                      )}
+                    </div>
+
                     <div className="chart-loading-icon-group">
                       <div className="chart-loading-pulse-ring" />
-                      <Loader2 size={34} className="chart-loading-spinner spin" />
-                      <Activity size={16} className="chart-loading-inner-icon" />
+                      <Loader2 size={36} className="chart-loading-spinner spin" />
+                      {querySource === 'netatmo_api' ? (
+                        <Cloud size={18} className="chart-loading-inner-icon cloud" />
+                      ) : querySource === 'local_database' ? (
+                        <Database size={17} className="chart-loading-inner-icon db" />
+                      ) : (
+                        <Activity size={16} className="chart-loading-inner-icon" />
+                      )}
                     </div>
+
                     <div className="chart-loading-text">
                       <div className="chart-loading-title">
-                        {loadingElapsed > 1200
-                          ? 'Fetching from Netatmo Cloud...'
-                          : 'Querying Historical Data...'}
+                        {querySource === 'netatmo_api'
+                          ? 'Fetching from Netatmo API'
+                          : querySource === 'local_database'
+                            ? 'Reading Local Database'
+                            : 'Querying Historical Data...'}
                       </div>
                       <div className="chart-loading-subtitle">
-                        {loadingElapsed > 1200
-                          ? `Syncing ${selectedCurves.length} sensor curve${selectedCurves.length > 1 ? 's' : ''} for ${rangePreset === 'custom' ? 'custom' : rangePreset.toUpperCase()} range • ${(loadingElapsed / 1000).toFixed(1)}s`
-                          : `Reading ${selectedCurves.length} sensor curve${selectedCurves.length > 1 ? 's' : ''} (${effectiveScale} resolution)`}
+                        {querySource === 'netatmo_api' ? (
+                          <>
+                            Downloading {selectedCurves.length} curve{selectedCurves.length > 1 ? 's' : ''} at{' '}
+                            <strong>{formatScaleName(effectiveScale)}</strong> resolution from Netatmo Cloud
+                          </>
+                        ) : querySource === 'local_database' ? (
+                          <>
+                            Reading {selectedCurves.length} curve{selectedCurves.length > 1 ? 's' : ''} at{' '}
+                            <strong>{formatScaleName(effectiveScale)}</strong> resolution from local SQLite (0 API calls)
+                          </>
+                        ) : (
+                          <>
+                            Loading {selectedCurves.length} curve{selectedCurves.length > 1 ? 's' : ''} (
+                            {formatScaleName(effectiveScale)} resolution)...
+                          </>
+                        )}
                       </div>
+                      {loadingElapsed > 800 && (
+                        <div className="chart-loading-timer">
+                          Elapsed: {(loadingElapsed / 1000).toFixed(1)}s
+                        </div>
+                      )}
                     </div>
+
                     <div className="chart-loading-bars">
                       <span className="c-bar b1" />
                       <span className="c-bar b2" />

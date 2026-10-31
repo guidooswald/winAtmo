@@ -138,6 +138,12 @@ export interface MeasureSeries {
   scale: NetatmoScale;
   points: MeasurePoint[];
   stats: SeriesStats;
+  source?: 'local_database' | 'netatmo_api';
+}
+
+export interface MeasureQueryStatus {
+  source: 'local_database' | 'netatmo_api';
+  scale: NetatmoScale;
 }
 
 export interface MeasureQueryRequest {

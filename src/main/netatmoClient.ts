@@ -4,6 +4,7 @@ import {
   AccountInfo,
   DashboardReadings,
   MeasureQueryRequest,
+  MeasureQueryStatus,
   MeasureSeries,
   MetricType,
   ModuleType,
@@ -19,6 +20,7 @@ export class NetatmoClient {
   private db: TimeSeriesDatabase;
   private silentRefreshCallback?: () => Promise<string | null>;
   private onProgressCallback?: (progress: SyncProgress) => void;
+  private onQueryStatusCallback?: (status: MeasureQueryStatus) => void;
   private isSyncing = false;
   private currentProgress: SyncProgress = {
     active: false,
@@ -40,6 +42,10 @@ export class NetatmoClient {
 
   public setProgressHandler(fn: (progress: SyncProgress) => void): void {
     this.onProgressCallback = fn;
+  }
+
+  public setQueryStatusHandler(fn: (status: MeasureQueryStatus) => void): void {
+    this.onQueryStatusCallback = fn;
   }
 
   public getSyncProgress(): SyncProgress {
@@ -1091,6 +1097,35 @@ export class NetatmoClient {
       byModule.set(key, list);
     }
 
+    // Determine upfront whether this query requires remote Netatmo Cloud API requests or is served 100% from local SQLite
+    let willHitApi = false;
+    if (session.loggedIn && session.authMethod !== 'demo') {
+      for (const [, group] of byModule.entries()) {
+        const sample = group[0];
+        const st = stations.find((s) => s.id === sample.stationId);
+        const mod = st?.modules.find((m) => m.id === sample.moduleId);
+        if (mod) {
+          const coverage = this.db.getSyncCoverage(mod.id, req.scale);
+          const stepSec = this.db.getScaleSeconds(req.scale);
+          const needsBackfill =
+            !coverage || req.dateBegin < coverage.minTs - stepSec * 4;
+          const needsForward =
+            !coverage || req.dateEnd > coverage.maxTs + stepSec * 2;
+          if (req.forceRemoteFetch || needsBackfill || needsForward) {
+            willHitApi = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (this.onQueryStatusCallback) {
+      this.onQueryStatusCallback({
+        source: willHitApi ? 'netatmo_api' : 'local_database',
+        scale: req.scale,
+      });
+    }
+
     for (const [, group] of byModule.entries()) {
       const sample = group[0];
       const st = stations.find((s) => s.id === sample.stationId);
@@ -1148,6 +1183,7 @@ export class NetatmoClient {
           scale: req.scale,
           points,
           stats: this.db.computeStats(points),
+          source: willHitApi ? 'netatmo_api' : 'local_database',
         });
       }
     }

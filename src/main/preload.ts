@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
   AccountInfo,
   MeasureQueryRequest,
+  MeasureQueryStatus,
   MeasureSeries,
   NetatmoScale,
   StorageStats,
@@ -90,6 +91,7 @@ export interface WinAtmoAPI {
   onSyncProgress: (cb: (progress: SyncProgress) => void) => () => void;
   onSettingsUpdated: (cb: (settings: UserSettings) => void) => () => void;
   onWidgetDirectionUpdated: (cb: (dir: 'up' | 'down') => void) => () => void;
+  onMeasureQueryStatus: (cb: (status: MeasureQueryStatus) => void) => () => void;
   onFocusSensor: (
     cb: (payload: { moduleId: string; metric?: string }) => void
   ) => () => void;
@@ -167,6 +169,11 @@ const api: WinAtmoAPI = {
     const handler = (_e: any, dir: 'up' | 'down') => cb(dir);
     ipcRenderer.on('widget:direction-updated', handler);
     return () => ipcRenderer.removeListener('widget:direction-updated', handler);
+  },
+  onMeasureQueryStatus: (cb) => {
+    const handler = (_e: any, status: MeasureQueryStatus) => cb(status);
+    ipcRenderer.on('measure:query-status', handler);
+    return () => ipcRenderer.removeListener('measure:query-status', handler);
   },
   onFocusSensor: (cb) => {
     const handler = (

@@ -24,6 +24,7 @@ import {
 } from './taskbarIcon';
 import {
   MeasureQueryRequest,
+  MeasureQueryStatus,
   MeasureSeries,
   NetatmoScale,
   SyncProgress,
@@ -1441,6 +1442,9 @@ app.whenReady().then(async () => {
   client.setSilentRefreshHandler(() => webAuth.silentWebRefresh());
   client.setProgressHandler((progress: SyncProgress) => {
     broadcastToAllWindows('sync:progress', progress);
+  });
+  client.setQueryStatusHandler((status: MeasureQueryStatus) => {
+    broadcastToAllWindows('measure:query-status', status);
   });
 
   registerIpcHandlers();
