@@ -1588,6 +1588,8 @@ body {
 }
 
 .chart-canvas-card {
+  position: relative;
+  overflow: hidden;
   border-radius: var(--radius-md);
   background: var(--bg-card);
   border: var(--border-width) solid var(--border-subtle);
@@ -1671,8 +1673,10 @@ body {
 }
 
 .svg-chart-wrapper {
+  position: relative;
   width: 100%;
   overflow: hidden;
+  min-height: 280px;
 }
 
 .interactive-chart-svg {
@@ -1680,6 +1684,197 @@ body {
   height: auto;
   display: block;
   cursor: crosshair;
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.interactive-chart-svg.is-loading {
+  opacity: 0.32;
+  filter: blur(1.5px);
+  pointer-events: none;
+}
+
+/* Chart loading top scanning bar */
+.chart-loading-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-sky, #38bdf8) 45%,
+    #60a5fa 55%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: chart-shimmer-sweep 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  z-index: 10;
+}
+
+@keyframes chart-shimmer-sweep {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -150% 0;
+  }
+}
+
+/* Center loading overlay */
+.chart-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 8;
+  pointer-events: none;
+  animation: chart-fade-in 0.2s ease-out;
+}
+
+@keyframes chart-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.chart-loading-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 28px;
+  background: var(--bg-card);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  max-width: 90%;
+  text-align: center;
+}
+
+.chart-loading-icon-group {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chart-loading-pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent-sky, #38bdf8);
+  opacity: 0.35;
+  animation: chart-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes chart-ping {
+  75%, 100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+
+.chart-loading-spinner {
+  color: var(--accent-sky, #38bdf8);
+}
+
+.chart-loading-inner-icon {
+  position: absolute;
+  color: var(--text-primary);
+  opacity: 0.85;
+}
+
+.chart-loading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chart-loading-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.chart-loading-subtitle {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+/* Soundwave / equalizer bars */
+.chart-loading-bars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.chart-loading-bars .c-bar {
+  width: 3.5px;
+  height: 100%;
+  background: var(--accent-sky, #38bdf8);
+  border-radius: 2px;
+  animation: chart-bar-dance 0.9s ease-in-out infinite alternate;
+}
+
+.chart-loading-bars .c-bar.b1 { animation-delay: 0.0s; height: 35%; }
+.chart-loading-bars .c-bar.b2 { animation-delay: 0.15s; height: 75%; }
+.chart-loading-bars .c-bar.b3 { animation-delay: 0.3s; height: 100%; }
+.chart-loading-bars .c-bar.b4 { animation-delay: 0.45s; height: 65%; }
+.chart-loading-bars .c-bar.b5 { animation-delay: 0.6s; height: 40%; }
+
+@keyframes chart-bar-dance {
+  0% {
+    transform: scaleY(0.2);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.chart-loading-hint-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-sky, #38bdf8);
+  font-weight: 600;
+  font-size: 11.5px;
+}
+
+.chart-loading-hint-badge .loading-elapsed {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+.chart-querying-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--accent-sky, #38bdf8);
+  font-weight: 500;
 }
 
 /* Series Statistics Cards */

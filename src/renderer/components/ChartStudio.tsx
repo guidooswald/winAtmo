@@ -6,6 +6,7 @@ import {
   Download,
   Layers,
   LineChart,
+  Loader2,
   Maximize2,
   Plus,
   RefreshCw,
@@ -114,8 +115,24 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
 
   const [seriesData, setSeriesData] = useState<MeasureSeries[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingElapsed, setLoadingElapsed] = useState<number>(0);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [activePreset, setActivePreset] = useState<string | null>(null);
+
+  const querySeqRef = useRef<number>(0);
+
+  // Track elapsed loading time to provide smart feedback on long-running queries
+  useEffect(() => {
+    if (!loading) {
+      setLoadingElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const timer = setInterval(() => {
+      setLoadingElapsed(Date.now() - start);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [loading]);
 
   // Interactive zoom window [0..1, 0..1]
   const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
@@ -483,6 +500,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
       setSeriesData([]);
       return;
     }
+    const seq = ++querySeqRef.current;
     setLoading(true);
     try {
       const res = await window.winatmo.queryMeasureSeries({
@@ -498,11 +516,17 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
         dateEnd,
         forceRemoteFetch,
       });
-      setSeriesData(res);
+      if (seq === querySeqRef.current) {
+        setSeriesData(res);
+      }
     } catch (err) {
-      console.error('[ChartStudio] Failed to load series:', err);
+      if (seq === querySeqRef.current) {
+        console.error('[ChartStudio] Failed to load series:', err);
+      }
     } finally {
-      setLoading(false);
+      if (seq === querySeqRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -1038,6 +1062,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
         {/* Main Interactive SVG Chart Canvas + Stats */}
         <div className="chart-canvas-column">
           <div className="chart-canvas-card">
+            {loading && <div className="chart-loading-bar" />}
             <div className="chart-canvas-header">
               <div className="active-curves-legend">
                 {processedSeries.map((s) => (
@@ -1073,13 +1098,38 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                 ))}
               </div>
               <div className="chart-hint">
-                Drag across chart to zoom • Hover to inspect values
+                {loading ? (
+                  <span className="chart-loading-hint-badge">
+                    <RefreshCw size={11} className="spin" />
+                    <span>
+                      {loadingElapsed > 1200
+                        ? 'Syncing Netatmo Cloud...'
+                        : 'Querying SQLite database...'}
+                    </span>
+                    <span className="loading-elapsed">
+                      {(loadingElapsed / 1000).toFixed(1)}s
+                    </span>
+                  </span>
+                ) : (
+                  'Drag across chart to zoom • Hover to inspect values'
+                )}
               </div>
             </div>
 
             {/* Hover Inspector Readout Bar */}
             <div className="hover-inspector-bar">
-              {hoveredTimestamp ? (
+              {loading ? (
+                <span className="hover-placeholder chart-querying-indicator">
+                  <RefreshCw size={12} className="spin" />
+                  <span>
+                    Querying{' '}
+                    {rangePreset === 'custom'
+                      ? 'custom date'
+                      : rangePreset.toUpperCase()}{' '}
+                    measurements ({effectiveScale} intervals)...
+                  </span>
+                </span>
+              ) : hoveredTimestamp ? (
                 <>
                   <span className="hover-time">
                     {new Date(hoveredTimestamp * 1000).toLocaleString([], {
@@ -1126,7 +1176,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-                className="interactive-chart-svg"
+                className={`interactive-chart-svg ${loading ? 'is-loading' : ''}`}
                 onMouseMove={handleSvgMouseMove}
                 onMouseLeave={() => {
                   setHoverRatio(null);
@@ -1229,6 +1279,38 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                   </g>
                 )}
               </svg>
+
+              {/* Chart Loading Overlay */}
+              {loading && (
+                <div className="chart-loading-overlay">
+                  <div className="chart-loading-box">
+                    <div className="chart-loading-icon-group">
+                      <div className="chart-loading-pulse-ring" />
+                      <Loader2 size={34} className="chart-loading-spinner spin" />
+                      <Activity size={16} className="chart-loading-inner-icon" />
+                    </div>
+                    <div className="chart-loading-text">
+                      <div className="chart-loading-title">
+                        {loadingElapsed > 1200
+                          ? 'Fetching from Netatmo Cloud...'
+                          : 'Querying Historical Data...'}
+                      </div>
+                      <div className="chart-loading-subtitle">
+                        {loadingElapsed > 1200
+                          ? `Syncing ${selectedCurves.length} sensor curve${selectedCurves.length > 1 ? 's' : ''} for ${rangePreset === 'custom' ? 'custom' : rangePreset.toUpperCase()} range • ${(loadingElapsed / 1000).toFixed(1)}s`
+                          : `Reading ${selectedCurves.length} sensor curve${selectedCurves.length > 1 ? 's' : ''} (${effectiveScale} resolution)`}
+                      </div>
+                    </div>
+                    <div className="chart-loading-bars">
+                      <span className="c-bar b1" />
+                      <span className="c-bar b2" />
+                      <span className="c-bar b3" />
+                      <span className="c-bar b4" />
+                      <span className="c-bar b5" />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
