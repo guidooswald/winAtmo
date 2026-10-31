@@ -979,7 +979,7 @@ export class NetatmoClient {
       const body = response?.body;
 
       const batchRows: BatchMeasurementRow[] = [];
-      let lastTsInBatch = chunkEnd;
+      let maxTsInBatch = -1;
 
       if (Array.isArray(body)) {
         // optimize: true format -> [{ beg_time, step_time, value: [[v1, v2], ...] }]
@@ -1007,7 +1007,7 @@ export class NetatmoClient {
                 }
               }
             }
-            if (ts > lastTsInBatch) lastTsInBatch = ts;
+            if (ts > maxTsInBatch) maxTsInBatch = ts;
             if (ts < lowestFetchedTs) lowestFetchedTs = ts;
             if (ts > highestFetchedTs) highestFetchedTs = ts;
           }
@@ -1036,7 +1036,7 @@ export class NetatmoClient {
               }
             }
           }
-          if (ts > lastTsInBatch) lastTsInBatch = ts;
+          if (ts > maxTsInBatch) maxTsInBatch = ts;
           if (ts < lowestFetchedTs) lowestFetchedTs = ts;
           if (ts > highestFetchedTs) highestFetchedTs = ts;
         }
@@ -1046,8 +1046,21 @@ export class NetatmoClient {
         totalStored += this.db.insertBatch(batchRows);
       }
 
-      // Advance cursor
-      const nextCursor = Math.max(chunkEnd, lastTsInBatch + stepSeconds);
+      // If we reached targetEnd, we are done
+      if (maxTsInBatch >= targetEnd - stepSeconds) {
+        break;
+      }
+
+      // Advance cursor:
+      // If points were returned, continue from the next point after the latest timestamp returned.
+      // If zero points were returned in [cursor, chunkEnd], advance past chunkEnd.
+      let nextCursor: number;
+      if (maxTsInBatch > 0) {
+        nextCursor = Math.max(cursor + stepSeconds, maxTsInBatch + stepSeconds);
+      } else {
+        nextCursor = chunkEnd + stepSeconds;
+      }
+
       if (nextCursor <= cursor) {
         break;
       }
@@ -1060,9 +1073,14 @@ export class NetatmoClient {
     }
 
     // Record coverage so subsequent queries know this time window was synced
-    const covMin = Math.min(dateBegin, lowestFetchedTs);
-    const covMax = Math.max(dateEnd, highestFetchedTs > 0 ? highestFetchedTs : dateEnd);
-    this.db.updateSyncCoverage(module.id, scale, covMin, covMax);
+    if (lowestFetchedTs < Infinity && highestFetchedTs > 0) {
+      const reachedEnd = cursor >= targetEnd || highestFetchedTs >= targetEnd - stepSeconds * 2;
+      const covMin = Math.min(dateBegin, lowestFetchedTs);
+      const covMax = reachedEnd ? Math.max(dateEnd, highestFetchedTs) : highestFetchedTs;
+      this.db.updateSyncCoverage(module.id, scale, covMin, covMax);
+    } else if (pageCount > 0 && cursor >= targetEnd) {
+      this.db.updateSyncCoverage(module.id, scale, dateBegin, dateEnd);
+    }
 
     return totalStored;
   }
@@ -1107,11 +1125,34 @@ export class NetatmoClient {
         if (mod) {
           const coverage = this.db.getSyncCoverage(mod.id, req.scale);
           const stepSec = this.db.getScaleSeconds(req.scale);
+          const effectiveBegin = Math.max(req.dateBegin, st?.dateSetup || mod.dateSetup || 0);
+          const spanSec = Math.max(0, req.dateEnd - effectiveBegin);
+          const expectedPoints = Math.max(1, Math.floor(spanSec / stepSec));
+
           const needsBackfill =
             !coverage || req.dateBegin < coverage.minTs - stepSec * 4;
           const needsForward =
             !coverage || req.dateEnd > coverage.maxTs + stepSec * 2;
-          if (req.forceRemoteFetch || needsBackfill || needsForward) {
+          const existingPoints = this.db.queryPoints(
+            mod.id,
+            sample.metric,
+            req.scale,
+            req.dateBegin,
+            req.dateEnd
+          );
+
+          const hasZeroPoints = existingPoints.length === 0;
+          const hasSparsePoints = existingPoints.length < expectedPoints * 0.7;
+          const hasGapAtStart =
+            existingPoints.length > 0 &&
+            existingPoints[0].ts > effectiveBegin + stepSec * 3;
+          const hasGapAtEnd =
+            existingPoints.length > 0 &&
+            existingPoints[existingPoints.length - 1].ts < req.dateEnd - stepSec * 3;
+          const isMissingData =
+            hasZeroPoints || hasSparsePoints || hasGapAtStart || hasGapAtEnd;
+
+          if (req.forceRemoteFetch || needsBackfill || needsForward || isMissingData) {
             willHitApi = true;
             break;
           }
@@ -1130,6 +1171,7 @@ export class NetatmoClient {
       const sample = group[0];
       const st = stations.find((s) => s.id === sample.stationId);
       const mod = st?.modules.find((m) => m.id === sample.moduleId);
+      let didFetchForModule = false;
 
       if (
         mod &&
@@ -1138,15 +1180,37 @@ export class NetatmoClient {
       ) {
         const coverage = this.db.getSyncCoverage(mod.id, req.scale);
         const stepSec = this.db.getScaleSeconds(req.scale);
+        const effectiveBegin = Math.max(req.dateBegin, st?.dateSetup || mod.dateSetup || 0);
+        const spanSec = Math.max(0, req.dateEnd - effectiveBegin);
+        const expectedPoints = Math.max(1, Math.floor(spanSec / stepSec));
+
         const needsBackfill =
           !coverage || req.dateBegin < coverage.minTs - stepSec * 4;
         const needsForward =
           !coverage || req.dateEnd > coverage.maxTs + stepSec * 2;
+        const existingPoints = this.db.queryPoints(
+          mod.id,
+          sample.metric,
+          req.scale,
+          req.dateBegin,
+          req.dateEnd
+        );
 
-        if (req.forceRemoteFetch || needsBackfill || needsForward) {
+        const hasZeroPoints = existingPoints.length === 0;
+        const hasSparsePoints = existingPoints.length < expectedPoints * 0.7;
+        const hasGapAtStart =
+          existingPoints.length > 0 &&
+          existingPoints[0].ts > effectiveBegin + stepSec * 3;
+        const hasGapAtEnd =
+          existingPoints.length > 0 &&
+          existingPoints[existingPoints.length - 1].ts < req.dateEnd - stepSec * 3;
+        const isMissingData =
+          hasZeroPoints || hasSparsePoints || hasGapAtStart || hasGapAtEnd;
+
+        if (req.forceRemoteFetch || needsBackfill || needsForward || isMissingData) {
           try {
             const fetchBegin =
-              !req.forceRemoteFetch && coverage && !needsBackfill
+              !req.forceRemoteFetch && coverage && !needsBackfill && !isMissingData
                 ? Math.max(req.dateBegin, coverage.maxTs - stepSec)
                 : req.dateBegin;
             await this.fetchAndStoreModuleWindow(
@@ -1156,6 +1220,7 @@ export class NetatmoClient {
               fetchBegin,
               req.dateEnd
             );
+            didFetchForModule = true;
           } catch (err) {
             console.warn(
               `[NetatmoClient] Remote backfill for ${mod.moduleName} failed, serving cached SQLite data:`,
@@ -1166,13 +1231,41 @@ export class NetatmoClient {
       }
 
       for (const item of group) {
-        const points = this.db.queryPoints(
+        let points = this.db.queryPoints(
           item.moduleId,
           item.metric,
           req.scale,
           req.dateBegin,
           req.dateEnd
         );
+
+        // Fail-safe: If points are still completely empty after primary sync, do an immediate direct window fetch
+        if (
+          points.length === 0 &&
+          mod &&
+          session.loggedIn &&
+          session.authMethod !== 'demo' &&
+          !didFetchForModule
+        ) {
+          try {
+            await this.fetchAndStoreModuleWindow(
+              sample.stationId,
+              mod,
+              req.scale,
+              req.dateBegin,
+              req.dateEnd
+            );
+            didFetchForModule = true;
+            points = this.db.queryPoints(
+              item.moduleId,
+              item.metric,
+              req.scale,
+              req.dateBegin,
+              req.dateEnd
+            );
+          } catch {}
+        }
+
         results.push({
           seriesKey: `${item.moduleId}::${item.metric}`,
           stationId: item.stationId,
@@ -1183,7 +1276,7 @@ export class NetatmoClient {
           scale: req.scale,
           points,
           stats: this.db.computeStats(points),
-          source: willHitApi ? 'netatmo_api' : 'local_database',
+          source: willHitApi || didFetchForModule ? 'netatmo_api' : 'local_database',
         });
       }
     }

@@ -500,10 +500,20 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     };
   }, [rangePreset, customStartDate, customEndDate, currentScale, stations]);
 
-  // Automatically update resolution whenever the time range changes
-  useEffect(() => {
-    setCurrentScale(getOptimalScale(rangePreset, customStartDate, customEndDate));
-  }, [rangePreset, customStartDate, customEndDate]);
+  const handleRangePresetChange = (nextPreset: RangePreset) => {
+    setRangePreset(nextPreset);
+    setCurrentScale(getOptimalScale(nextPreset, customStartDate, customEndDate));
+  };
+
+  const handleCustomStartDateChange = (val: string) => {
+    setCustomStartDate(val);
+    setCurrentScale(getOptimalScale('custom', val, customEndDate));
+  };
+
+  const handleCustomEndDateChange = (val: string) => {
+    setCustomEndDate(val);
+    setCurrentScale(getOptimalScale('custom', customStartDate, val));
+  };
 
   const formatScaleName = (scale: NetatmoScale): string => {
     switch (scale) {
@@ -530,7 +540,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     }
     const seq = ++querySeqRef.current;
     setLoading(true);
-    setQuerySource(null);
+    setQuerySource(forceRemoteFetch ? 'netatmo_api' : null);
     const startTime = Date.now();
     try {
       const res = await window.winatmo.queryMeasureSeries({
@@ -871,7 +881,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                 <button
                   key={key}
                   className={`pill-btn ${rangePreset === key ? 'active' : ''}`}
-                  onClick={() => setRangePreset(key)}
+                  onClick={() => handleRangePresetChange(key)}
                 >
                   {label}
                 </button>
@@ -887,7 +897,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
               <input
                 type="date"
                 value={customStartDate}
-                onChange={(e) => setCustomStartDate(e.target.value)}
+                onChange={(e) => handleCustomStartDateChange(e.target.value)}
                 className="date-input"
               />
             </label>
@@ -896,7 +906,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
               <input
                 type="date"
                 value={customEndDate}
-                onChange={(e) => setCustomEndDate(e.target.value)}
+                onChange={(e) => handleCustomEndDateChange(e.target.value)}
                 className="date-input"
               />
             </label>
