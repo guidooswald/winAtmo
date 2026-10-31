@@ -149,9 +149,13 @@ function getRendererEntryUrl(queryMode?: string): {
 
 function showMainWindow(focusModuleId?: string, focusMetric?: string): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    createMainWindow();
+    createMainWindow(true);
   } else {
+    const wasVisible = mainWindow.isVisible();
     if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!wasVisible && store?.getSettings().mainWindowBounds?.isMaximized) {
+      mainWindow.maximize();
+    }
     mainWindow.show();
     mainWindow.focus();
   }
@@ -398,23 +402,25 @@ function createMainWindow(shouldShow = true): void {
     debouncedSaveMainBounds();
   });
 
-  // Explicitly call show() & focus() after construction to override Win32 STARTUPINFO SW_HIDE when spawned from IDE terminals
-  mainWindow.show();
-  mainWindow.focus();
-
-  mainWindow.once('ready-to-show', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
+  if (shouldShow) {
+    // Explicitly call show() & focus() after construction to override Win32 STARTUPINFO SW_HIDE when spawned from IDE terminals
     mainWindow.show();
     mainWindow.focus();
-  });
 
-  mainWindow.webContents.once('did-finish-load', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  });
+    mainWindow.once('ready-to-show', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    });
+
+    mainWindow.webContents.once('did-finish-load', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    });
+  }
 
   const entry = getRendererEntryUrl();
   if (entry.isDev) {
