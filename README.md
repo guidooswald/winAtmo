@@ -13,6 +13,9 @@ Native Windows desktop application for **Netatmo Personal Weather Stations** (`N
 ### Live Sensors & Air Quality Dashboard
 ![Sensors & Dashboard](docs/screenshots/dashboard.png)
 
+### Hardware & Signal Diagnostics
+![Hardware & Signal Diagnostics](docs/screenshots/diagnostics.png)
+
 ### Flexible Multi-Curve Chart Studio
 ![Flexible Charts](docs/screenshots/charts.png)
 
