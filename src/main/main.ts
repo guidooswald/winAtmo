@@ -1463,6 +1463,7 @@ function registerIpcHandlers(): void {
 
 app.whenReady().then(async () => {
   store = new AppStore();
+  await store.init();
   db = new TimeSeriesDatabase();
   client = new NetatmoClient(store, db);
   webAuth = new WebAuthManager(store, client);
@@ -1514,6 +1515,7 @@ app.on('before-quit', () => {
   isQuitting = true;
   saveMainWindowBounds();
   saveWidgetSize();
+  store?.flushSync();
 });
 
 app.on('window-all-closed', () => {

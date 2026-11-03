@@ -11,25 +11,33 @@ import {
 
 const DPAPI_PREFIX = 'dpapi:';
 
-function encryptSecret(plain?: string): string | undefined {
+async function encryptSecretAsync(plain?: string): Promise<string | undefined> {
   if (!plain) return undefined;
   if (plain.startsWith(DPAPI_PREFIX)) return plain;
   try {
-    if (safeStorage.isEncryptionAvailable()) {
-      const buf = safeStorage.encryptString(plain);
-      return DPAPI_PREFIX + buf.toString('base64');
+    if (typeof safeStorage.isAsyncEncryptionAvailable === 'function') {
+      const isAvail = await safeStorage.isAsyncEncryptionAvailable();
+      if (isAvail && typeof safeStorage.encryptStringAsync === 'function') {
+        const buf = await safeStorage.encryptStringAsync(plain);
+        return DPAPI_PREFIX + buf.toString('base64');
+      }
     }
   } catch {}
   return plain;
 }
 
-function decryptSecret(stored?: string): string | undefined {
+async function decryptSecretAsync(stored?: string): Promise<string | undefined> {
   if (!stored) return undefined;
   if (!stored.startsWith(DPAPI_PREFIX)) return stored;
   try {
-    if (safeStorage.isEncryptionAvailable()) {
-      const buf = Buffer.from(stored.slice(DPAPI_PREFIX.length), 'base64');
-      return safeStorage.decryptString(buf);
+    if (typeof safeStorage.isAsyncEncryptionAvailable === 'function') {
+      const isAvail = await safeStorage.isAsyncEncryptionAvailable();
+      if (isAvail && typeof safeStorage.decryptStringAsync === 'function') {
+        const buf = Buffer.from(stored.slice(DPAPI_PREFIX.length), 'base64');
+        const res = await safeStorage.decryptStringAsync(buf);
+        if (typeof res === 'string') return res;
+        if (res && typeof (res as any).result === 'string') return (res as any).result;
+      }
     }
   } catch {}
   return undefined;
@@ -73,6 +81,18 @@ const DEFAULT_SESSION: SessionData = {
 export class AppStore {
   private filePath: string;
   private state: PersistedState;
+  private saveTimeout: NodeJS.Timeout | null = null;
+  private isSaving = false;
+  private saveQueued = false;
+  private cachedEncryptedSecrets: {
+    plainAccessToken?: string;
+    encAccessToken?: string;
+    plainRefreshToken?: string;
+    encRefreshToken?: string;
+    plainOauthSecret?: string;
+    encOauthSecret?: string;
+  } = {};
+  private cachedEncryptedCookies?: any[];
 
   constructor() {
     const userDataDir = app.getPath('userData');
@@ -81,6 +101,53 @@ export class AppStore {
     }
     this.filePath = path.join(userDataDir, 'winatmo-config.json');
     this.state = this.load();
+  }
+
+  public async init(): Promise<void> {
+    await this.decryptLoadedState();
+  }
+
+  private async decryptLoadedState(): Promise<void> {
+    try {
+      if (this.state.settings.oauthClientSecret) {
+        this.cachedEncryptedSecrets.encOauthSecret =
+          this.state.settings.oauthClientSecret;
+        this.state.settings.oauthClientSecret = await decryptSecretAsync(
+          this.state.settings.oauthClientSecret
+        );
+        this.cachedEncryptedSecrets.plainOauthSecret =
+          this.state.settings.oauthClientSecret;
+      }
+      if (this.state.session.accessToken) {
+        this.cachedEncryptedSecrets.encAccessToken =
+          this.state.session.accessToken;
+        this.state.session.accessToken = await decryptSecretAsync(
+          this.state.session.accessToken
+        );
+        this.cachedEncryptedSecrets.plainAccessToken =
+          this.state.session.accessToken;
+      }
+      if (this.state.session.refreshToken) {
+        this.cachedEncryptedSecrets.encRefreshToken =
+          this.state.session.refreshToken;
+        this.state.session.refreshToken = await decryptSecretAsync(
+          this.state.session.refreshToken
+        );
+        this.cachedEncryptedSecrets.plainRefreshToken =
+          this.state.session.refreshToken;
+      }
+      if (Array.isArray(this.state.session.cookies)) {
+        this.cachedEncryptedCookies = this.state.session.cookies;
+        this.state.session.cookies = await Promise.all(
+          this.state.session.cookies.map(async (c: any) => ({
+            ...c,
+            value: (await decryptSecretAsync(c.value)) || '',
+          }))
+        );
+      }
+    } catch (err) {
+      console.warn('[AppStore] Failed to decrypt secrets:', err);
+    }
   }
 
   private load(): PersistedState {
@@ -98,21 +165,8 @@ export class AppStore {
           ...DEFAULT_SETTINGS,
           ...(parsed.settings || {}),
         };
-        if (settings.oauthClientSecret) {
-          settings.oauthClientSecret = decryptSecret(
-            settings.oauthClientSecret
-          );
-        }
 
         const rawSession = { ...DEFAULT_SESSION, ...(parsed.session || {}) };
-        rawSession.accessToken = decryptSecret(rawSession.accessToken);
-        rawSession.refreshToken = decryptSecret(rawSession.refreshToken);
-        if (Array.isArray(rawSession.cookies)) {
-          rawSession.cookies = rawSession.cookies.map((c: any) => ({
-            ...c,
-            value: decryptSecret(c.value) || '',
-          }));
-        }
 
         if (normalizedStations.length > 0 && settings.pinnedSensors?.length) {
           const primaryHome = normalizedStations[0];
@@ -148,23 +202,111 @@ export class AppStore {
   }
 
   private save(): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+    this.saveTimeout = setTimeout(() => {
+      this.saveAsync().catch((err) =>
+        console.error('[AppStore] Failed to save state:', err)
+      );
+    }, 50);
+  }
+
+  public async saveAsync(): Promise<void> {
+    if (this.isSaving) {
+      this.saveQueued = true;
+      return;
+    }
+    this.isSaving = true;
+    try {
+      const sessionSnapshot = { ...this.state.session };
+      const settingsSnapshot = { ...this.state.settings };
+
+      // Encrypt accessToken if changed
+      let encAccessToken: string | undefined = this.cachedEncryptedSecrets.encAccessToken;
+      if (sessionSnapshot.accessToken !== this.cachedEncryptedSecrets.plainAccessToken) {
+        encAccessToken = await encryptSecretAsync(sessionSnapshot.accessToken);
+        this.cachedEncryptedSecrets.plainAccessToken = sessionSnapshot.accessToken;
+        this.cachedEncryptedSecrets.encAccessToken = encAccessToken;
+      }
+
+      // Encrypt refreshToken if changed
+      let encRefreshToken: string | undefined = this.cachedEncryptedSecrets.encRefreshToken;
+      if (sessionSnapshot.refreshToken !== this.cachedEncryptedSecrets.plainRefreshToken) {
+        encRefreshToken = await encryptSecretAsync(sessionSnapshot.refreshToken);
+        this.cachedEncryptedSecrets.plainRefreshToken = sessionSnapshot.refreshToken;
+        this.cachedEncryptedSecrets.encRefreshToken = encRefreshToken;
+      }
+
+      // Encrypt oauthClientSecret if changed
+      let encOauthSecret: string | undefined = this.cachedEncryptedSecrets.encOauthSecret;
+      if (settingsSnapshot.oauthClientSecret !== this.cachedEncryptedSecrets.plainOauthSecret) {
+        encOauthSecret = await encryptSecretAsync(settingsSnapshot.oauthClientSecret);
+        this.cachedEncryptedSecrets.plainOauthSecret = settingsSnapshot.oauthClientSecret;
+        this.cachedEncryptedSecrets.encOauthSecret = encOauthSecret;
+      }
+
+      const encCookies = await Promise.all(
+        (sessionSnapshot.cookies || []).map(async (c) => ({
+          ...c,
+          value: (await encryptSecretAsync(c.value)) || '',
+        }))
+      );
+      this.cachedEncryptedCookies = encCookies;
+
+      const diskState: PersistedState = {
+        ...this.state,
+        settings: {
+          ...settingsSnapshot,
+          oauthClientSecret: encOauthSecret,
+        },
+        session: {
+          ...sessionSnapshot,
+          accessToken: encAccessToken,
+          refreshToken: encRefreshToken,
+          cookies: encCookies,
+        },
+      };
+
+      await fs.promises.writeFile(
+        this.filePath,
+        JSON.stringify(diskState, null, 2),
+        'utf-8'
+      );
+    } catch (err) {
+      console.error('[AppStore] Failed to save state asynchronously:', err);
+    } finally {
+      this.isSaving = false;
+      if (this.saveQueued) {
+        this.saveQueued = false;
+        this.save();
+      }
+    }
+  }
+
+  public flushSync(): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
     try {
       const diskState: PersistedState = {
         ...this.state,
         settings: {
           ...this.state.settings,
-          oauthClientSecret: encryptSecret(
-            this.state.settings.oauthClientSecret
-          ),
+          oauthClientSecret:
+            this.cachedEncryptedSecrets.encOauthSecret ||
+            this.state.settings.oauthClientSecret,
         },
         session: {
           ...this.state.session,
-          accessToken: encryptSecret(this.state.session.accessToken),
-          refreshToken: encryptSecret(this.state.session.refreshToken),
-          cookies: (this.state.session.cookies || []).map((c) => ({
-            ...c,
-            value: encryptSecret(c.value) || '',
-          })),
+          accessToken:
+            this.cachedEncryptedSecrets.encAccessToken ||
+            this.state.session.accessToken,
+          refreshToken:
+            this.cachedEncryptedSecrets.encRefreshToken ||
+            this.state.session.refreshToken,
+          cookies: this.cachedEncryptedCookies || this.state.session.cookies,
         },
       };
       fs.writeFileSync(
@@ -173,7 +315,7 @@ export class AppStore {
         'utf-8'
       );
     } catch (err) {
-      console.error('[AppStore] Failed to save state:', err);
+      console.error('[AppStore] Failed to flush state synchronously:', err);
     }
   }
 
@@ -204,6 +346,8 @@ export class AppStore {
   }
 
   public clearSession(): void {
+    this.cachedEncryptedSecrets = {};
+    this.cachedEncryptedCookies = undefined;
     this.state.session = { ...DEFAULT_SESSION };
     this.state.cachedStations = [];
     this.state.lastSyncAt = undefined;

@@ -210,7 +210,7 @@ export class NetatmoClient {
       }
     }
 
-    if (session.accessToken) {
+    if (!forceRefresh && session.accessToken) {
       return session.accessToken;
     }
 
@@ -244,6 +244,8 @@ export class NetatmoClient {
     const qs = searchParams.toString();
 
     let lastNetworkErr: any = null;
+    let lastHttpStatus: number | null = null;
+    let lastHttpErrMsg: string = '';
 
     for (const base of [preferredBase, fallbackBase]) {
       const url = `https://${base}/api/${endpoint}${qs ? '?' + qs : ''}`;
@@ -264,19 +266,39 @@ export class NetatmoClient {
         continue;
       }
 
+      lastHttpStatus = res.status;
+
       if (res.status === 401 || res.status === 403) {
         let errCode = 0;
+        let errMsg = '';
         try {
           const errJson = await res.json();
           errCode = errJson?.error?.code || 0;
+          errMsg = errJson?.error?.message || '';
         } catch {}
+        lastHttpErrMsg =
+          errMsg ||
+          (res.status === 401
+            ? 'Access token expired or invalid'
+            : 'Forbidden');
 
         // Error codes 2 (Invalid access token) or 3 (Access token expired)
         if (!retried && (errCode === 2 || errCode === 3 || res.status === 401)) {
-          await this.ensureAccessToken(true);
-          return this.apiGet(endpoint, params, true);
+          try {
+            await this.ensureAccessToken(true);
+            return this.apiGet(endpoint, params, true);
+          } catch (refreshErr: any) {
+            throw new Error(
+              `Netatmo session expired: ${
+                refreshErr instanceof Error ? refreshErr.message : 'Please sign in again.'
+              }`
+            );
+          }
         }
-        continue;
+        // If already retried or refresh failed, do not retry other base domain with known invalid token
+        throw new Error(
+          `Netatmo authentication failed (${res.status}: ${lastHttpErrMsg}). Please sign in again.`
+        );
       }
 
       if (res.status === 429) {
@@ -285,6 +307,9 @@ export class NetatmoClient {
         if (!retried) {
           return this.apiGet(endpoint, params, true);
         }
+        throw new Error(
+          'Netatmo API rate limit reached. Please wait a moment before syncing again.'
+        );
       }
 
       if (res.ok) {
@@ -294,6 +319,20 @@ export class NetatmoClient {
         }
         return json;
       }
+
+      // Other non-ok response
+      try {
+        const errJson = await res.json();
+        lastHttpErrMsg = errJson?.error?.message || `HTTP ${res.status}`;
+      } catch {
+        lastHttpErrMsg = `HTTP ${res.status}`;
+      }
+    }
+
+    if (lastHttpStatus) {
+      throw new Error(
+        `Netatmo API request to /${endpoint} failed (${lastHttpStatus}: ${lastHttpErrMsg || 'Error'}).`
+      );
     }
 
     if (lastNetworkErr) {
@@ -1181,6 +1220,7 @@ export class NetatmoClient {
       });
     }
 
+    let authFailed = false;
     for (const [, group] of byModule.entries()) {
       const sample = group[0];
       const st = stations.find((s) => s.id === sample.stationId);
@@ -1190,7 +1230,8 @@ export class NetatmoClient {
       if (
         mod &&
         session.loggedIn &&
-        session.authMethod !== 'demo'
+        session.authMethod !== 'demo' &&
+        !authFailed
       ) {
         const coverage = this.db.getSyncCoverage(mod.id, req.scale);
         const stepSec = this.db.getScaleSeconds(req.scale);
@@ -1235,11 +1276,17 @@ export class NetatmoClient {
               req.dateEnd
             );
             didFetchForModule = true;
-          } catch (err) {
+          } catch (err: any) {
             console.warn(
               `[NetatmoClient] Remote backfill for ${mod.moduleName} failed, serving cached SQLite data:`,
-              err
+              err?.message || err
             );
+            if (
+              err?.message?.includes('session expired') ||
+              err?.message?.includes('authentication failed')
+            ) {
+              authFailed = true;
+            }
           }
         }
       }
@@ -1259,7 +1306,8 @@ export class NetatmoClient {
           mod &&
           session.loggedIn &&
           session.authMethod !== 'demo' &&
-          !didFetchForModule
+          !didFetchForModule &&
+          !authFailed
         ) {
           try {
             await this.fetchAndStoreModuleWindow(
@@ -1277,7 +1325,14 @@ export class NetatmoClient {
               req.dateBegin,
               req.dateEnd
             );
-          } catch {}
+          } catch (err: any) {
+            if (
+              err?.message?.includes('session expired') ||
+              err?.message?.includes('authentication failed')
+            ) {
+              authFailed = true;
+            }
+          }
         }
 
         results.push({
