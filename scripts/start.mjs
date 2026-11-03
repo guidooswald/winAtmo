@@ -40,9 +40,9 @@ if (!fs.existsSync(mainScript)) {
 console.log('[winAtmo] Starting desktop app...');
 const child = spawn(electronBin, [mainScript], {
   cwd: rootDir,
-  detached: true,
-  stdio: 'ignore',
-  windowsHide: false,
+  stdio: 'inherit',
 });
-child.unref();
-console.log(`[winAtmo] Launched successfully (PID: ${child.pid})`);
+
+child.on('exit', (code) => {
+  process.exit(code ?? 0);
+});
