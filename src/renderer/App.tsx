@@ -74,6 +74,7 @@ const MainStudioApp: React.FC = () => {
   const [welcomeRefresh, setWelcomeRefresh] = useState<string>('');
   const [welcomeClientId, setWelcomeClientId] = useState<string>('');
   const [welcomeClientSecret, setWelcomeClientSecret] = useState<string>('');
+  const [welcomeStoreLocally, setWelcomeStoreLocally] = useState<boolean>(true);
   const [chartFocus, setChartFocus] = useState<{
     moduleId: string;
     metric?: string;
@@ -101,6 +102,10 @@ const MainStudioApp: React.FC = () => {
       window.winatmo.getAccountInfo().then(setAccount);
     });
 
+    const unsubAccount = window.winatmo.onAccountUpdated?.((next) => {
+      setAccount(next);
+    });
+
     const unsubProgress = window.winatmo.onSyncProgress((prog) => {
       setSyncProgress(prog);
     });
@@ -116,6 +121,7 @@ const MainStudioApp: React.FC = () => {
 
     return () => {
       unsubStations();
+      unsubAccount?.();
       unsubProgress();
       unsubSettings();
       unsubFocus();
@@ -149,12 +155,17 @@ const MainStudioApp: React.FC = () => {
 
   const handleStartOAuthLogin = async (
     clientId: string,
-    clientSecret: string
+    clientSecret: string,
+    storeLocally = true
   ) => {
     setAuthBusy(true);
     setAuthBannerError(null);
     try {
-      const res = await window.winatmo.startOAuthLogin(clientId, clientSecret);
+      const res = await window.winatmo.startOAuthLogin(
+        clientId,
+        clientSecret,
+        storeLocally
+      );
       if (res.success && res.account) {
         setAccount(res.account);
         const cached = await window.winatmo.getCachedStations();
@@ -170,11 +181,23 @@ const MainStudioApp: React.FC = () => {
     }
   };
 
-  const handleTokenLogin = async (token: string, refresh?: string) => {
+  const handleTokenLogin = async (
+    token: string,
+    refresh?: string,
+    clientId?: string,
+    clientSecret?: string,
+    storeLocally = true
+  ) => {
     setAuthBusy(true);
     setAuthBannerError(null);
     try {
-      const res = await window.winatmo.loginWithToken(token, refresh);
+      const res = await window.winatmo.loginWithToken(
+        token,
+        refresh,
+        clientId,
+        clientSecret,
+        storeLocally
+      );
       if (res.success && res.account) {
         setAccount(res.account);
         const cached = await window.winatmo.getCachedStations();
@@ -442,6 +465,30 @@ const MainStudioApp: React.FC = () => {
                         onChange={(e) => setWelcomeRefresh(e.target.value)}
                         className="text-input"
                       />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+                        <input
+                          type="text"
+                          placeholder="Client ID (Optional, for auto-refresh)"
+                          value={welcomeClientId}
+                          onChange={(e) => setWelcomeClientId(e.target.value)}
+                          className="text-input"
+                        />
+                        <input
+                          type="password"
+                          placeholder="Client Secret (Optional)"
+                          value={welcomeClientSecret}
+                          onChange={(e) => setWelcomeClientSecret(e.target.value)}
+                          className="text-input"
+                        />
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-subtle)', cursor: 'pointer', marginTop: 6 }}>
+                        <input
+                          type="checkbox"
+                          checked={welcomeStoreLocally}
+                          onChange={(e) => setWelcomeStoreLocally(e.target.checked)}
+                        />
+                        <span>Store API keys locally in encrypted file (DPAPI &bull; never sent to GitHub)</span>
+                      </label>
                     </div>
                     <div className="inline-auth-actions">
                       <button
@@ -450,7 +497,10 @@ const MainStudioApp: React.FC = () => {
                         onClick={() =>
                           handleTokenLogin(
                             welcomeToken.trim(),
-                            welcomeRefresh.trim() || undefined
+                            welcomeRefresh.trim() || undefined,
+                            welcomeClientId.trim() || undefined,
+                            welcomeClientSecret.trim() || undefined,
+                            welcomeStoreLocally
                           )
                         }
                       >
@@ -502,6 +552,14 @@ const MainStudioApp: React.FC = () => {
                         }
                         className="text-input"
                       />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-subtle)', cursor: 'pointer', marginTop: 6 }}>
+                        <input
+                          type="checkbox"
+                          checked={welcomeStoreLocally}
+                          onChange={(e) => setWelcomeStoreLocally(e.target.checked)}
+                        />
+                        <span>Store API keys locally in encrypted file (DPAPI &bull; never sent to GitHub)</span>
+                      </label>
                     </div>
                     <div className="inline-auth-actions">
                       <button
@@ -514,7 +572,8 @@ const MainStudioApp: React.FC = () => {
                         onClick={() =>
                           handleStartOAuthLogin(
                             welcomeClientId.trim(),
-                            welcomeClientSecret.trim()
+                            welcomeClientSecret.trim(),
+                            welcomeStoreLocally
                           )
                         }
                       >

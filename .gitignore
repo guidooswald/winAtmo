@@ -22,8 +22,17 @@ $RECYCLE.BIN/
 .env
 .env.*
 *.secret
+*.secrets
 *.pem
 *.key
+*.keys
+*.enc
+*.enc.*
+*api-keys*
+*apiKey*
+*credentials*
+*token*
+*.tokens
 credentials.json
 token.json
 winatmo-config*.json

@@ -194,6 +194,21 @@ export interface AccountInfo {
   country?: string;
   locale?: string;
   tokenExpiresAt?: number;
+  hasStoredKeys?: boolean;
+  autoUpdateEnabled?: boolean;
+}
+
+export interface StoredApiKeysInfo {
+  hasStoredKeys: boolean;
+  storeApiKeysLocally: boolean;
+  autoUpdateTokens: boolean;
+  clientId?: string;
+  hasClientSecret: boolean;
+  hasAccessToken: boolean;
+  hasRefreshToken: boolean;
+  tokenExpiresAt?: number;
+  filePath?: string;
+  updatedAt?: number;
 }
 
 export type ThemeId =
@@ -259,6 +274,8 @@ export interface UserSettings {
   taskbarSensorTarget: string; // Default 'outdoor_temp' (outside temperature)
   oauthClientId?: string;
   oauthClientSecret?: string;
+  storeApiKeysLocally: boolean; // When true, stores API keys locally in an encrypted file
+  autoUpdateTokens: boolean; // When true, automatically refreshes OAuth and personal tokens before expiry
   minimizeToTray: boolean;
   launchOnStartup: boolean;
 }

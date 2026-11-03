@@ -5,6 +5,7 @@ import {
   AccountInfo,
   PinnedSensorItem,
   SessionData,
+  StoredApiKeysInfo,
   UserSettings,
   WeatherStation,
 } from '../renderer/types';
@@ -68,6 +69,8 @@ const DEFAULT_SETTINGS: UserSettings = {
   pinnedSensors: [],
   taskbarDisplayMode: 'sensor',
   taskbarSensorTarget: 'outdoor_temp',
+  storeApiKeysLocally: false,
+  autoUpdateTokens: true,
   minimizeToTray: true,
   launchOnStartup: false,
 };
@@ -80,6 +83,7 @@ const DEFAULT_SESSION: SessionData = {
 
 export class AppStore {
   private filePath: string;
+  private apiKeysPath: string;
   private state: PersistedState;
   private saveTimeout: NodeJS.Timeout | null = null;
   private isSaving = false;
@@ -100,11 +104,52 @@ export class AppStore {
       fs.mkdirSync(userDataDir, { recursive: true });
     }
     this.filePath = path.join(userDataDir, 'winatmo-config.json');
+    this.apiKeysPath = path.join(userDataDir, 'netatmo-api-keys.enc.json');
     this.state = this.load();
   }
 
   public async init(): Promise<void> {
     await this.decryptLoadedState();
+    await this.loadEncryptedApiKeysFile();
+  }
+
+  private async loadEncryptedApiKeysFile(): Promise<void> {
+    try {
+      if (fs.existsSync(this.apiKeysPath)) {
+        const raw = await fs.promises.readFile(this.apiKeysPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed.encryptedData) {
+          const plainJson = await decryptSecretAsync(parsed.encryptedData);
+          if (plainJson) {
+            const creds = JSON.parse(plainJson);
+            if (creds.clientId) {
+              this.state.settings.oauthClientId = creds.clientId;
+            }
+            if (creds.clientSecret) {
+              this.state.settings.oauthClientSecret = creds.clientSecret;
+              this.cachedEncryptedSecrets.plainOauthSecret = creds.clientSecret;
+            }
+            this.state.settings.storeApiKeysLocally = true;
+            if (creds.autoUpdate !== undefined) {
+              this.state.settings.autoUpdateTokens = Boolean(creds.autoUpdate);
+            }
+            if (creds.accessToken && !this.state.session.accessToken) {
+              this.state.session.accessToken = creds.accessToken;
+              this.cachedEncryptedSecrets.plainAccessToken = creds.accessToken;
+              if (creds.refreshToken) {
+                this.state.session.refreshToken = creds.refreshToken;
+                this.cachedEncryptedSecrets.plainRefreshToken = creds.refreshToken;
+              }
+              if (creds.expiresAt) {
+                this.state.session.expiresAt = creds.expiresAt;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[AppStore] Failed to load encrypted API keys file:', err);
+    }
   }
 
   private async decryptLoadedState(): Promise<void> {
@@ -345,17 +390,21 @@ export class AppStore {
     return this.getSession();
   }
 
-  public clearSession(): void {
+  public clearSession(clearStoredKeys = false): void {
     this.cachedEncryptedSecrets = {};
     this.cachedEncryptedCookies = undefined;
     this.state.session = { ...DEFAULT_SESSION };
     this.state.cachedStations = [];
     this.state.lastSyncAt = undefined;
+    if (clearStoredKeys) {
+      this.clearStoredApiKeys(true).catch(() => {});
+    }
     this.save();
   }
 
   public getAccountInfo(): AccountInfo {
     const s = this.state.session;
+    const hasFile = fs.existsSync(this.apiKeysPath);
     return {
       loggedIn: s.loggedIn,
       email: s.email,
@@ -364,6 +413,152 @@ export class AppStore {
       country: s.country,
       locale: s.locale,
       tokenExpiresAt: s.expiresAt,
+      hasStoredKeys: hasFile || Boolean(this.state.settings.oauthClientId),
+      autoUpdateEnabled: Boolean(this.state.settings.autoUpdateTokens),
+    };
+  }
+
+  private async writeEncryptedApiKeysFile(
+    creds: Record<string, any>
+  ): Promise<void> {
+    const plain = JSON.stringify(creds, null, 2);
+    const cipher = await encryptSecretAsync(plain);
+    const fileContent = JSON.stringify(
+      {
+        format: 'winatmo-dpapi-encrypted-credentials',
+        version: 1,
+        notice:
+          'Locally encrypted Netatmo API keys and tokens. Never commit to git or sync to external servers.',
+        encryptedData: cipher,
+        updatedAt: Math.floor(Date.now() / 1000),
+      },
+      null,
+      2
+    );
+    await fs.promises.writeFile(this.apiKeysPath, fileContent, 'utf-8');
+  }
+
+  public async saveApiKeys(payload: {
+    clientId: string;
+    clientSecret: string;
+    accessToken?: string;
+    refreshToken?: string;
+    autoUpdate?: boolean;
+  }): Promise<{ success: boolean; error?: string }> {
+    try {
+      const cleanClientId = payload.clientId.trim();
+      const cleanClientSecret = payload.clientSecret.trim();
+      const cleanAccessToken = payload.accessToken?.trim();
+      const cleanRefreshToken = payload.refreshToken?.trim();
+      const autoUpdate =
+        payload.autoUpdate !== undefined ? payload.autoUpdate : true;
+
+      this.state.settings.oauthClientId = cleanClientId;
+      this.state.settings.oauthClientSecret = cleanClientSecret;
+      this.state.settings.storeApiKeysLocally = true;
+      this.state.settings.autoUpdateTokens = autoUpdate;
+
+      this.cachedEncryptedSecrets.plainOauthSecret = cleanClientSecret;
+      this.cachedEncryptedSecrets.encOauthSecret = undefined;
+
+      if (cleanAccessToken) {
+        this.state.session.accessToken = cleanAccessToken;
+        this.cachedEncryptedSecrets.plainAccessToken = cleanAccessToken;
+        this.cachedEncryptedSecrets.encAccessToken = undefined;
+      }
+      if (cleanRefreshToken) {
+        this.state.session.refreshToken = cleanRefreshToken;
+        this.cachedEncryptedSecrets.plainRefreshToken = cleanRefreshToken;
+        this.cachedEncryptedSecrets.encRefreshToken = undefined;
+      }
+
+      await this.writeEncryptedApiKeysFile({
+        clientId: cleanClientId,
+        clientSecret: cleanClientSecret,
+        accessToken: cleanAccessToken || this.state.session.accessToken,
+        refreshToken: cleanRefreshToken || this.state.session.refreshToken,
+        expiresAt: this.state.session.expiresAt,
+        authMethod: this.state.session.authMethod || 'oauth',
+        autoUpdate,
+        updatedAt: Math.floor(Date.now() / 1000),
+      });
+
+      this.save();
+      return { success: true };
+    } catch (err: any) {
+      console.error('[AppStore] Failed to save API keys:', err);
+      return {
+        success: false,
+        error: err?.message || 'Failed to save API keys',
+      };
+    }
+  }
+
+  public async updateStoredApiKeysTokens(
+    accessToken: string,
+    refreshToken?: string,
+    expiresAt?: number
+  ): Promise<void> {
+    if (
+      !this.state.settings.storeApiKeysLocally &&
+      !fs.existsSync(this.apiKeysPath)
+    ) {
+      return;
+    }
+    try {
+      await this.writeEncryptedApiKeysFile({
+        clientId: this.state.settings.oauthClientId,
+        clientSecret: this.state.settings.oauthClientSecret,
+        accessToken,
+        refreshToken: refreshToken || this.state.session.refreshToken,
+        expiresAt: expiresAt || this.state.session.expiresAt,
+        authMethod: this.state.session.authMethod || 'oauth',
+        autoUpdate: this.state.settings.autoUpdateTokens,
+        updatedAt: Math.floor(Date.now() / 1000),
+      });
+    } catch (err) {
+      console.warn(
+        '[AppStore] Failed to update tokens in encrypted keys file:',
+        err
+      );
+    }
+  }
+
+  public async clearStoredApiKeys(clearSettings = true): Promise<void> {
+    try {
+      if (fs.existsSync(this.apiKeysPath)) {
+        await fs.promises.unlink(this.apiKeysPath);
+      }
+    } catch (err) {
+      console.warn('[AppStore] Failed to delete encrypted keys file:', err);
+    }
+    if (clearSettings) {
+      this.state.settings.oauthClientId = undefined;
+      this.state.settings.oauthClientSecret = undefined;
+      this.state.settings.storeApiKeysLocally = false;
+      this.cachedEncryptedSecrets.plainOauthSecret = undefined;
+      this.cachedEncryptedSecrets.encOauthSecret = undefined;
+      this.save();
+    }
+  }
+
+  public getStoredApiKeysInfo(): StoredApiKeysInfo {
+    const hasFile = fs.existsSync(this.apiKeysPath);
+    const s = this.state.settings;
+    const sess = this.state.session;
+    return {
+      hasStoredKeys: hasFile || Boolean(s.oauthClientId && s.oauthClientSecret),
+      storeApiKeysLocally: Boolean(s.storeApiKeysLocally || hasFile),
+      autoUpdateTokens: Boolean(s.autoUpdateTokens),
+      clientId: s.oauthClientId
+        ? `${s.oauthClientId.slice(0, 6)}...${s.oauthClientId.slice(-4)}`
+        : undefined,
+      hasClientSecret: Boolean(s.oauthClientSecret),
+      hasAccessToken: Boolean(sess.accessToken),
+      hasRefreshToken: Boolean(sess.refreshToken),
+      tokenExpiresAt: sess.expiresAt,
+      filePath: hasFile ? this.apiKeysPath : undefined,
+      updatedAt: sess.expiresAt ? sess.expiresAt - 10800 : undefined,
     };
   }
 

@@ -25,6 +25,7 @@ import {
   AccountInfo,
   NetatmoScale,
   StorageStats,
+  StoredApiKeysInfo,
   SyncProgress,
   UserSettings,
   WeatherStation,
@@ -40,8 +41,18 @@ interface SettingsViewProps {
   onUpdateSettings: (partial: Partial<UserSettings>) => Promise<void>;
   onSyncNow: (forceFull?: boolean) => Promise<void>;
   onStartWebLogin: () => Promise<void>;
-  onStartOAuthLogin: (clientId: string, clientSecret: string) => Promise<void>;
-  onTokenLogin: (token: string, refresh?: string) => Promise<void>;
+  onStartOAuthLogin: (
+    clientId: string,
+    clientSecret: string,
+    storeLocally?: boolean
+  ) => Promise<void>;
+  onTokenLogin: (
+    token: string,
+    refresh?: string,
+    clientId?: string,
+    clientSecret?: string,
+    storeLocally?: boolean
+  ) => Promise<void>;
   onLogout: (eraseDatabase?: boolean) => Promise<void>;
 }
 
@@ -72,6 +83,95 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   );
   const [manualToken, setManualToken] = useState<string>('');
   const [manualRefresh, setManualRefresh] = useState<string>('');
+  const [storedKeysInfo, setStoredKeysInfo] =
+    useState<StoredApiKeysInfo | null>(null);
+  const [savingKeys, setSavingKeys] = useState<boolean>(false);
+  const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
+  const [refreshingToken, setRefreshingToken] = useState<boolean>(false);
+  const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
+
+  const loadKeysInfo = async () => {
+    try {
+      const info = await window.winatmo.getStoredApiKeysInfo();
+      setStoredKeysInfo(info);
+      if (info.clientId && !oauthClientId) {
+        setOauthClientId(settings.oauthClientId || '');
+      }
+    } catch {}
+  };
+
+  const handleSaveApiKeys = async () => {
+    if (!oauthClientId.trim() || !oauthClientSecret.trim()) {
+      setSaveFeedback('Please enter both Client ID and Client Secret.');
+      return;
+    }
+    setSavingKeys(true);
+    setSaveFeedback(null);
+    try {
+      const res = await window.winatmo.saveApiKeys({
+        clientId: oauthClientId.trim(),
+        clientSecret: oauthClientSecret.trim(),
+        accessToken: manualToken.trim() || undefined,
+        refreshToken: manualRefresh.trim() || undefined,
+        autoUpdate: settings.autoUpdateTokens !== false,
+      });
+      if (res.success) {
+        setSaveFeedback('API keys saved locally in encrypted file (DPAPI).');
+        await loadKeysInfo();
+        setTimeout(() => setSaveFeedback(null), 4000);
+      } else {
+        setSaveFeedback(res.error || 'Failed to save API keys.');
+      }
+    } catch (err: any) {
+      setSaveFeedback(err?.message || 'Error saving keys');
+    } finally {
+      setSavingKeys(false);
+    }
+  };
+
+  const handleClearStoredKeys = async () => {
+    try {
+      await window.winatmo.clearStoredApiKeys();
+      setOauthClientId('');
+      setOauthClientSecret('');
+      setSaveFeedback('Stored API keys cleared from encrypted file.');
+      await loadKeysInfo();
+      setTimeout(() => setSaveFeedback(null), 4000);
+    } catch (err: any) {
+      setSaveFeedback(err?.message || 'Failed to clear keys');
+    }
+  };
+
+  const handleTestTokenRefresh = async () => {
+    setRefreshingToken(true);
+    setRefreshFeedback(null);
+    try {
+      const res = await window.winatmo.refreshTokenNow();
+      if (res.refreshed) {
+        setRefreshFeedback(
+          `Token auto-updated successfully! Valid until ${
+            res.expiresAt
+              ? new Date(res.expiresAt * 1000).toLocaleTimeString()
+              : 'next period'
+          }.`
+        );
+        await loadKeysInfo();
+      } else {
+        setRefreshFeedback(
+          res.error || 'Token is already fresh or refresh was not needed.'
+        );
+      }
+      setTimeout(() => setRefreshFeedback(null), 5000);
+    } catch (err: any) {
+      setRefreshFeedback(err?.message || 'Token refresh failed');
+    } finally {
+      setRefreshingToken(false);
+    }
+  };
+
+  useEffect(() => {
+    loadKeysInfo();
+  }, [account.loggedIn, account.tokenExpiresAt, settings.storeApiKeysLocally]);
 
   const loadStats = async () => {
     setLoadingStats(true);
@@ -1212,13 +1312,134 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
 
         <div className="auth-methods-grid">
+          {/* Stored API Keys & Auto-Update Configuration */}
+          <div className="auth-method-box" style={{ gridColumn: '1 / -1' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <h4>
+                <ShieldCheck size={16} /> Local Encrypted API Keys &amp; Auto-Update
+              </h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                {storedKeysInfo?.hasStoredKeys ? (
+                  <span className="badge success" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Lock size={11} /> Locally Encrypted (DPAPI)
+                  </span>
+                ) : (
+                  <span className="badge subtle">No Stored File</span>
+                )}
+                {settings.autoUpdateTokens !== false && (
+                  <span className="badge info" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <RefreshCw size={10} /> Auto-Update On
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <p>
+              Save your Netatmo Developer credentials (<code>client_id</code> &amp; <code>client_secret</code> from{' '}
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.winatmo.openExternal('https://dev.netatmo.com/apps/');
+                }}
+              >
+                dev.netatmo.com/apps <ExternalLink size={11} />
+              </a>
+              ) in a local encrypted file on your PC. Secrets are encrypted using Windows DPAPI (crypt32) and are never sent to GitHub or cloud servers.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.storeApiKeysLocally || storedKeysInfo?.hasStoredKeys)}
+                  onChange={(e) => onUpdateSettings({ storeApiKeysLocally: e.target.checked })}
+                />
+                <span><strong>Store API keys locally in an encrypted file</strong> (AES/DPAPI hardware-backed)</span>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={settings.autoUpdateTokens !== false}
+                  onChange={(e) => onUpdateSettings({ autoUpdateTokens: e.target.checked })}
+                />
+                <span><strong>Auto-update tokens</strong> (proactively refreshes your 3-hour access token before expiration)</span>
+              </label>
+            </div>
+
+            <div className="compact-form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <input
+                type="text"
+                placeholder="Client ID (from dev.netatmo.com)"
+                value={oauthClientId}
+                onChange={(e) => setOauthClientId(e.target.value)}
+                className="text-input"
+              />
+              <input
+                type="password"
+                placeholder="Client Secret"
+                value={oauthClientSecret}
+                onChange={(e) => setOauthClientSecret(e.target.value)}
+                className="text-input"
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+              <button
+                className="action-btn primary"
+                onClick={handleSaveApiKeys}
+                disabled={savingKeys || !oauthClientId.trim() || !oauthClientSecret.trim()}
+              >
+                <Lock size={13} /> {savingKeys ? 'Encrypting & Saving...' : 'Save Encrypted API Keys'}
+              </button>
+
+              {storedKeysInfo?.hasStoredKeys && (
+                <button
+                  className="action-btn subtle"
+                  onClick={handleClearStoredKeys}
+                >
+                  <Trash2 size={13} /> Clear Stored Keys
+                </button>
+              )}
+
+              {account.loggedIn && (
+                <button
+                  className="action-btn subtle"
+                  onClick={handleTestTokenRefresh}
+                  disabled={refreshingToken}
+                >
+                  <RefreshCw size={13} className={refreshingToken ? 'spin' : ''} />
+                  <span>{refreshingToken ? 'Refreshing...' : 'Refresh Token Now'}</span>
+                </button>
+              )}
+            </div>
+
+            {account.tokenExpiresAt ? (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-subtle)' }}>
+                Active token expires around {new Date(account.tokenExpiresAt * 1000).toLocaleTimeString()} (auto-refreshed in background).
+              </div>
+            ) : null}
+
+            {saveFeedback && (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <CheckCircle2 size={13} /> {saveFeedback}
+              </div>
+            )}
+            {refreshFeedback && (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <CheckCircle2 size={13} /> {refreshFeedback}
+              </div>
+            )}
+          </div>
+
           <div className="auth-method-box">
             <h4>
               <Globe size={15} /> 1. Direct Web Login (Recommended)
             </h4>
             <p>
               Sign in directly to your Netatmo account via the embedded Netatmo
-              web portal. Automatically captures & refreshes your session token.
+              web portal. Automatically captures &amp; refreshes your session token.
             </p>
             <button className="action-btn primary" onClick={onStartWebLogin}>
               <Globe size={14} /> Open Netatmo Web Login
@@ -1230,7 +1451,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <KeyRound size={15} /> 2. Netatmo Connect OAuth2 App
             </h4>
             <p>
-              Use your own Client ID & Secret from{' '}
+              Authorize winAtmo using your Client ID &amp; Secret from{' '}
               <a
                 href="#"
                 onClick={(e) => {
@@ -1244,25 +1465,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </a>
             </p>
             <div className="compact-form">
-              <input
-                type="text"
-                placeholder="Client ID"
-                value={oauthClientId}
-                onChange={(e) => setOauthClientId(e.target.value)}
-                className="text-input"
-              />
-              <input
-                type="password"
-                placeholder="Client Secret"
-                value={oauthClientSecret}
-                onChange={(e) => setOauthClientSecret(e.target.value)}
-                className="text-input"
-              />
               <button
                 className="action-btn subtle"
                 onClick={() =>
-                  onStartOAuthLogin(oauthClientId, oauthClientSecret)
+                  onStartOAuthLogin(
+                    oauthClientId,
+                    oauthClientSecret,
+                    settings.storeApiKeysLocally
+                  )
                 }
+                disabled={!oauthClientId.trim() || !oauthClientSecret.trim()}
               >
                 Authorize via OAuth2
               </button>
@@ -1287,14 +1499,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
               <input
                 type="password"
-                placeholder="Refresh Token (Optional)"
+                placeholder="Refresh Token (Optional, for auto-refresh)"
                 value={manualRefresh}
                 onChange={(e) => setManualRefresh(e.target.value)}
                 className="text-input"
               />
               <button
                 className="action-btn subtle"
-                onClick={() => onTokenLogin(manualToken, manualRefresh)}
+                onClick={() =>
+                  onTokenLogin(
+                    manualToken,
+                    manualRefresh,
+                    oauthClientId || undefined,
+                    oauthClientSecret || undefined,
+                    settings.storeApiKeysLocally
+                  )
+                }
+                disabled={!manualToken.trim()}
               >
                 Connect with Token
               </button>

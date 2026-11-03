@@ -21,6 +21,7 @@ export class NetatmoClient {
   private silentRefreshCallback?: () => Promise<string | null>;
   private onProgressCallback?: (progress: SyncProgress) => void;
   private onQueryStatusCallback?: (status: MeasureQueryStatus) => void;
+  private onAccountUpdatedCallback?: (account: AccountInfo) => void;
   private isSyncing = false;
   private currentProgress: SyncProgress = {
     active: false,
@@ -34,6 +35,10 @@ export class NetatmoClient {
   constructor(store: AppStore, db: TimeSeriesDatabase) {
     this.store = store;
     this.db = db;
+  }
+
+  public setAccountUpdatedHandler(cb: (account: AccountInfo) => void): void {
+    this.onAccountUpdatedCallback = cb;
   }
 
   public setSilentRefreshHandler(fn: () => Promise<string | null>): void {
@@ -68,7 +73,10 @@ export class NetatmoClient {
     accessToken: string,
     refreshToken?: string,
     cookies: StoredCookie[] = [],
-    authMethod: 'web' | 'token' = 'web'
+    authMethod: 'web' | 'token' = 'web',
+    clientId?: string,
+    clientSecret?: string,
+    storeLocally?: boolean
   ): Promise<{ valid: boolean; account?: AccountInfo; error?: string }> {
     const cleanToken = accessToken.trim();
     if (!cleanToken) {
@@ -104,13 +112,14 @@ export class NetatmoClient {
             const userId = cleanToken.includes('|')
               ? cleanToken.split('|')[0]
               : user._id || undefined;
+            const expiresAt = Math.floor(Date.now() / 1000) + 10800;
 
             this.store.updateSession({
               loggedIn: true,
               authMethod,
               accessToken: cleanToken,
               refreshToken: refreshToken || undefined,
-              expiresAt: Math.floor(Date.now() / 1000) + 10800,
+              expiresAt,
               email: user.mail || undefined,
               userId,
               country: admin.country || undefined,
@@ -118,6 +127,22 @@ export class NetatmoClient {
               cookies,
               apiBase,
             });
+
+            if (clientId && clientSecret) {
+              await this.store.saveApiKeys({
+                clientId,
+                clientSecret,
+                accessToken: cleanToken,
+                refreshToken: refreshToken || undefined,
+                autoUpdate: true,
+              });
+            } else if (storeLocally) {
+              await this.store.updateStoredApiKeysTokens(
+                cleanToken,
+                refreshToken || undefined,
+                expiresAt
+              );
+            }
 
             const stations = this.parseStationsPayload(data);
             this.store.setCachedStations(stations);
@@ -143,6 +168,41 @@ export class NetatmoClient {
   }
 
   /**
+   * Checks token validity and proactively auto-updates it if nearing expiration (or forced).
+   */
+  public async autoRefreshToken(
+    force = false
+  ): Promise<{ refreshed: boolean; expiresAt?: number; error?: string }> {
+    const session = this.store.getSession();
+    if (!session.loggedIn || session.authMethod === 'demo') {
+      return { refreshed: false };
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = session.expiresAt || 0;
+    // Netatmo tokens expire after 10800 seconds (3h). Proactively refresh when within 20m of expiry
+    const needsRefresh = force || !expiresAt || now >= expiresAt - 1200;
+
+    if (!needsRefresh) {
+      return { refreshed: false, expiresAt };
+    }
+
+    try {
+      await this.ensureAccessToken(true);
+      const updated = this.store.getSession();
+      return {
+        refreshed: true,
+        expiresAt: updated.expiresAt,
+      };
+    } catch (err: any) {
+      return {
+        refreshed: false,
+        error: err?.message || 'Token auto-refresh failed',
+      };
+    }
+  }
+
+  /**
    * Ensures we have a valid access token, refreshing via OAuth2 refresh_token
    * or silent web session refresh if needed.
    */
@@ -157,9 +217,10 @@ export class NetatmoClient {
     }
 
     const now = Math.floor(Date.now() / 1000);
+    // Netatmo access tokens last 10800s. Proactively refresh if within 15 minutes of expiry
     const isExpired =
       forceRefresh ||
-      (session.expiresAt ? now >= session.expiresAt - 120 : false);
+      (session.expiresAt ? now >= session.expiresAt - 900 : false);
 
     if (!isExpired && session.accessToken) {
       return session.accessToken;
@@ -167,11 +228,10 @@ export class NetatmoClient {
 
     // Attempt OAuth2 refresh_token flow if credentials exist
     const settings = this.store.getSettings();
-    if (
-      session.refreshToken &&
-      settings.oauthClientId &&
-      settings.oauthClientSecret
-    ) {
+    const clientId = settings.oauthClientId;
+    const clientSecret = settings.oauthClientSecret;
+
+    if (session.refreshToken && clientId && clientSecret) {
       try {
         const res = await fetch('https://api.netatmo.com/oauth2/token', {
           method: 'POST',
@@ -181,24 +241,49 @@ export class NetatmoClient {
           body: new URLSearchParams({
             grant_type: 'refresh_token',
             refresh_token: session.refreshToken,
-            client_id: settings.oauthClientId,
-            client_secret: settings.oauthClientSecret,
+            client_id: clientId,
+            client_secret: clientSecret,
           }).toString(),
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.access_token) {
-            this.store.updateSession({
-              accessToken: data.access_token,
-              refreshToken: data.refresh_token || session.refreshToken,
-              expiresAt: now + (Number(data.expires_in) || 10800),
-            });
-            return data.access_token;
+        const data = await res.json().catch(() => null);
+
+        if (res.ok && data?.access_token) {
+          const newExpiresAt = now + (Number(data.expires_in) || 10800);
+          const newRefreshToken = data.refresh_token || session.refreshToken;
+
+          this.store.updateSession({
+            accessToken: data.access_token,
+            refreshToken: newRefreshToken,
+            expiresAt: newExpiresAt,
+          });
+
+          await this.store.updateStoredApiKeysTokens(
+            data.access_token,
+            newRefreshToken,
+            newExpiresAt
+          );
+
+          if (this.onAccountUpdatedCallback) {
+            this.onAccountUpdatedCallback(this.store.getAccountInfo());
           }
+
+          console.log(
+            `[NetatmoClient] Token auto-updated successfully. Valid until ${new Date(
+              newExpiresAt * 1000
+            ).toLocaleTimeString()}`
+          );
+
+          return data.access_token;
+        } else {
+          console.warn(
+            '[NetatmoClient] OAuth token refresh response error:',
+            res.status,
+            data
+          );
         }
       } catch (err) {
-        console.warn('[NetatmoClient] OAuth token refresh failed:', err);
+        console.warn('[NetatmoClient] OAuth token refresh network error:', err);
       }
     }
 
@@ -206,6 +291,15 @@ export class NetatmoClient {
     if (session.authMethod === 'web' && this.silentRefreshCallback) {
       const newWebToken = await this.silentRefreshCallback();
       if (newWebToken) {
+        const updatedSession = this.store.getSession();
+        await this.store.updateStoredApiKeysTokens(
+          newWebToken,
+          updatedSession.refreshToken,
+          updatedSession.expiresAt
+        );
+        if (this.onAccountUpdatedCallback) {
+          this.onAccountUpdatedCallback(this.store.getAccountInfo());
+        }
         return newWebToken;
       }
     }

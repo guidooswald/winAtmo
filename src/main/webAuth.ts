@@ -274,7 +274,8 @@ export class WebAuthManager {
   public async startOAuthLogin(
     clientId: string,
     clientSecret: string,
-    parentWindow?: BrowserWindow
+    parentWindow?: BrowserWindow,
+    storeLocally = true
   ): Promise<{ success: boolean; account?: AccountInfo; error?: string }> {
     if (!clientId.trim() || !clientSecret.trim()) {
       return {
@@ -283,10 +284,19 @@ export class WebAuthManager {
       };
     }
 
-    this.store.updateSettings({
-      oauthClientId: clientId.trim(),
-      oauthClientSecret: clientSecret.trim(),
-    });
+    if (storeLocally) {
+      this.store.updateSettings({
+        oauthClientId: clientId.trim(),
+        oauthClientSecret: clientSecret.trim(),
+        storeApiKeysLocally: true,
+        autoUpdateTokens: true,
+      });
+    } else {
+      this.store.updateSettings({
+        oauthClientId: clientId.trim(),
+        oauthClientSecret: clientSecret.trim(),
+      });
+    }
 
     const state = crypto.randomBytes(16).toString('hex');
     const scopes = 'read_station read_homecoach read_thermostat';
@@ -392,6 +402,16 @@ export class WebAuthManager {
             expiresAt,
             apiBase: 'api.netatmo.com',
           });
+
+          if (storeLocally) {
+            await this.store.saveApiKeys({
+              clientId: clientId.trim(),
+              clientSecret: clientSecret.trim(),
+              accessToken: tokenData.access_token,
+              refreshToken: tokenData.refresh_token,
+              autoUpdate: true,
+            });
+          }
 
           const stations = await this.client.fetchStations();
           this.store.setCachedStations(stations);

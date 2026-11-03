@@ -6,6 +6,7 @@ import {
   MeasureSeries,
   NetatmoScale,
   StorageStats,
+  StoredApiKeysInfo,
   SyncProgress,
   UserSettings,
   WeatherStation,
@@ -29,7 +30,7 @@ export interface WinAtmoAPI {
   moveWidgetBy: (dx: number, dy: number) => void;
   resizeWidget: (width: number, height: number) => void;
 
-  // Auth
+  // Auth & API Keys
   getAccountInfo: () => Promise<AccountInfo>;
   startWebLogin: () => Promise<{
     success: boolean;
@@ -38,7 +39,8 @@ export interface WinAtmoAPI {
   }>;
   startOAuthLogin: (
     clientId: string,
-    clientSecret: string
+    clientSecret: string,
+    storeLocally?: boolean
   ) => Promise<{
     success: boolean;
     account?: AccountInfo;
@@ -46,17 +48,37 @@ export interface WinAtmoAPI {
   }>;
   loginWithToken: (
     accessToken: string,
-    refreshToken?: string
+    refreshToken?: string,
+    clientId?: string,
+    clientSecret?: string,
+    storeLocally?: boolean
   ) => Promise<{
     success: boolean;
     account?: AccountInfo;
+    error?: string;
+  }>;
+  saveApiKeys: (payload: {
+    clientId: string;
+    clientSecret: string;
+    accessToken?: string;
+    refreshToken?: string;
+    autoUpdate?: boolean;
+  }) => Promise<{ success: boolean; error?: string }>;
+  getStoredApiKeysInfo: () => Promise<StoredApiKeysInfo>;
+  clearStoredApiKeys: () => Promise<{ success: boolean }>;
+  refreshTokenNow: () => Promise<{
+    refreshed: boolean;
+    expiresAt?: number;
     error?: string;
   }>;
   enableDemoMode: () => Promise<{
     account: AccountInfo;
     stations: WeatherStation[];
   }>;
-  logout: (options?: { eraseDatabase?: boolean }) => Promise<{ success: boolean }>;
+  logout: (options?: {
+    eraseDatabase?: boolean;
+    clearStoredKeys?: boolean;
+  }) => Promise<{ success: boolean }>;
 
   // Stations & Historical Sync
   getCachedStations: () => Promise<{
@@ -87,6 +109,7 @@ export interface WinAtmoAPI {
   openExternal: (url: string) => Promise<void>;
 
   // Event Subscriptions
+  onAccountUpdated: (cb: (account: AccountInfo) => void) => () => void;
   onStationsUpdated: (cb: (stations: WeatherStation[]) => void) => () => void;
   onSyncProgress: (cb: (progress: SyncProgress) => void) => () => void;
   onSettingsUpdated: (cb: (settings: UserSettings) => void) => () => void;
@@ -125,12 +148,36 @@ const api: WinAtmoAPI = {
 
   getAccountInfo: () => ipcRenderer.invoke('auth:get-account'),
   startWebLogin: () => ipcRenderer.invoke('auth:web-login'),
-  startOAuthLogin: (clientId: string, clientSecret: string) =>
-    ipcRenderer.invoke('auth:oauth-login', { clientId, clientSecret }),
-  loginWithToken: (accessToken: string, refreshToken?: string) =>
-    ipcRenderer.invoke('auth:token-login', { accessToken, refreshToken }),
+  startOAuthLogin: (
+    clientId: string,
+    clientSecret: string,
+    storeLocally?: boolean
+  ) =>
+    ipcRenderer.invoke('auth:oauth-login', {
+      clientId,
+      clientSecret,
+      storeLocally,
+    }),
+  loginWithToken: (
+    accessToken: string,
+    refreshToken?: string,
+    clientId?: string,
+    clientSecret?: string,
+    storeLocally?: boolean
+  ) =>
+    ipcRenderer.invoke('auth:token-login', {
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      storeLocally,
+    }),
+  saveApiKeys: (payload) => ipcRenderer.invoke('auth:save-api-keys', payload),
+  getStoredApiKeysInfo: () => ipcRenderer.invoke('auth:get-stored-keys-info'),
+  clearStoredApiKeys: () => ipcRenderer.invoke('auth:clear-stored-keys'),
+  refreshTokenNow: () => ipcRenderer.invoke('auth:refresh-token-now'),
   enableDemoMode: () => ipcRenderer.invoke('auth:demo-mode'),
-  logout: (options?: { eraseDatabase?: boolean }) =>
+  logout: (options?: { eraseDatabase?: boolean; clearStoredKeys?: boolean }) =>
     ipcRenderer.invoke('auth:logout', options),
 
   getCachedStations: () => ipcRenderer.invoke('stations:get-cached'),
@@ -150,6 +197,12 @@ const api: WinAtmoAPI = {
   updateSettings: (partial: Partial<UserSettings>) =>
     ipcRenderer.invoke('settings:update', partial),
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+
+  onAccountUpdated: (cb) => {
+    const handler = (_e: any, account: AccountInfo) => cb(account);
+    ipcRenderer.on('account:updated', handler);
+    return () => ipcRenderer.removeListener('account:updated', handler);
+  },
 
   onStationsUpdated: (cb) => {
     const handler = (_e: any, stations: WeatherStation[]) => cb(stations);

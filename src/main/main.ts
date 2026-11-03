@@ -23,6 +23,7 @@ import {
   generateTaskbarIcon,
 } from './taskbarIcon';
 import {
+  AccountInfo,
   MeasureQueryRequest,
   MeasureQueryStatus,
   MeasureSeries,
@@ -922,6 +923,35 @@ function formatPinnedReadingForTray(
   }
 }
 
+let tokenAutoUpdateTimer: NodeJS.Timeout | null = null;
+
+function setupTokenAutoUpdate(): void {
+  if (tokenAutoUpdateTimer) {
+    clearInterval(tokenAutoUpdateTimer);
+    tokenAutoUpdateTimer = null;
+  }
+  // Check token every 3 minutes
+  tokenAutoUpdateTimer = setInterval(async () => {
+    const session = store.getSession();
+    if (!session.loggedIn || session.authMethod === 'demo') return;
+    if (store.getSettings().autoUpdateTokens !== false) {
+      try {
+        const res = await client.autoRefreshToken();
+        if (res.refreshed) {
+          console.log('[winAtmo] Background token auto-updated successfully.');
+          broadcastToAllWindows('account:updated', store.getAccountInfo());
+          updateTrayTooltipAndMenu();
+        }
+      } catch (err) {
+        console.warn(
+          '[winAtmo] Background token auto-update check failed:',
+          err
+        );
+      }
+    }
+  }, 3 * 60 * 1000);
+}
+
 function setupRefreshSchedule(): void {
   if (refreshTimer) {
     clearInterval(refreshTimer);
@@ -932,6 +962,13 @@ function setupRefreshSchedule(): void {
   refreshTimer = setInterval(async () => {
     const session = store.getSession();
     if (!session.loggedIn) return;
+
+    if (store.getSettings().autoUpdateTokens !== false) {
+      try {
+        await client.autoRefreshToken();
+      } catch {}
+    }
+
     try {
       await client.syncHistoricalData();
       broadcastToAllWindows('stations:updated', store.getCachedStations());
@@ -1188,14 +1225,24 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'auth:oauth-login',
-    async (_e, payload: { clientId: string; clientSecret: string }) => {
+    async (
+      _e,
+      payload: {
+        clientId: string;
+        clientSecret: string;
+        storeLocally?: boolean;
+      }
+    ) => {
       const res = await webAuth.startOAuthLogin(
         payload.clientId,
         payload.clientSecret,
-        mainWindow || undefined
+        mainWindow || undefined,
+        payload.storeLocally !== false
       );
       if (res.success) {
         broadcastToAllWindows('stations:updated', store.getCachedStations());
+        broadcastToAllWindows('account:updated', store.getAccountInfo());
+        broadcastToAllWindows('settings:updated', store.getSettings());
         updateTrayTooltipAndMenu();
         createOrUpdateWidgetWindow();
         client.syncHistoricalData().then(() => {
@@ -1208,15 +1255,29 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'auth:token-login',
-    async (_e, payload: { accessToken: string; refreshToken?: string }) => {
+    async (
+      _e,
+      payload: {
+        accessToken: string;
+        refreshToken?: string;
+        clientId?: string;
+        clientSecret?: string;
+        storeLocally?: boolean;
+      }
+    ) => {
       const res = await client.verifyAndSaveWebToken(
         payload.accessToken,
         payload.refreshToken,
         [],
-        'token'
+        'token',
+        payload.clientId,
+        payload.clientSecret,
+        payload.storeLocally
       );
       if (res.valid) {
         broadcastToAllWindows('stations:updated', store.getCachedStations());
+        broadcastToAllWindows('account:updated', store.getAccountInfo());
+        broadcastToAllWindows('settings:updated', store.getSettings());
         updateTrayTooltipAndMenu();
         createOrUpdateWidgetWindow();
         client.syncHistoricalData().then(() => {
@@ -1227,6 +1288,47 @@ function registerIpcHandlers(): void {
       return { success: false, error: res.error };
     }
   );
+
+  ipcMain.handle(
+    'auth:save-api-keys',
+    async (
+      _e,
+      payload: {
+        clientId: string;
+        clientSecret: string;
+        accessToken?: string;
+        refreshToken?: string;
+        autoUpdate?: boolean;
+      }
+    ) => {
+      const res = await store.saveApiKeys(payload);
+      if (res.success) {
+        broadcastToAllWindows('settings:updated', store.getSettings());
+        broadcastToAllWindows('account:updated', store.getAccountInfo());
+      }
+      return res;
+    }
+  );
+
+  ipcMain.handle('auth:get-stored-keys-info', () => {
+    return store.getStoredApiKeysInfo();
+  });
+
+  ipcMain.handle('auth:clear-stored-keys', async () => {
+    await store.clearStoredApiKeys(true);
+    broadcastToAllWindows('settings:updated', store.getSettings());
+    broadcastToAllWindows('account:updated', store.getAccountInfo());
+    return { success: true };
+  });
+
+  ipcMain.handle('auth:refresh-token-now', async () => {
+    const res = await client.autoRefreshToken(true);
+    if (res.refreshed) {
+      broadcastToAllWindows('account:updated', store.getAccountInfo());
+      updateTrayTooltipAndMenu();
+    }
+    return res;
+  });
 
   ipcMain.handle('auth:demo-mode', async () => {
     const res = await client.enableDemoMode();
@@ -1239,15 +1341,22 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'auth:logout',
-    async (_e, payload?: { eraseDatabase?: boolean }) => {
+    async (
+      _e,
+      payload?: { eraseDatabase?: boolean; clearStoredKeys?: boolean }
+    ) => {
       const wasDemo = store.getSession().authMethod === 'demo';
       await webAuth.clearWebSession();
+      store.clearSession(
+        Boolean(payload?.eraseDatabase || payload?.clearStoredKeys)
+      );
       if (payload?.eraseDatabase) {
         db.clearAllHistory();
       } else if (wasDemo) {
         db.clearDemoHistory();
       }
       broadcastToAllWindows('stations:updated', []);
+      broadcastToAllWindows('account:updated', store.getAccountInfo());
       updateTrayTooltipAndMenu();
       createOrUpdateWidgetWindow();
       return { success: true };
@@ -1469,6 +1578,10 @@ app.whenReady().then(async () => {
   webAuth = new WebAuthManager(store, client);
 
   client.setSilentRefreshHandler(() => webAuth.silentWebRefresh());
+  client.setAccountUpdatedHandler((account: AccountInfo) => {
+    broadcastToAllWindows('account:updated', account);
+    updateTrayTooltipAndMenu();
+  });
   client.setProgressHandler((progress: SyncProgress) => {
     broadcastToAllWindows('sync:progress', progress);
   });
@@ -1494,14 +1607,18 @@ app.whenReady().then(async () => {
   createMainWindow(!isAutostart);
   createOrUpdateWidgetWindow();
   setupRefreshSchedule();
+  setupTokenAutoUpdate();
 
   // Ensure OS startup registration reflects current user setting
   if (store.getSettings().launchOnStartup) {
     applyStartupRegistration(true);
   }
 
-  // If user is already logged in, kick off an initial sync in background
+  // If user is already logged in, check token expiry and kick off an initial sync in background
   if (store.getSession().loggedIn) {
+    if (store.getSettings().autoUpdateTokens !== false) {
+      client.autoRefreshToken().catch(() => {});
+    }
     setTimeout(() => {
       client.syncHistoricalData().then(() => {
         broadcastToAllWindows('stations:updated', store.getCachedStations());
