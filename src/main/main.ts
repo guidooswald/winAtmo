@@ -34,6 +34,7 @@ import {
 
 app.setName('winAtmo');
 app.name = 'winAtmo';
+app.setAppUserModelId('guidooswald.winAtmo');
 
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
