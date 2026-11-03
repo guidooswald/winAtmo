@@ -1,15 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity,
+  CheckCircle2,
   CloudSun,
   Database,
+  ExternalLink,
   Globe,
+  KeyRound,
   LayoutDashboard,
   LayoutGrid,
   LineChart,
   Play,
   RefreshCw,
   Settings,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
 import {
@@ -64,6 +68,12 @@ const MainStudioApp: React.FC = () => {
   });
   const [authBannerError, setAuthBannerError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState<boolean>(false);
+  const [showInlineAuth, setShowInlineAuth] = useState<boolean>(false);
+  const [welcomeAuthTab, setWelcomeAuthTab] = useState<'token' | 'oauth'>('token');
+  const [welcomeToken, setWelcomeToken] = useState<string>('');
+  const [welcomeRefresh, setWelcomeRefresh] = useState<string>('');
+  const [welcomeClientId, setWelcomeClientId] = useState<string>('');
+  const [welcomeClientSecret, setWelcomeClientSecret] = useState<string>('');
   const [chartFocus, setChartFocus] = useState<{
     moduleId: string;
     metric?: string;
@@ -81,6 +91,8 @@ const MainStudioApp: React.FC = () => {
       setStations(cached.stations || []);
       setSettings(s);
       setSyncProgress(prog);
+      if (s?.oauthClientId) setWelcomeClientId(s.oauthClientId);
+      if (s?.oauthClientSecret) setWelcomeClientSecret(s.oauthClientSecret);
     };
     init();
 
@@ -124,6 +136,7 @@ const MainStudioApp: React.FC = () => {
         setAccount(res.account);
         const cached = await window.winatmo.getCachedStations();
         setStations(cached.stations || []);
+        setActiveTab('dashboard');
       } else if (res.error) {
         setAuthBannerError(res.error);
       }
@@ -146,6 +159,7 @@ const MainStudioApp: React.FC = () => {
         setAccount(res.account);
         const cached = await window.winatmo.getCachedStations();
         setStations(cached.stations || []);
+        setActiveTab('dashboard');
       } else if (res.error) {
         setAuthBannerError(res.error);
       }
@@ -165,6 +179,7 @@ const MainStudioApp: React.FC = () => {
         setAccount(res.account);
         const cached = await window.winatmo.getCachedStations();
         setStations(cached.stations || []);
+        setActiveTab('dashboard');
       } else if (res.error) {
         setAuthBannerError(res.error);
       }
@@ -182,6 +197,7 @@ const MainStudioApp: React.FC = () => {
       const res = await window.winatmo.enableDemoMode();
       setAccount(res.account);
       setStations(res.stations);
+      setActiveTab('dashboard');
     } finally {
       setAuthBusy(false);
     }
@@ -312,7 +328,20 @@ const MainStudioApp: React.FC = () => {
 
       {/* Main Content Area */}
       <main className="app-main-content">
-        {!account.loggedIn && stations.length === 0 ? (
+        {activeTab === 'settings' ? (
+          <SettingsView
+            settings={settings}
+            account={account}
+            stations={stations}
+            syncProgress={syncProgress}
+            onUpdateSettings={handleUpdateSettings}
+            onSyncNow={handleSyncNow}
+            onStartWebLogin={handleStartWebLogin}
+            onStartOAuthLogin={handleStartOAuthLogin}
+            onTokenLogin={handleTokenLogin}
+            onLogout={handleLogout}
+          />
+        ) : !account.loggedIn && stations.length === 0 ? (
           <div className="welcome-onboarding-card">
             <div className="welcome-hero-icon">
               <CloudSun size={40} />
@@ -351,13 +380,159 @@ const MainStudioApp: React.FC = () => {
               </button>
 
               <button
-                className="cta-btn ghost"
-                onClick={() => setActiveTab('settings')}
+                className={`cta-btn ghost ${showInlineAuth ? 'active' : ''}`}
+                onClick={() => setShowInlineAuth((prev) => !prev)}
+                title="Enter Personal Access Token or OAuth2 App Credentials"
               >
-                <Settings size={16} />
-                <span>OAuth2 / Personal Token Settings</span>
+                <KeyRound size={16} />
+                <span>Personal Token / OAuth2</span>
               </button>
             </div>
+
+            {showInlineAuth && (
+              <div className="welcome-inline-auth-card">
+                <div className="inline-auth-tabs">
+                  <button
+                    className={`inline-auth-tab ${welcomeAuthTab === 'token' ? 'active' : ''}`}
+                    onClick={() => setWelcomeAuthTab('token')}
+                  >
+                    <KeyRound size={14} />
+                    <span>Personal Access Token</span>
+                  </button>
+                  <button
+                    className={`inline-auth-tab ${welcomeAuthTab === 'oauth' ? 'active' : ''}`}
+                    onClick={() => setWelcomeAuthTab('oauth')}
+                  >
+                    <ShieldCheck size={14} />
+                    <span>Netatmo Connect OAuth2</span>
+                  </button>
+                </div>
+
+                {welcomeAuthTab === 'token' ? (
+                  <div className="inline-auth-form">
+                    <p className="inline-auth-desc">
+                      Paste an <code>access_token</code> generated in your{' '}
+                      <a
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          window.winatmo.openExternal(
+                            'https://dev.netatmo.com/apps/'
+                          );
+                        }}
+                      >
+                        Netatmo Developer Portal <ExternalLink size={11} />
+                      </a>:
+                    </p>
+                    <div className="inline-auth-inputs">
+                      <input
+                        type="password"
+                        placeholder="Access Token (Bearer token required)"
+                        value={welcomeToken}
+                        onChange={(e) => setWelcomeToken(e.target.value)}
+                        className="text-input"
+                        autoFocus
+                      />
+                      <input
+                        type="password"
+                        placeholder="Refresh Token (Optional)"
+                        value={welcomeRefresh}
+                        onChange={(e) => setWelcomeRefresh(e.target.value)}
+                        className="text-input"
+                      />
+                    </div>
+                    <div className="inline-auth-actions">
+                      <button
+                        className="cta-btn primary"
+                        disabled={!welcomeToken.trim() || authBusy}
+                        onClick={() =>
+                          handleTokenLogin(
+                            welcomeToken.trim(),
+                            welcomeRefresh.trim() || undefined
+                          )
+                        }
+                      >
+                        <CheckCircle2 size={15} />
+                        <span>
+                          {authBusy ? 'Connecting...' : 'Connect with Token'}
+                        </span>
+                      </button>
+                      <button
+                        className="cta-btn ghost"
+                        onClick={() => setActiveTab('settings')}
+                      >
+                        <Settings size={14} />
+                        <span>Open Full Settings</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="inline-auth-form">
+                    <p className="inline-auth-desc">
+                      Use your custom OAuth2 app credentials from{' '}
+                      <a
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          window.winatmo.openExternal(
+                            'https://dev.netatmo.com/apidocumentation/oauth'
+                          );
+                        }}
+                      >
+                        dev.netatmo.com <ExternalLink size={11} />
+                      </a>:
+                    </p>
+                    <div className="inline-auth-inputs">
+                      <input
+                        type="text"
+                        placeholder="OAuth Client ID"
+                        value={welcomeClientId}
+                        onChange={(e) => setWelcomeClientId(e.target.value)}
+                        className="text-input"
+                        autoFocus
+                      />
+                      <input
+                        type="password"
+                        placeholder="OAuth Client Secret"
+                        value={welcomeClientSecret}
+                        onChange={(e) =>
+                          setWelcomeClientSecret(e.target.value)
+                        }
+                        className="text-input"
+                      />
+                    </div>
+                    <div className="inline-auth-actions">
+                      <button
+                        className="cta-btn primary"
+                        disabled={
+                          !welcomeClientId.trim() ||
+                          !welcomeClientSecret.trim() ||
+                          authBusy
+                        }
+                        onClick={() =>
+                          handleStartOAuthLogin(
+                            welcomeClientId.trim(),
+                            welcomeClientSecret.trim()
+                          )
+                        }
+                      >
+                        <ShieldCheck size={15} />
+                        <span>
+                          {authBusy ? 'Authorizing...' : 'Authorize via OAuth2'}
+                        </span>
+                      </button>
+                      <button
+                        className="cta-btn ghost"
+                        onClick={() => setActiveTab('settings')}
+                      >
+                        <Settings size={14} />
+                        <span>Open Full Settings</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="welcome-features-grid">
               <div className="feature-mini-card">
@@ -427,21 +602,6 @@ const MainStudioApp: React.FC = () => {
                 settings={settings}
                 initialFocus={chartFocus}
                 onClearFocus={() => setChartFocus(null)}
-              />
-            )}
-
-            {activeTab === 'settings' && (
-              <SettingsView
-                settings={settings}
-                account={account}
-                stations={stations}
-                syncProgress={syncProgress}
-                onUpdateSettings={handleUpdateSettings}
-                onSyncNow={handleSyncNow}
-                onStartWebLogin={handleStartWebLogin}
-                onStartOAuthLogin={handleStartOAuthLogin}
-                onTokenLogin={handleTokenLogin}
-                onLogout={handleLogout}
               />
             )}
           </>
