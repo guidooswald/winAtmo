@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Database,
   ExternalLink,
@@ -41,7 +42,7 @@ interface SettingsViewProps {
   onStartWebLogin: () => Promise<void>;
   onStartOAuthLogin: (clientId: string, clientSecret: string) => Promise<void>;
   onTokenLogin: (token: string, refresh?: string) => Promise<void>;
-  onLogout: () => Promise<void>;
+  onLogout: (eraseDatabase?: boolean) => Promise<void>;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -57,6 +58,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onLogout,
 }) => {
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [loadingStats, setLoadingStats] = useState<boolean>(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
+  const [eraseDbOnLogout, setEraseDbOnLogout] = useState<boolean>(false);
   const [customDaysInput, setCustomDaysInput] = useState<number>(
     settings.historyDays || 14
   );
@@ -70,10 +74,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [manualRefresh, setManualRefresh] = useState<string>('');
 
   const loadStats = async () => {
+    setLoadingStats(true);
     try {
       const st = await window.winatmo.getStorageStats();
       setStorageStats(st);
-    } catch {}
+    } catch (err) {
+      console.warn('[SettingsView] Failed to load storage stats:', err);
+    } finally {
+      setLoadingStats(false);
+    }
   };
 
   useEffect(() => {
@@ -613,7 +622,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
 
-        {storageStats && (
+        {loadingStats ? (
+          <div className="storage-metrics-bar loading">
+            <div className="storage-metric-loading">
+              <RefreshCw size={15} className="spin" />
+              <span>Querying local SQLite database statistics...</span>
+            </div>
+          </div>
+        ) : storageStats && (
           <div className="storage-metrics-bar">
             <div className="storage-metric-box">
               <span>Database Size</span>
@@ -1177,9 +1193,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
           {account.loggedIn && (
-            <button className="action-btn danger" onClick={onLogout}>
-              Sign Out ({account.email || account.authMethod})
-            </button>
+            account.authMethod === 'demo' ? (
+              <button
+                className="action-btn warning"
+                onClick={() => onLogout(false)}
+              >
+                Exit Demo Mode
+              </button>
+            ) : (
+              <button
+                className="action-btn danger"
+                onClick={() => setShowLogoutConfirm(true)}
+              >
+                Sign Out ({account.email || account.authMethod})
+              </button>
+            )
           )}
         </div>
 
@@ -1274,6 +1302,61 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       </div>
+
+      {showLogoutConfirm && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <div className="modal-header">
+              <AlertTriangle size={20} color="#f59e0b" />
+              <h3>Sign Out of Netatmo</h3>
+            </div>
+            <div className="modal-body">
+              <p>
+                Are you sure you want to sign out of{' '}
+                <strong>{account.email || account.authMethod}</strong>?
+              </p>
+              <label className="modal-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={eraseDbOnLogout}
+                  onChange={(e) => setEraseDbOnLogout(e.target.checked)}
+                />
+                <span>
+                  Erase all historical sensor data from local database (Default is unchecked: keeps your data)
+                </span>
+              </label>
+              {eraseDbOnLogout && (
+                <p
+                  className="modal-warning-text"
+                  style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}
+                >
+                  Warning: Erasing the database will permanently delete all stored measurements and sync cache from your disk.
+                </p>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button
+                className="action-btn subtle"
+                onClick={() => {
+                  setShowLogoutConfirm(false);
+                  setEraseDbOnLogout(false);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="action-btn danger"
+                onClick={async () => {
+                  setShowLogoutConfirm(false);
+                  await onLogout(eraseDbOnLogout);
+                }}
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

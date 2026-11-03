@@ -58,6 +58,8 @@ export class TimeSeriesDatabase {
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (module_id, scale)
       ) WITHOUT ROWID;
+
+      CREATE INDEX IF NOT EXISTS idx_measurements_scale ON measurements (scale);
     `);
   }
 
@@ -274,10 +276,6 @@ export class TimeSeriesDatabase {
   }
 
   public getStorageStats(): StorageStats {
-    try {
-      this.db.exec('PRAGMA wal_checkpoint(PASSIVE)');
-    } catch {}
-
     let fileSizeBytes = 0;
     try {
       if (fs.existsSync(this.dbPath)) {
@@ -288,27 +286,30 @@ export class TimeSeriesDatabase {
       }
     } catch {}
 
-    const summaryStmt = this.db.prepare(`
+    const syncSummaryStmt = this.db.prepare(`
       SELECT
-        COUNT(*) as total_points,
         COUNT(DISTINCT module_id) as module_count,
-        MIN(ts) as oldest_ts,
-        MAX(ts) as newest_ts
-      FROM measurements
+        MIN(min_ts) as oldest_ts,
+        MAX(max_ts) as newest_ts
+      FROM sync_log
     `);
-    const summary = summaryStmt.get() as {
-      total_points: number;
-      module_count: number;
-      oldest_ts: number | null;
-      newest_ts: number | null;
-    };
+    const syncSummary = syncSummaryStmt.get() as
+      | {
+          module_count: number;
+          oldest_ts: number | null;
+          newest_ts: number | null;
+        }
+      | undefined;
+
+    const totalStmt = this.db.prepare(`
+      SELECT COUNT(*) as total_points FROM measurements
+    `);
+    const totalRow = totalStmt.get() as { total_points: number } | undefined;
 
     const byScaleStmt = this.db.prepare(`
       SELECT
         scale,
-        COUNT(*) as cnt,
-        MIN(ts) as oldest,
-        MAX(ts) as newest
+        COUNT(*) as cnt
       FROM measurements
       GROUP BY scale
       ORDER BY cnt DESC
@@ -316,23 +317,49 @@ export class TimeSeriesDatabase {
     const byScaleRows = byScaleStmt.all() as Array<{
       scale: string;
       cnt: number;
+    }>;
+
+    const scaleRangeStmt = this.db.prepare(`
+      SELECT
+        scale,
+        MIN(min_ts) as oldest,
+        MAX(max_ts) as newest
+      FROM sync_log
+      GROUP BY scale
+    `);
+    const scaleRangeRows = scaleRangeStmt.all() as Array<{
+      scale: string;
       oldest: number;
       newest: number;
     }>;
+    const rangeMap = new Map<string, { oldest: number; newest: number }>();
+    for (const sr of scaleRangeRows) {
+      rangeMap.set(sr.scale, {
+        oldest: Number(sr.oldest || 0),
+        newest: Number(sr.newest || 0),
+      });
+    }
 
     return {
       dbPath: this.dbPath,
       fileSizeBytes,
-      totalPoints: Number(summary?.total_points || 0),
-      moduleCount: Number(summary?.module_count || 0),
-      oldestTimestamp: summary?.oldest_ts ? Number(summary.oldest_ts) : null,
-      newestTimestamp: summary?.newest_ts ? Number(summary.newest_ts) : null,
-      byScale: byScaleRows.map((r) => ({
-        scale: r.scale,
-        count: Number(r.cnt),
-        oldest: Number(r.oldest),
-        newest: Number(r.newest),
-      })),
+      totalPoints: Number(totalRow?.total_points || 0),
+      moduleCount: Number(syncSummary?.module_count || 0),
+      oldestTimestamp: syncSummary?.oldest_ts
+        ? Number(syncSummary.oldest_ts)
+        : null,
+      newestTimestamp: syncSummary?.newest_ts
+        ? Number(syncSummary.newest_ts)
+        : null,
+      byScale: byScaleRows.map((r) => {
+        const rng = rangeMap.get(r.scale);
+        return {
+          scale: r.scale,
+          count: Number(r.cnt),
+          oldest: rng?.oldest || 0,
+          newest: rng?.newest || 0,
+        };
+      }),
     };
   }
 

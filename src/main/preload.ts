@@ -56,7 +56,7 @@ export interface WinAtmoAPI {
     account: AccountInfo;
     stations: WeatherStation[];
   }>;
-  logout: () => Promise<void>;
+  logout: (options?: { eraseDatabase?: boolean }) => Promise<{ success: boolean }>;
 
   // Stations & Historical Sync
   getCachedStations: () => Promise<{
@@ -130,7 +130,8 @@ const api: WinAtmoAPI = {
   loginWithToken: (accessToken: string, refreshToken?: string) =>
     ipcRenderer.invoke('auth:token-login', { accessToken, refreshToken }),
   enableDemoMode: () => ipcRenderer.invoke('auth:demo-mode'),
-  logout: () => ipcRenderer.invoke('auth:logout'),
+  logout: (options?: { eraseDatabase?: boolean }) =>
+    ipcRenderer.invoke('auth:logout', options),
 
   getCachedStations: () => ipcRenderer.invoke('stations:get-cached'),
   refreshStations: () => ipcRenderer.invoke('stations:refresh'),

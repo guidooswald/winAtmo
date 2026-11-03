@@ -2275,6 +2275,121 @@ body {
   gap: 12px;
 }
 
+.storage-metrics-bar.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-sm);
+  border: var(--border-width) solid var(--border-subtle);
+}
+
+.storage-metric-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Modal Dialog Backdrop & Card */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-card {
+  background: var(--bg-card);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  max-width: 480px;
+  width: 100%;
+  padding: 26px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.35);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.modal-header .warning-icon {
+  color: var(--accent-amber);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.modal-body {
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+
+.modal-checkbox-row {
+  background: var(--bg-surface);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 22px;
+}
+
+.modal-checkbox-row .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.modal-checkbox-row .checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.modal-checkbox-row .field-hint {
+  display: block;
+  margin-top: 6px;
+  margin-left: 26px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Banner Exit Button */
+.banner-exit-btn {
+  background: rgba(239, 68, 68, 0.15) !important;
+  color: var(--accent-rose) !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+.banner-exit-btn:hover {
+  background: rgba(239, 68, 68, 0.25) !important;
+}
+
 .storage-metric-box {
   padding: 12px 14px;
   border-radius: var(--radius-sm);

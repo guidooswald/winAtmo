@@ -403,9 +403,29 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     return presets;
   }, [stations]);
 
-  // Populate initial default curves when stations load
+  // Populate initial default curves when stations load or clear when empty
   useEffect(() => {
-    if (stations.length === 0) return;
+    if (stations.length === 0) {
+      setSelectedCurves([]);
+      setSeriesData([]);
+      setActivePreset(null);
+      return;
+    }
+
+    // Clean up any curves that belonged to a previous account or different station
+    const validModuleIds = new Set(
+      stations.flatMap((st) => st.modules.map((m) => m.id))
+    );
+    const filteredCurves = selectedCurves.filter((c) =>
+      validModuleIds.has(c.moduleId)
+    );
+    if (filteredCurves.length !== selectedCurves.length) {
+      setSelectedCurves(filteredCurves);
+      if (filteredCurves.length === 0 && availablePresets.length > 0) {
+        applyPresetComparison(availablePresets[0].id);
+        return;
+      }
+    }
 
     if (initialFocus) {
       for (const st of stations) {
@@ -534,8 +554,9 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
 
   // Fetch series from SQLite / Netatmo whenever curves, range, or scale change
   const loadChartData = async (forceRemoteFetch = false) => {
-    if (selectedCurves.length === 0) {
+    if (selectedCurves.length === 0 || stations.length === 0) {
       setSeriesData([]);
+      setLoading(false);
       return;
     }
     const seq = ++querySeqRef.current;

@@ -205,6 +205,8 @@ export class AppStore {
 
   public clearSession(): void {
     this.state.session = { ...DEFAULT_SESSION };
+    this.state.cachedStations = [];
+    this.state.lastSyncAt = undefined;
     this.save();
   }
 

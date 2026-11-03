@@ -1096,6 +1096,16 @@ export class NetatmoClient {
     const session = this.store.getSession();
     const results: MeasureSeries[] = [];
 
+    // Ensure we only query and return data for the currently authenticated account's stations.
+    // If logged out or no stations exist for this account, never query or leak old data.
+    if (!session.loggedIn || stations.length === 0) {
+      return [];
+    }
+
+    const currentModuleIds = new Set(
+      stations.flatMap((s) => s.modules.map((m) => m.id))
+    );
+
     // Group requested items by module so we only make 1 API call per module if remote fetch is needed
     const byModule = new Map<
       string,
@@ -1109,6 +1119,10 @@ export class NetatmoClient {
     >();
 
     for (const item of req.items) {
+      // Strictly prevent mixing data across different accounts
+      if (!currentModuleIds.has(item.moduleId)) {
+        continue;
+      }
       const key = `${item.stationId}::${item.moduleId}`;
       const list = byModule.get(key) || [];
       list.push(item);

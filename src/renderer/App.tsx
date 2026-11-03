@@ -203,10 +203,12 @@ const MainStudioApp: React.FC = () => {
     }
   };
 
-  const handleLogout = async () => {
-    await window.winatmo.logout();
+  const handleLogout = async (eraseDatabase = false) => {
+    await window.winatmo.logout({ eraseDatabase });
     setAccount({ loggedIn: false });
     setStations([]);
+    setChartFocus(null);
+    setActiveTab('dashboard');
   };
 
   const handleSyncNow = async (forceFull = false) => {
@@ -575,12 +577,20 @@ const MainStudioApp: React.FC = () => {
                     data.
                   </span>
                 </div>
-                <button
-                  className="banner-login-btn"
-                  onClick={handleStartWebLogin}
-                >
-                  <Globe size={13} /> Sign in with Real Netatmo Account
-                </button>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    className="banner-exit-btn"
+                    onClick={() => handleLogout(false)}
+                  >
+                    Exit Demo
+                  </button>
+                  <button
+                    className="banner-login-btn"
+                    onClick={handleStartWebLogin}
+                  >
+                    <Globe size={13} /> Sign in with Real Netatmo Account
+                  </button>
+                </div>
               </div>
             )}
 

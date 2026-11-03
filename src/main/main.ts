@@ -1236,11 +1236,22 @@ function registerIpcHandlers(): void {
     return res;
   });
 
-  ipcMain.handle('auth:logout', async () => {
-    await webAuth.clearWebSession();
-    broadcastToAllWindows('stations:updated', []);
-    updateTrayTooltipAndMenu();
-  });
+  ipcMain.handle(
+    'auth:logout',
+    async (_e, payload?: { eraseDatabase?: boolean }) => {
+      const wasDemo = store.getSession().authMethod === 'demo';
+      await webAuth.clearWebSession();
+      if (payload?.eraseDatabase) {
+        db.clearAllHistory();
+      } else if (wasDemo) {
+        db.clearDemoHistory();
+      }
+      broadcastToAllWindows('stations:updated', []);
+      updateTrayTooltipAndMenu();
+      createOrUpdateWidgetWindow();
+      return { success: true };
+    }
+  );
 
   // Stations & History IPC
   ipcMain.handle('stations:get-cached', () => {
@@ -1283,8 +1294,24 @@ function registerIpcHandlers(): void {
   });
 
   // Storage & CSV Export IPC
-  ipcMain.handle('storage:stats', () => {
-    return db.getStorageStats();
+  ipcMain.handle('storage:stats', async () => {
+    return new Promise((resolve) => {
+      setImmediate(() => {
+        try {
+          resolve(db.getStorageStats());
+        } catch {
+          resolve({
+            dbPath: '',
+            fileSizeBytes: 0,
+            totalPoints: 0,
+            moduleCount: 0,
+            oldestTimestamp: null,
+            newestTimestamp: null,
+            byScale: [],
+          });
+        }
+      });
+    });
   });
 
   ipcMain.handle('storage:clear', () => {
