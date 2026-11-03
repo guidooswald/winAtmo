@@ -1307,31 +1307,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="modal-backdrop">
           <div className="modal-card">
             <div className="modal-header">
-              <AlertTriangle size={20} color="#f59e0b" />
+              <AlertTriangle size={20} className="warning-icon" />
               <h3>Sign Out of Netatmo</h3>
             </div>
             <div className="modal-body">
-              <p>
+              <p className="modal-prompt">
                 Are you sure you want to sign out of{' '}
                 <strong>{account.email || account.authMethod}</strong>?
               </p>
-              <label className="modal-checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={eraseDbOnLogout}
-                  onChange={(e) => setEraseDbOnLogout(e.target.checked)}
-                />
-                <span>
-                  Erase all historical sensor data from local database (Default is unchecked: keeps your data)
-                </span>
-              </label>
+
+              <div className="modal-checkbox-card">
+                <label className="modal-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={eraseDbOnLogout}
+                    onChange={(e) => setEraseDbOnLogout(e.target.checked)}
+                  />
+                  <div className="modal-checkbox-text">
+                    <span className="modal-checkbox-title">
+                      Erase all historical sensor data from local database
+                    </span>
+                    <span className="modal-checkbox-desc">
+                      Default is unchecked: keeps your measurements and sync history intact in SQLite.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
               {eraseDbOnLogout && (
-                <p
-                  className="modal-warning-text"
-                  style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}
-                >
-                  Warning: Erasing the database will permanently delete all stored measurements and sync cache from your disk.
-                </p>
+                <div className="modal-danger-alert">
+                  <AlertTriangle size={15} />
+                  <span>
+                    Warning: All local measurements and history will be permanently deleted from your disk.
+                  </span>
+                </div>
               )}
             </div>
             <div className="modal-actions">

@@ -2310,67 +2310,117 @@ body {
   background: var(--bg-card);
   border: var(--border-width) solid var(--border-strong);
   border-radius: var(--radius-lg);
-  max-width: 480px;
+  max-width: 520px;
   width: 100%;
-  padding: 26px;
+  padding: 24px;
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .modal-header .warning-icon {
   color: var(--accent-amber);
+  flex-shrink: 0;
 }
 
 .modal-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+  color: var(--text-primary);
 }
 
 .modal-body {
   color: var(--text-secondary);
   font-size: 13.5px;
   line-height: 1.5;
-  margin: 0 0 18px;
+  margin: 0 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.modal-checkbox-row {
+.modal-prompt {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+}
+
+.modal-prompt strong {
+  color: var(--text-primary);
+}
+
+.modal-checkbox-card {
+  display: block;
   background: var(--bg-surface);
   border: var(--border-width) solid var(--border-subtle);
   border-radius: var(--radius-sm);
   padding: 12px 14px;
-  margin-bottom: 22px;
+  transition: border-color 0.15s ease;
 }
 
-.modal-checkbox-row .checkbox-label {
+.modal-checkbox-card:hover {
+  border-color: var(--border-strong);
+}
+
+.modal-checkbox-label {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.modal-checkbox-label input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--accent-amber);
+  flex-shrink: 0;
+}
+
+.modal-checkbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.modal-checkbox-title {
   font-size: 13px;
   font-weight: 500;
-  cursor: pointer;
   color: var(--text-primary);
+  line-height: 1.4;
 }
 
-.modal-checkbox-row .checkbox-label input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.modal-checkbox-row .field-hint {
-  display: block;
-  margin-top: 6px;
-  margin-left: 26px;
+.modal-checkbox-desc {
   font-size: 12px;
   color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.modal-danger-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-xs);
+  padding: 8px 12px;
+  color: var(--accent-rose);
+  font-size: 12px;
   line-height: 1.4;
+}
+
+.modal-danger-alert svg {
+  flex-shrink: 0;
 }
 
 .modal-actions {
