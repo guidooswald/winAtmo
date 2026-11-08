@@ -251,7 +251,19 @@ export interface MainWindowBounds {
   isMaximized?: boolean;
 }
 
+export type LanguageId =
+  | 'en'
+  | 'de'
+  | 'fr'
+  | 'es'
+  | 'pt'
+  | 'it'
+  | 'pl'
+  | 'cs'
+  | 'el';
+
 export interface UserSettings {
+  language: LanguageId; // Default 'en', supports de, fr, es, pt, it, pl, cs, el
   historyDays: number; // Default 14 days, up to 3650+ or max
   historyMaxMode: boolean; // When true, loads from station's date_setup (max Netatmo allows)
   defaultScale: NetatmoScale; // Default '30min'

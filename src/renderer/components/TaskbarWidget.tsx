@@ -26,6 +26,7 @@ import {
   SERIES_PALETTE,
 } from '../utils/metrics';
 import { applyThemeToDocument } from '../utils/themes';
+import { LanguageProvider } from '../utils/i18n';
 
 export const TaskbarWidget: React.FC = () => {
   const [stations, setStations] = useState<WeatherStation[]>([]);
@@ -333,11 +334,12 @@ export const TaskbarWidget: React.FC = () => {
   const dragClass = settings.widgetLocked ? '' : 'widget-os-drag';
 
   return (
-    <div
-      className={`taskbar-widget-shell ${expanded ? 'is-expanded' : ''} ${
-        expandDirection === 'down' ? 'expand-down' : 'expand-up'
-      }`}
-    >
+    <LanguageProvider language={settings?.language || 'en'}>
+      <div
+        className={`taskbar-widget-shell ${expanded ? 'is-expanded' : ''} ${
+          expandDirection === 'down' ? 'expand-down' : 'expand-up'
+        }`}
+      >
       {/* Expanded Flyout Panel (24h Mini Sparklines & Details) */}
       {expanded && (
         <div
@@ -505,6 +507,7 @@ export const TaskbarWidget: React.FC = () => {
         />
       </div>
     </div>
+    </LanguageProvider>
   );
 };
 

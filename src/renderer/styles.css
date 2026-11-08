@@ -2680,6 +2680,72 @@ body {
 }
 
 /* ==========================================
+   LANGUAGE SELECTOR STYLES
+   ========================================== */
+.language-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+  padding: 14px 18px 18px;
+}
+
+.language-card-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.language-card-btn:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.language-card-btn.active {
+  border-color: var(--accent-sky);
+  box-shadow: 0 0 0 1px var(--accent-sky);
+  background: var(--bg-elevated);
+}
+
+.language-flag {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.language-label-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.language-native-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.language-english-name {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.language-check-icon {
+  color: var(--accent-sky);
+  flex-shrink: 0;
+}
+
+/* ==========================================
    FLOATING WINDOWS TASKBAR WIDGET STYLES
    ========================================== */
 .taskbar-widget-shell {

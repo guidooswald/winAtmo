@@ -32,6 +32,7 @@ import {
 } from '../types';
 import { METRIC_METADATA } from '../utils/metrics';
 import { getThemeDefinition, THEMES } from '../utils/themes';
+import { useI18n, LANGUAGES } from '../utils/i18n';
 
 interface SettingsViewProps {
   settings: UserSettings;
@@ -68,6 +69,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onTokenLogin,
   onLogout,
 }) => {
+  const { t, formatNumber, formatDate, formatTime } = useI18n();
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [loadingStats, setLoadingStats] = useState<boolean>(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
@@ -516,18 +518,55 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   return (
     <div className="settings-container">
-      {/* 1. Historical Data Window & Cloud Sync */}
+      {/* 0. Language & Localization */}
       <div className="settings-card highlight-border">
+        <div className="settings-card-header">
+          <div className="settings-title-group">
+            <Globe size={18} className="accent-icon" />
+            <div>
+              <h3>{t('section_language_title')}</h3>
+              <p>{t('section_language_desc')}</p>
+            </div>
+          </div>
+          <span className="active-window-badge">
+            {LANGUAGES.find((l) => l.id === (settings.language || 'en'))?.flag}{' '}
+            {LANGUAGES.find((l) => l.id === (settings.language || 'en'))?.nativeName}
+          </span>
+        </div>
+
+        <div className="language-selector-grid">
+          {LANGUAGES.map((lang) => {
+            const isSelected = (settings.language || 'en') === lang.id;
+            return (
+              <button
+                key={lang.id}
+                type="button"
+                className={`language-card-btn ${isSelected ? 'active' : ''}`}
+                onClick={() => onUpdateSettings({ language: lang.id })}
+                title={`${lang.nativeName} (${lang.name})`}
+              >
+                <span className="language-flag">{lang.flag}</span>
+                <div className="language-label-wrap">
+                  <span className="language-native-name">{lang.nativeName}</span>
+                  <span className="language-english-name">{lang.name}</span>
+                </div>
+                {isSelected && (
+                  <CheckCircle2 size={16} className="language-check-icon" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 1. Historical Data Window & Cloud Sync */}
+      <div className="settings-card">
         <div className="settings-card-header">
           <div className="settings-title-group">
             <Database size={18} className="accent-icon" />
             <div>
-              <h3>Historical Sensor Data Window & Sync</h3>
-              <p>
-                Per default winAtmo loads the last{' '}
-                <strong>14 days</strong> of sensor history. Increase this up to
-                the maximum Netatmo allows (all history since station setup).
-              </p>
+              <h3>{t('section_history_title')}</h3>
+              <p>{t('section_history_desc')}</p>
             </div>
           </div>
           <span className="active-window-badge">
@@ -681,12 +720,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="settings-title-group">
             <HardDrive size={18} className="accent-icon" />
             <div>
-              <h3>Local SQLite Time-Series Database</h3>
-              <p>
-                Powered by native <code>node:sqlite</code> with{' '}
-                <code>WITHOUT ROWID</code> clustered B-tree indexing and WAL mode
-                for sub-millisecond chart queries.
-              </p>
+              <h3>{t('section_database_title')}</h3>
+              <p>{t('section_database_desc')}</p>
             </div>
           </div>
           <div className="storage-actions-row">
@@ -778,11 +813,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="settings-title-group">
             <LayoutGrid size={18} className="accent-icon" />
             <div>
-              <h3>Windows Taskbar Widget & System Tray</h3>
-              <p>
-                Floating always-on-top mini taskbar bar showing real-time values
-                for your selected sensors right above the Windows taskbar.
-              </p>
+              <h3>{t('section_widget_title')}</h3>
+              <p>{t('section_widget_desc')}</p>
             </div>
           </div>
           <div className="storage-actions-row">
@@ -1115,10 +1147,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="settings-title-group">
             <Palette size={18} className="accent-icon" />
             <div>
-              <h3>Appearance, Themes & Geometry</h3>
-              <p>
-                Each theme family completely transforms winAtmo's visual style: corner rounding vs. squared, fonts, density, and spacing — each paired with a Dark and Light mode.
-              </p>
+              <h3>{t('section_appearance_title')}</h3>
+              <p>{t('section_appearance_desc')}</p>
             </div>
           </div>
           <span className="active-window-badge">
@@ -1202,15 +1232,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="settings-title-group">
             <Sliders size={18} className="accent-icon" />
             <div>
-              <h3>Units & Display Preferences</h3>
-              <p>Customize measurement units across charts, dashboard, and taskbar widget.</p>
+              <h3>{t('section_units_title')}</h3>
+              <p>{t('section_units_desc')}</p>
             </div>
           </div>
         </div>
 
         <div className="settings-grid-4">
           <div className="setting-field">
-            <label>Temperature Unit</label>
+            <label>{t('unit_temperature')}</label>
             <select
               value={settings.temperatureUnit}
               onChange={(e) =>
@@ -1226,7 +1256,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           <div className="setting-field">
-            <label>Pressure Unit</label>
+            <label>{t('unit_pressure')}</label>
             <select
               value={settings.pressureUnit}
               onChange={(e) =>
@@ -1244,7 +1274,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           <div className="setting-field">
-            <label>Wind Speed Unit</label>
+            <label>{t('unit_wind')}</label>
             <select
               value={settings.windUnit}
               onChange={(e) =>
@@ -1262,7 +1292,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           <div className="setting-field">
-            <label>Rain Unit</label>
+            <label>{t('unit_rain')}</label>
             <select
               value={settings.rainUnit}
               onChange={(e) =>
@@ -1279,17 +1309,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* 5. Netatmo Authentication & Developer OAuth2 */}
+      {/* 6. Netatmo Authentication & Developer OAuth2 */}
       <div className="settings-card">
         <div className="settings-card-header">
           <div className="settings-title-group">
             <ShieldCheck size={18} className="accent-icon" />
             <div>
-              <h3>Netatmo Account & API Authentication</h3>
-              <p>
-                Connect via direct Netatmo Web Login, official Netatmo Connect
-                OAuth 2.0 (<code>dev.netatmo.com</code>), or a Personal Access Token.
-              </p>
+              <h3>{t('section_auth_title')}</h3>
+              <p>{t('section_auth_desc')}</p>
             </div>
           </div>
           {account.loggedIn && (
@@ -1298,14 +1325,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className="action-btn warning"
                 onClick={() => onLogout(false)}
               >
-                Exit Demo Mode
+                {t('exit_demo')}
               </button>
             ) : (
               <button
                 className="action-btn danger"
                 onClick={() => setShowLogoutConfirm(true)}
               >
-                Sign Out ({account.email || account.authMethod})
+                {t('sign_out')} ({account.email || account.authMethod})
               </button>
             )
           )}
@@ -1529,12 +1556,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="modal-card">
             <div className="modal-header">
               <AlertTriangle size={20} className="warning-icon" />
-              <h3>Sign Out of Netatmo</h3>
+              <h3>{t('modal_signout_title')}</h3>
             </div>
             <div className="modal-body">
               <p className="modal-prompt">
-                Are you sure you want to sign out of{' '}
-                <strong>{account.email || account.authMethod}</strong>?
+                {t('modal_signout_prompt', {
+                  name: account.email || account.authMethod || '',
+                })}
               </p>
 
               <div className="modal-checkbox-card">
@@ -1546,7 +1574,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                   <div className="modal-checkbox-text">
                     <span className="modal-checkbox-title">
-                      Erase all historical sensor data from local database
+                      {t('modal_signout_erase_db')}
                     </span>
                     <span className="modal-checkbox-desc">
                       Default is unchecked: keeps your measurements and sync history intact in SQLite.
@@ -1572,7 +1600,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   setEraseDbOnLogout(false);
                 }}
               >
-                Cancel
+                {t('modal_signout_cancel')}
               </button>
               <button
                 className="action-btn danger"
@@ -1581,7 +1609,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   await onLogout(eraseDbOnLogout);
                 }}
               >
-                Sign Out
+                {t('sign_out')}
               </button>
             </div>
           </div>

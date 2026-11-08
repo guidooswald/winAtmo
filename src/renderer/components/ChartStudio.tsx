@@ -33,6 +33,7 @@ import {
   METRIC_METADATA,
   SERIES_PALETTE,
 } from '../utils/metrics';
+import { useI18n } from '../utils/i18n';
 
 export interface SelectedCurve {
   id: string; // `${stationId}::${moduleId}::${metric}`
@@ -96,6 +97,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
   initialFocus,
   onClearFocus,
 }) => {
+  const { t, formatDate, formatTime } = useI18n();
   const [selectedCurves, setSelectedCurves] = useState<SelectedCurve[]>([]);
   const [rangePreset, setRangePreset] = useState<RangePreset>('7d');
   const [currentScale, setCurrentScale] = useState<NetatmoScale>(() =>
@@ -865,7 +867,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
         <div className="chart-toolbar-row">
           <div className="toolbar-group">
             <span className="toolbar-label">
-              <Sparkles size={13} /> Quick Presets
+              <Sparkles size={13} /> {t('chart_presets')}
             </span>
             <div className="pill-group">
               {availablePresets.map((preset) => (
@@ -883,7 +885,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
 
           <div className="toolbar-group">
             <span className="toolbar-label">
-              <Calendar size={13} /> Time Range
+              <Calendar size={13} /> {t('chart_range')}
             </span>
             <div className="pill-group">
               {(
@@ -937,7 +939,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
         <div className="chart-toolbar-row secondary">
           <div className="toolbar-group">
             <span className="toolbar-label">
-              <Sliders size={13} /> Resolution
+              <Sliders size={13} /> {t('chart_scale')}
             </span>
             <div className="pill-group">
               {(
@@ -1057,7 +1059,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
               disabled={seriesData.length === 0}
             >
               <Download size={14} />
-              {exportStatus || 'Export CSV'}
+              {exportStatus || t('chart_export_csv')}
             </button>
           </div>
         </div>
@@ -1502,15 +1504,15 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                 </div>
                 <div className="stat-metrics-row">
                   <div className="stat-cell">
-                    <span>Min</span>
+                    <span>{t('chart_min')}</span>
                     <strong>{s.stats.count > 0 ? s.stats.min : '--'}</strong>
                   </div>
                   <div className="stat-cell">
-                    <span>Average</span>
+                    <span>{t('chart_avg')}</span>
                     <strong>{s.stats.count > 0 ? s.stats.avg : '--'}</strong>
                   </div>
                   <div className="stat-cell">
-                    <span>Max</span>
+                    <span>{t('chart_max')}</span>
                     <strong>{s.stats.count > 0 ? s.stats.max : '--'}</strong>
                   </div>
                   <div className="stat-cell">

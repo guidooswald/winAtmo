@@ -48,8 +48,12 @@
         "en-US",
         "de-DE",
         "fr-FR",
+        "es-ES",
+        "pt-PT",
         "it-IT",
-        "es-ES"
+        "pl-PL",
+        "cs-CZ",
+        "el-GR"
       ],
       "backgroundColor": "#0f172a",
       "showNameOnTiles": false,

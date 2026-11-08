@@ -38,6 +38,7 @@ import {
   METRIC_METADATA,
   SERIES_PALETTE,
 } from '../utils/metrics';
+import { useI18n } from '../utils/i18n';
 
 declare const __APP_VERSION__: string | undefined;
 declare const __APP_BUILD__: number | undefined;
@@ -69,6 +70,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
   onUpdateSettings,
   onOpenInChart,
 }) => {
+  const { t, formatDate, formatTime } = useI18n();
   const [filterMode, setFilterMode] = useState<
     'all' | 'indoor' | 'outdoor' | 'diagnostics'
   >('all');
@@ -133,22 +135,22 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
   const renderTrendIcon = (trend?: 'up' | 'down' | 'stable') => {
     if (trend === 'up') {
       return (
-        <span className="trend-badge up" title="Rising over last 12h">
-          <ArrowUpRight size={13} /> Rising
+        <span className="trend-badge up" title={t('trend_up')}>
+          <ArrowUpRight size={13} /> {t('trend_up')}
         </span>
       );
     }
     if (trend === 'down') {
       return (
-        <span className="trend-badge down" title="Falling over last 12h">
-          <ArrowDownRight size={13} /> Falling
+        <span className="trend-badge down" title={t('trend_down')}>
+          <ArrowDownRight size={13} /> {t('trend_down')}
         </span>
       );
     }
     if (trend === 'stable') {
       return (
-        <span className="trend-badge stable" title="Stable">
-          <ArrowRight size={13} /> Stable
+        <span className="trend-badge stable" title={t('trend_stable')}>
+          <ArrowRight size={13} /> {t('trend_stable')}
         </span>
       );
     }
@@ -168,33 +170,34 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
             className={`pill-btn ${filterMode === 'all' ? 'active' : ''}`}
             onClick={() => setFilterMode('all')}
           >
-            All Sensors
+            {t('filter_all')}
           </button>
           <button
             className={`pill-btn ${filterMode === 'indoor' ? 'active' : ''}`}
             onClick={() => setFilterMode('indoor')}
           >
-            Indoor & Air Quality
+            {t('filter_indoor')}
           </button>
           <button
             className={`pill-btn ${filterMode === 'outdoor' ? 'active' : ''}`}
             onClick={() => setFilterMode('outdoor')}
           >
-            {hasWindOrRain ? 'Outdoor, Wind & Rain' : 'Outdoor Sensors'}
+            {hasWindOrRain ? t('filter_outdoor_wind_rain') : t('filter_outdoor')}
           </button>
           <button
             className={`pill-btn ${filterMode === 'diagnostics' ? 'active' : ''}`}
             onClick={() => setFilterMode('diagnostics')}
           >
-            Hardware & Signal Diagnostics
+            {t('filter_diagnostics')}
           </button>
         </div>
 
         <div className="pinned-summary-pill">
           <Pin size={13} />
           <span>
-            Taskbar Widget: <strong>{settings.pinnedSensors.length}</strong>{' '}
-            pinned sensor{settings.pinnedSensors.length === 1 ? '' : 's'}
+            {settings.pinnedSensors.length === 1
+              ? t('pinned_summary_single')
+              : t('pinned_summary_plural', { count: settings.pinnedSensors.length })}
           </span>
         </div>
       </div>
@@ -248,7 +251,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                     </>
                   )}
                   {station.place?.altitude !== undefined
-                    ? ` • ${station.place.altitude}m alt`
+                    ? ` • ${t('altitude', { alt: station.place.altitude })}`
                     : ''}
                 </div>
               </div>
@@ -258,19 +261,20 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                     type="button"
                     className="meta-badge clickable"
                     onClick={() => window.winatmo.openExternal(weathermapUrl)}
-                    title={`Open on Netatmo Weathermap (${station.place.timezone})`}
+                    title={`${t('open_weathermap')} (${station.place.timezone})`}
                   >
                     <MapPin size={12} /> {station.place.timezone}
                   </button>
                 )}
                 <span className="meta-badge">
-                  Setup:{' '}
-                  {new Date(station.dateSetup * 1000).toLocaleDateString()}
+                  {t('station_setup', {
+                    date: formatDate(station.dateSetup * 1000),
+                  })}
                 </span>
                 <span
                   className={`meta-badge ${station.reachable ? 'online' : 'offline'}`}
                 >
-                  {station.reachable ? '● Cloud Connected' : '○ Offline'}
+                  {station.reachable ? `● ${t('online')}` : `○ ${t('offline')}`}
                 </span>
               </div>
             </div>
@@ -280,14 +284,14 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                 <table className="diagnostics-table">
                   <thead>
                     <tr>
-                      <th>Module Name</th>
-                      <th>Product Type</th>
-                      <th>MAC Address</th>
-                      <th>Status</th>
-                      <th>Signal Quality (Wi-Fi / RF)</th>
-                      <th>Battery Health (mV / %)</th>
-                      <th>Firmware</th>
-                      <th>Last Update</th>
+                      <th>{t('diag_module_name')}</th>
+                      <th>{t('diag_product_type')}</th>
+                      <th>{t('diag_mac')}</th>
+                      <th>{t('diag_status')}</th>
+                      <th>{t('diag_signal')}</th>
+                      <th>{t('diag_battery')}</th>
+                      <th>{t('diag_firmware')}</th>
+                      <th>{t('diag_last_update')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -310,17 +314,17 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                             <span
                               className={`status-dot-pill ${mod.reachable ? 'ok' : 'err'}`}
                             >
-                              {mod.reachable ? 'Reachable' : 'Unreachable'}
+                              {mod.reachable ? t('diag_reachable') : t('diag_unreachable')}
                             </span>
                           </td>
                           <td>
                             {mod.wifiStatus !== undefined ? (
                               <span style={{ color: wifi.color }}>
-                                <Wifi size={13} /> Wi-Fi: {wifi.label}
+                                <Wifi size={13} /> {t('wifi_signal')}: {wifi.label}
                               </span>
                             ) : (
                               <span style={{ color: rf.color }}>
-                                <Radio size={13} /> RF: {rf.label}
+                                <Radio size={13} /> {t('rf_signal')}: {rf.label}
                               </span>
                             )}
                           </td>
@@ -338,20 +342,14 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                               </span>
                             ) : (
                               <span className="muted-text">
-                                USB / Mains Powered
+                                {t('usb_powered')}
                               </span>
                             )}
                           </td>
                           <td>v{mod.firmware ?? '--'}</td>
                           <td>
                             {mod.lastSeen
-                              ? new Date(
-                                  mod.lastSeen * 1000
-                                ).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  second: '2-digit',
-                                })
+                              ? formatTime(mod.lastSeen * 1000)
                               : '--'}
                           </td>
                         </tr>
@@ -511,8 +509,8 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                                     }
                                     title={
                                       pinned
-                                        ? 'Unpin from Windows Taskbar Widget'
-                                        : 'Pin to Windows Taskbar Widget'
+                                        ? t('unpin_from_widget')
+                                        : t('pin_to_widget')
                                     }
                                   >
                                     <Pin size={13} />
@@ -522,7 +520,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                                     onClick={() =>
                                       onOpenInChart(mod.id, metric)
                                     }
-                                    title="Plot historical chart"
+                                    title={t('open_in_charts')}
                                   >
                                     <LineChart size={13} />
                                   </button>

@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import {
   AccountInfo,
+  LanguageId,
   PinnedSensorItem,
   SessionData,
   StoredApiKeysInfo,
@@ -11,6 +12,21 @@ import {
 } from '../renderer/types';
 
 const DPAPI_PREFIX = 'dpapi:';
+
+function detectSystemLanguage(): LanguageId {
+  try {
+    const loc = (app.getLocale?.() || '').toLowerCase();
+    if (loc.startsWith('de')) return 'de';
+    if (loc.startsWith('fr')) return 'fr';
+    if (loc.startsWith('es')) return 'es';
+    if (loc.startsWith('pt')) return 'pt';
+    if (loc.startsWith('it')) return 'it';
+    if (loc.startsWith('pl')) return 'pl';
+    if (loc.startsWith('cs')) return 'cs';
+    if (loc.startsWith('el')) return 'el';
+  } catch {}
+  return 'en';
+}
 
 async function encryptSecretAsync(plain?: string): Promise<string | undefined> {
   if (!plain) return undefined;
@@ -52,6 +68,7 @@ interface PersistedState {
 }
 
 const DEFAULT_SETTINGS: UserSettings = {
+  language: detectSystemLanguage(),
   historyDays: 14, // Default 14 days as requested
   historyMaxMode: false, // Can be toggled in settings to load up to Netatmo's maximum (since station setup)
   defaultScale: '30min',

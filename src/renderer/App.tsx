@@ -31,6 +31,7 @@ import { TaskbarWidget } from './components/TaskbarWidget';
 import { SyncOverlayWindow } from './components/SyncOverlayWindow';
 import { WindowTopBar } from './components/WindowTopBar';
 import { applyThemeToDocument, THEMES } from './utils/themes';
+import { LanguageProvider, useI18n } from './utils/i18n';
 import { WinAtmoAPI } from '../main/preload';
 
 declare global {
@@ -253,8 +254,126 @@ const MainStudioApp: React.FC = () => {
     );
   }
 
-  const darkThemes = THEMES.filter((t) => t.mode === 'dark');
-  const lightThemes = THEMES.filter((t) => t.mode === 'light');
+  return (
+    <LanguageProvider language={settings.language}>
+      <MainStudioShell
+        settings={settings}
+        account={account}
+        stations={stations}
+        syncProgress={syncProgress}
+        authBannerError={authBannerError}
+        setAuthBannerError={setAuthBannerError}
+        authBusy={authBusy}
+        showInlineAuth={showInlineAuth}
+        setShowInlineAuth={setShowInlineAuth}
+        welcomeAuthTab={welcomeAuthTab}
+        setWelcomeAuthTab={setWelcomeAuthTab}
+        welcomeToken={welcomeToken}
+        setWelcomeToken={setWelcomeToken}
+        welcomeRefresh={welcomeRefresh}
+        setWelcomeRefresh={setWelcomeRefresh}
+        welcomeClientId={welcomeClientId}
+        setWelcomeClientId={setWelcomeClientId}
+        welcomeClientSecret={welcomeClientSecret}
+        setWelcomeClientSecret={setWelcomeClientSecret}
+        welcomeStoreLocally={welcomeStoreLocally}
+        setWelcomeStoreLocally={setWelcomeStoreLocally}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        chartFocus={chartFocus}
+        setChartFocus={setChartFocus}
+        handleUpdateSettings={handleUpdateSettings}
+        handleStartWebLogin={handleStartWebLogin}
+        handleStartOAuthLogin={handleStartOAuthLogin}
+        handleTokenLogin={handleTokenLogin}
+        handleEnableDemo={handleEnableDemo}
+        handleLogout={handleLogout}
+        handleSyncNow={handleSyncNow}
+      />
+    </LanguageProvider>
+  );
+};
+
+interface MainStudioShellProps {
+  settings: UserSettings;
+  account: AccountInfo;
+  stations: WeatherStation[];
+  syncProgress: SyncProgress;
+  authBannerError: string | null;
+  setAuthBannerError: (err: string | null) => void;
+  authBusy: boolean;
+  showInlineAuth: boolean;
+  setShowInlineAuth: React.Dispatch<React.SetStateAction<boolean>>;
+  welcomeAuthTab: 'token' | 'oauth';
+  setWelcomeAuthTab: (tab: 'token' | 'oauth') => void;
+  welcomeToken: string;
+  setWelcomeToken: (val: string) => void;
+  welcomeRefresh: string;
+  setWelcomeRefresh: (val: string) => void;
+  welcomeClientId: string;
+  setWelcomeClientId: (val: string) => void;
+  welcomeClientSecret: string;
+  setWelcomeClientSecret: (val: string) => void;
+  welcomeStoreLocally: boolean;
+  setWelcomeStoreLocally: (val: boolean) => void;
+  activeTab: 'dashboard' | 'charts' | 'settings';
+  setActiveTab: (tab: 'dashboard' | 'charts' | 'settings') => void;
+  chartFocus: { moduleId: string; metric?: string } | null;
+  setChartFocus: (focus: { moduleId: string; metric?: string } | null) => void;
+  handleUpdateSettings: (partial: Partial<UserSettings>) => Promise<void>;
+  handleStartWebLogin: () => Promise<void>;
+  handleStartOAuthLogin: (
+    clientId: string,
+    clientSecret: string,
+    storeLocally?: boolean
+  ) => Promise<void>;
+  handleTokenLogin: (
+    token: string,
+    refresh?: string,
+    clientId?: string,
+    clientSecret?: string,
+    storeLocally?: boolean
+  ) => Promise<void>;
+  handleEnableDemo: () => Promise<void>;
+  handleLogout: (eraseDatabase?: boolean) => Promise<void>;
+  handleSyncNow: (forceFull?: boolean) => Promise<void>;
+}
+
+const MainStudioShell: React.FC<MainStudioShellProps> = ({
+  settings,
+  account,
+  stations,
+  syncProgress,
+  authBannerError,
+  setAuthBannerError,
+  authBusy,
+  showInlineAuth,
+  setShowInlineAuth,
+  welcomeAuthTab,
+  setWelcomeAuthTab,
+  welcomeToken,
+  setWelcomeToken,
+  welcomeRefresh,
+  setWelcomeRefresh,
+  welcomeClientId,
+  setWelcomeClientId,
+  welcomeClientSecret,
+  setWelcomeClientSecret,
+  welcomeStoreLocally,
+  setWelcomeStoreLocally,
+  activeTab,
+  setActiveTab,
+  chartFocus,
+  setChartFocus,
+  handleUpdateSettings,
+  handleStartWebLogin,
+  handleStartOAuthLogin,
+  handleTokenLogin,
+  handleEnableDemo,
+  handleLogout,
+  handleSyncNow,
+}) => {
+  const { t } = useI18n();
   const primaryStation = stations.length > 0 ? stations[0] : undefined;
   const primaryStationName =
     primaryStation?.stationName || primaryStation?.homeName;
@@ -282,7 +401,7 @@ const MainStudioApp: React.FC = () => {
           <div>
             <h1>winAtmo</h1>
             <span className="brand-tagline">
-              Netatmo Weather & Air Quality Studio
+              {t('brand_tagline')}
             </span>
           </div>
         </div>
@@ -293,21 +412,21 @@ const MainStudioApp: React.FC = () => {
             onClick={() => setActiveTab('dashboard')}
           >
             <LayoutDashboard size={15} />
-            <span>Sensors</span>
+            <span>{t('nav_sensors')}</span>
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'charts' ? 'active' : ''}`}
             onClick={() => setActiveTab('charts')}
           >
             <LineChart size={15} />
-            <span>Charts</span>
+            <span>{t('nav_charts')}</span>
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setActiveTab('settings')}
           >
             <Settings size={15} />
-            <span>Settings</span>
+            <span>{t('nav_settings')}</span>
           </button>
         </nav>
 
@@ -319,7 +438,9 @@ const MainStudioApp: React.FC = () => {
           >
             <LayoutGrid size={14} />
             <span>
-              Taskbar Widget: {settings.widgetEnabled ? 'ON' : 'OFF'}
+              {t('taskbar_widget_btn', {
+                status: settings.widgetEnabled ? t('on') : t('off'),
+              })}
             </span>
           </button>
 
@@ -338,7 +459,7 @@ const MainStudioApp: React.FC = () => {
                 size={14}
                 className={syncProgress.active ? 'spin' : ''}
               />
-              <span>Sync Now</span>
+              <span>{syncProgress.active ? t('syncing') : t('sync_now')}</span>
             </button>
           )}
         </div>
@@ -371,15 +492,8 @@ const MainStudioApp: React.FC = () => {
             <div className="welcome-hero-icon">
               <CloudSun size={40} />
             </div>
-            <h2>Connect Your Netatmo Weather Station</h2>
-            <p>
-              Sign in directly with your Netatmo account via the secure web
-              login window. winAtmo automatically loads your live sensor
-              readings, stores historical time-series data in a fast local
-              SQLite database (default <strong>14 days</strong>, configurable up
-              to Netatmo&apos;s maximum), and pins live metrics to your Windows
-              Taskbar Widget.
-            </p>
+            <h2>{t('welcome_title')}</h2>
+            <p>{t('welcome_desc')}</p>
 
             <div className="welcome-cta-row">
               <button
@@ -390,8 +504,8 @@ const MainStudioApp: React.FC = () => {
                 <Globe size={17} />
                 <span>
                   {authBusy
-                    ? 'Waiting for Netatmo Login...'
-                    : 'Sign in with Netatmo via Web'}
+                    ? t('welcome_btn_web_waiting')
+                    : t('welcome_btn_web')}
                 </span>
               </button>
 
@@ -401,7 +515,7 @@ const MainStudioApp: React.FC = () => {
                 disabled={authBusy}
               >
                 <Sparkles size={17} />
-                <span>Try Interactive Demo Station (30d History)</span>
+                <span>{t('welcome_btn_demo')}</span>
               </button>
 
               <button
@@ -410,7 +524,7 @@ const MainStudioApp: React.FC = () => {
                 title="Enter Personal Access Token or OAuth2 App Credentials"
               >
                 <KeyRound size={16} />
-                <span>Personal Token / OAuth2</span>
+                <span>{t('welcome_btn_token')}</span>
               </button>
             </div>
 
@@ -422,21 +536,21 @@ const MainStudioApp: React.FC = () => {
                     onClick={() => setWelcomeAuthTab('token')}
                   >
                     <KeyRound size={14} />
-                    <span>Personal Access Token</span>
+                    <span>{t('welcome_tab_token')}</span>
                   </button>
                   <button
                     className={`inline-auth-tab ${welcomeAuthTab === 'oauth' ? 'active' : ''}`}
                     onClick={() => setWelcomeAuthTab('oauth')}
                   >
                     <ShieldCheck size={14} />
-                    <span>Netatmo Connect OAuth2</span>
+                    <span>{t('welcome_tab_oauth')}</span>
                   </button>
                 </div>
 
                 {welcomeAuthTab === 'token' ? (
                   <div className="inline-auth-form">
                     <p className="inline-auth-desc">
-                      Paste an <code>access_token</code> generated in your{' '}
+                      {t('welcome_token_desc')}{' '}
                       <a
                         href="#"
                         onClick={(e) => {
@@ -452,7 +566,7 @@ const MainStudioApp: React.FC = () => {
                     <div className="inline-auth-inputs">
                       <input
                         type="password"
-                        placeholder="Access Token (Bearer token required)"
+                        placeholder={t('welcome_token_placeholder')}
                         value={welcomeToken}
                         onChange={(e) => setWelcomeToken(e.target.value)}
                         className="text-input"
@@ -460,7 +574,7 @@ const MainStudioApp: React.FC = () => {
                       />
                       <input
                         type="password"
-                        placeholder="Refresh Token (Optional)"
+                        placeholder={t('welcome_refresh_placeholder')}
                         value={welcomeRefresh}
                         onChange={(e) => setWelcomeRefresh(e.target.value)}
                         className="text-input"
@@ -468,14 +582,14 @@ const MainStudioApp: React.FC = () => {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
                         <input
                           type="text"
-                          placeholder="Client ID (Optional, for auto-refresh)"
+                          placeholder={t('welcome_client_id_placeholder')}
                           value={welcomeClientId}
                           onChange={(e) => setWelcomeClientId(e.target.value)}
                           className="text-input"
                         />
                         <input
                           type="password"
-                          placeholder="Client Secret (Optional)"
+                          placeholder={t('welcome_client_secret_placeholder')}
                           value={welcomeClientSecret}
                           onChange={(e) => setWelcomeClientSecret(e.target.value)}
                           className="text-input"
@@ -487,7 +601,7 @@ const MainStudioApp: React.FC = () => {
                           checked={welcomeStoreLocally}
                           onChange={(e) => setWelcomeStoreLocally(e.target.checked)}
                         />
-                        <span>Store API keys locally in encrypted file (DPAPI &bull; never sent to GitHub)</span>
+                        <span>{t('welcome_store_locally_checkbox')}</span>
                       </label>
                     </div>
                     <div className="inline-auth-actions">
@@ -506,7 +620,7 @@ const MainStudioApp: React.FC = () => {
                       >
                         <CheckCircle2 size={15} />
                         <span>
-                          {authBusy ? 'Connecting...' : 'Connect with Token'}
+                          {authBusy ? t('welcome_btn_connecting') : t('welcome_btn_connect_token')}
                         </span>
                       </button>
                       <button
@@ -514,14 +628,14 @@ const MainStudioApp: React.FC = () => {
                         onClick={() => setActiveTab('settings')}
                       >
                         <Settings size={14} />
-                        <span>Open Full Settings</span>
+                        <span>{t('welcome_btn_open_settings')}</span>
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="inline-auth-form">
                     <p className="inline-auth-desc">
-                      Use your custom OAuth2 app credentials from{' '}
+                      {t('welcome_oauth_desc')}{' '}
                       <a
                         href="#"
                         onClick={(e) => {
@@ -537,7 +651,7 @@ const MainStudioApp: React.FC = () => {
                     <div className="inline-auth-inputs">
                       <input
                         type="text"
-                        placeholder="OAuth Client ID"
+                        placeholder={t('welcome_oauth_client_id')}
                         value={welcomeClientId}
                         onChange={(e) => setWelcomeClientId(e.target.value)}
                         className="text-input"
@@ -545,7 +659,7 @@ const MainStudioApp: React.FC = () => {
                       />
                       <input
                         type="password"
-                        placeholder="OAuth Client Secret"
+                        placeholder={t('welcome_oauth_client_secret')}
                         value={welcomeClientSecret}
                         onChange={(e) =>
                           setWelcomeClientSecret(e.target.value)
@@ -558,7 +672,7 @@ const MainStudioApp: React.FC = () => {
                           checked={welcomeStoreLocally}
                           onChange={(e) => setWelcomeStoreLocally(e.target.checked)}
                         />
-                        <span>Store API keys locally in encrypted file (DPAPI &bull; never sent to GitHub)</span>
+                        <span>{t('welcome_store_locally_checkbox')}</span>
                       </label>
                     </div>
                     <div className="inline-auth-actions">
@@ -579,7 +693,7 @@ const MainStudioApp: React.FC = () => {
                       >
                         <ShieldCheck size={15} />
                         <span>
-                          {authBusy ? 'Authorizing...' : 'Authorize via OAuth2'}
+                          {authBusy ? t('welcome_btn_authorizing') : t('welcome_btn_authorize')}
                         </span>
                       </button>
                       <button
@@ -587,7 +701,7 @@ const MainStudioApp: React.FC = () => {
                         onClick={() => setActiveTab('settings')}
                       >
                         <Settings size={14} />
-                        <span>Open Full Settings</span>
+                        <span>{t('welcome_btn_open_settings')}</span>
                       </button>
                     </div>
                   </div>
@@ -598,29 +712,18 @@ const MainStudioApp: React.FC = () => {
             <div className="welcome-features-grid">
               <div className="feature-mini-card">
                 <LineChart size={18} />
-                <h4>Multi-Curve Flexible Charting</h4>
-                <p>
-                  Compare up to 6 curves across indoor, outdoor, wind, and rain
-                  modules with dual Y-axes, stacked panels, moving averages, and
-                  CSV export.
-                </p>
+                <h4>{t('welcome_feature_2_title')}</h4>
+                <p>{t('welcome_feature_2_desc')}</p>
               </div>
               <div className="feature-mini-card">
                 <Database size={18} />
-                <h4>Fast Local SQLite Engine</h4>
-                <p>
-                  Lightweight <code>WITHOUT ROWID</code> time-series storage.
-                  Default 14-day history, expandable up to all history since
-                  station setup.
-                </p>
+                <h4>{t('welcome_feature_1_title')}</h4>
+                <p>{t('welcome_feature_1_desc')}</p>
               </div>
               <div className="feature-mini-card">
                 <LayoutGrid size={18} />
-                <h4>Windows Taskbar Widget</h4>
-                <p>
-                  Always-on-top compact taskbar bar & system tray icon displaying
-                  live temperatures, CO₂, rain, and 24h mini sparklines.
-                </p>
+                <h4>{t('welcome_feature_3_title')}</h4>
+                <p>{t('welcome_feature_3_desc')}</p>
               </div>
             </div>
           </div>
@@ -641,13 +744,13 @@ const MainStudioApp: React.FC = () => {
                     className="banner-exit-btn"
                     onClick={() => handleLogout(false)}
                   >
-                    Exit Demo
+                    {t('exit_demo')}
                   </button>
                   <button
                     className="banner-login-btn"
                     onClick={handleStartWebLogin}
                   >
-                    <Globe size={13} /> Sign in with Real Netatmo Account
+                    <Globe size={13} /> {t('welcome_btn_web')}
                   </button>
                 </div>
               </div>
