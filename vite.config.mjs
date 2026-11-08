@@ -28,14 +28,14 @@ function getGitVersionInfo() {
     }
     const buildNum = Number.parseInt(count, 10) || 1;
     return {
-      version: `0.1.${buildNum}`,
+      version: `0.2.${buildNum}`,
       build: buildNum,
       commit: hash,
       date: dateStr,
     };
   } catch {
     return {
-      version: '0.1.1',
+      version: '0.2.0',
       build: 1,
       commit: 'dev',
       date: new Date().toISOString().split('T')[0],

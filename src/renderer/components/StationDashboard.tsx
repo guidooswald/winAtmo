@@ -80,7 +80,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
     commit: string;
     date: string;
   }>({
-    version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.1.1',
+    version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.2.0',
     build: typeof __APP_BUILD__ !== 'undefined' ? __APP_BUILD__ : 1,
     commit: typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'main',
     date: typeof __APP_DATE__ !== 'undefined' ? __APP_DATE__ : '2026-10-24',
