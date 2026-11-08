@@ -1609,6 +1609,79 @@ app.whenReady().then(async () => {
   setupRefreshSchedule();
   setupTokenAutoUpdate();
 
+  if (process.env.WINATMO_CAPTURE_STORE_SCREENSHOTS === '1') {
+    setTimeout(async () => {
+      try {
+        console.log('[Store Screenshots] Enabling demo mode for screenshots...');
+        await client.enableDemoMode();
+        if (mainWindow) {
+          mainWindow.setContentSize(1920, 1080);
+          mainWindow.center();
+          mainWindow.show();
+        }
+        const outDir = path.join(process.cwd(), 'dist/store-assets/screenshots');
+        fs.mkdirSync(outDir, { recursive: true });
+
+        const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+        await sleep(3000);
+
+        // 1. Dashboard
+        console.log('[Store Screenshots] Capturing 01-dashboard.png (1920x1080)...');
+        let rawImage = await mainWindow!.webContents.capturePage();
+        let exactImage = rawImage.resize({ width: 1920, height: 1080, quality: 'best' });
+        fs.writeFileSync(path.join(outDir, '01-dashboard.png'), exactImage.toPNG());
+
+        // 2. Diagnostics
+        console.log('[Store Screenshots] Switching to Diagnostics and capturing 02-diagnostics.png...');
+        await mainWindow!.webContents.executeJavaScript(`
+          const pills = document.querySelectorAll('.pill-btn');
+          if (pills && pills[3]) pills[3].click();
+        `);
+        await sleep(1500);
+        rawImage = await mainWindow!.webContents.capturePage();
+        exactImage = rawImage.resize({ width: 1920, height: 1080, quality: 'best' });
+        fs.writeFileSync(path.join(outDir, '02-diagnostics.png'), exactImage.toPNG());
+
+        // 3. Charts
+        console.log('[Store Screenshots] Switching to Charts and capturing 03-charts.png...');
+        await mainWindow!.webContents.executeJavaScript(`
+          const tabs = document.querySelectorAll('.nav-tab-btn');
+          if (tabs && tabs[1]) tabs[1].click();
+        `);
+        await sleep(3000);
+        rawImage = await mainWindow!.webContents.capturePage();
+        exactImage = rawImage.resize({ width: 1920, height: 1080, quality: 'best' });
+        fs.writeFileSync(path.join(outDir, '03-charts.png'), exactImage.toPNG());
+
+        // 4. Settings
+        console.log('[Store Screenshots] Switching to Settings and capturing 04-settings.png...');
+        await mainWindow!.webContents.executeJavaScript(`
+          (() => {
+            const tabs = document.querySelectorAll('.nav-tab-btn');
+            if (tabs && tabs[2]) {
+              tabs[2].click();
+              return true;
+            }
+            return false;
+          })()
+        `);
+        await sleep(2000);
+        rawImage = await mainWindow!.webContents.capturePage();
+        exactImage = rawImage.resize({ width: 1920, height: 1080, quality: 'best' });
+        fs.writeFileSync(path.join(outDir, '04-settings.png'), exactImage.toPNG());
+
+        console.log('[Store Screenshots] All 1920x1080 store screenshots captured successfully!');
+        isQuitting = true;
+        app.quit();
+      } catch (err) {
+        console.error('[Store Screenshots] Error capturing screenshots:', err);
+        isQuitting = true;
+        app.quit();
+      }
+    }, 1500);
+    return;
+  }
+
   // Ensure OS startup registration reflects current user setting
   if (store.getSettings().launchOnStartup) {
     applyStartupRegistration(true);
