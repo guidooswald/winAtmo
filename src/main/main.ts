@@ -1773,6 +1773,17 @@ function registerIpcHandlers(): void {
     } catch {}
   });
 
+  // Netatmo Security (Cameras & Event List) IPC
+  ipcMain.handle(
+    'security:get-data',
+    async (
+      _e,
+      options?: { homeId?: string; size?: number; offsetEventId?: string }
+    ) => {
+      return client.fetchSecurityData(options);
+    }
+  );
+
   // Debug Console Window & Telemetry IPC
   ipcMain.on('debug:open-window', () => {
     createOrShowDebugWindow();

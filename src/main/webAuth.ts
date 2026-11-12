@@ -299,7 +299,8 @@ export class WebAuthManager {
     }
 
     const state = crypto.randomBytes(16).toString('hex');
-    const scopes = 'read_station read_homecoach read_thermostat';
+    const scopes =
+      'read_station read_homecoach read_thermostat read_camera read_presence read_doorbell';
 
     return new Promise((resolve) => {
       let resolved = false;

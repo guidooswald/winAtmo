@@ -10,6 +10,12 @@ import {
   MetricType,
   ModuleType,
   NetatmoScale,
+  SecurityCamera,
+  SecurityDataPayload,
+  SecurityEvent,
+  SecurityHome,
+  SecurityPerson,
+  SecuritySubEvent,
   StationModule,
   StoredCookie,
   SyncProgress,
@@ -1941,6 +1947,545 @@ export class NetatmoClient {
     return {
       account: this.store.getAccountInfo(),
       stations: [demoStation],
+    };
+  }
+
+  /**
+   * Strips lightweight HTML formatting tags (such as <b>Name</b>) returned in Netatmo event messages.
+   */
+  private cleanEventMessage(raw: any): string {
+    if (!raw || typeof raw !== 'string') return '';
+    return raw.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  private isCameraModuleType(type?: string): boolean {
+    if (!type) return false;
+    return (
+      type === 'NACamera' ||
+      type === 'NOC' ||
+      type === 'NOC2' ||
+      type === 'NDB' ||
+      type === 'NPC'
+    );
+  }
+
+  private normalizeSecurityEvent(
+    raw: any,
+    homeId: string,
+    homeName: string,
+    cameraNamesById: Map<string, string>,
+    personsById: Map<string, string>
+  ): SecurityEvent {
+    const rawSubEvents: any[] = Array.isArray(raw.subevents) ? raw.subevents : [];
+    const subEvents: SecuritySubEvent[] = rawSubEvents.map((se) => ({
+      id: se.id ? String(se.id) : undefined,
+      type: String(se.type || raw.type || 'event'),
+      time: Number(se.time || raw.time || 0),
+      offset: se.offset !== undefined ? Number(se.offset) : undefined,
+      message: this.cleanEventMessage(se.message),
+      snapshotUrl: se.snapshot?.url,
+      snapshotExpiresAt: se.snapshot?.expires_at || se.snapshot?.expire_at,
+      vignetteUrl: se.vignette?.url,
+      personId: se.person_id ? String(se.person_id) : undefined,
+    }));
+
+    const firstSubWithSnapshot = subEvents.find((se) => se.snapshotUrl || se.vignetteUrl);
+    const snapshotUrl =
+      raw.snapshot?.url || firstSubWithSnapshot?.snapshotUrl;
+    const vignetteUrl =
+      raw.vignette?.url || firstSubWithSnapshot?.vignetteUrl;
+    const snapshotExpiresAt =
+      raw.snapshot?.expires_at ||
+      raw.snapshot?.expire_at ||
+      firstSubWithSnapshot?.snapshotExpiresAt;
+
+    const cameraId = raw.camera_id || raw.module_id || raw.device_id;
+    const personId =
+      raw.person_id || subEvents.find((se) => se.personId)?.personId;
+
+    let msg = this.cleanEventMessage(raw.message);
+    if (!msg && subEvents.length > 0) {
+      msg = subEvents
+        .map((se) => se.message)
+        .filter(Boolean)
+        .join(' • ');
+    }
+    if (!msg) {
+      msg = String(raw.type || 'Security event');
+    }
+
+    return {
+      id: String(raw.id || `${homeId}-${raw.time}-${Math.random()}`),
+      homeId,
+      homeName,
+      cameraId: cameraId ? String(cameraId) : undefined,
+      cameraName: cameraId
+        ? cameraNamesById.get(String(cameraId)) || String(cameraId)
+        : undefined,
+      type: String(raw.type || 'unknown'),
+      subType: raw.sub_type !== undefined ? Number(raw.sub_type) : undefined,
+      time: Number(raw.time || 0),
+      category: raw.category ? String(raw.category) : undefined,
+      message: msg,
+      personId: personId ? String(personId) : undefined,
+      personName: personId ? personsById.get(String(personId)) : undefined,
+      snapshotUrl,
+      snapshotExpiresAt: snapshotExpiresAt ? Number(snapshotExpiresAt) : undefined,
+      vignetteUrl,
+      videoId: raw.video_id ? String(raw.video_id) : undefined,
+      videoStatus: raw.video_status ? String(raw.video_status) : undefined,
+      subEvents: subEvents.length > 0 ? subEvents : undefined,
+    };
+  }
+
+  /**
+   * Fetches Netatmo Security homes, live camera hardware status, and event timeline.
+   */
+  public async fetchSecurityData(options?: {
+    homeId?: string;
+    size?: number;
+    offsetEventId?: string;
+  }): Promise<SecurityDataPayload> {
+    const session = this.store.getSession();
+    if (!session.loggedIn) {
+      return { homes: [], events: [], fetchedAt: Date.now() };
+    }
+
+    if (session.authMethod === 'demo') {
+      return this.getDemoSecurityData();
+    }
+
+    const size = options?.size ?? 40;
+    const homes: SecurityHome[] = [];
+    const allEvents: SecurityEvent[] = [];
+    const cameraNamesById = new Map<string, string>();
+    const personsById = new Map<string, string>();
+
+    try {
+      const homesResp = await this.apiGet(
+        'homesdata',
+        {},
+        false,
+        'Security: discover homes & cameras'
+      );
+      const rawHomes: any[] = Array.isArray(homesResp?.body?.homes)
+        ? homesResp.body.homes
+        : [];
+
+      for (const h of rawHomes) {
+        const homeId = String(h.id);
+        const homeName = String(h.name || 'Home');
+        if (options?.homeId && options.homeId !== homeId) {
+          continue;
+        }
+
+        const roomNamesById = new Map<string, string>();
+        for (const r of Array.isArray(h.rooms) ? h.rooms : []) {
+          roomNamesById.set(String(r.id), String(r.name || ''));
+        }
+
+        const persons: SecurityPerson[] = (Array.isArray(h.persons) ? h.persons : []).map(
+          (p: any) => {
+            const pid = String(p.id);
+            const pname = p.pseudo ? String(p.pseudo) : undefined;
+            if (pname) personsById.set(pid, pname);
+            return {
+              id: pid,
+              homeId,
+              pseudo: pname,
+              outOfSight: p.out_of_sight,
+              lastSeen: p.last_seen,
+              faceUrl: p.face?.url,
+            };
+          }
+        );
+
+        const cameras: SecurityCamera[] = [];
+        for (const m of Array.isArray(h.modules) ? h.modules : []) {
+          if (!this.isCameraModuleType(m.type)) continue;
+          const cid = String(m.id);
+          const cname = String(m.name || m.type || cid);
+          cameraNamesById.set(cid, cname);
+          cameras.push({
+            id: cid,
+            homeId,
+            homeName,
+            name: cname,
+            type: String(m.type),
+            roomName: m.room_id ? roomNamesById.get(String(m.room_id)) : undefined,
+            lastSetup: m.setup_date,
+          });
+        }
+
+        if (cameras.length > 0) {
+          // Fetch live camera status via /api/homestatus
+          try {
+            const statusResp = await this.apiGet(
+              'homestatus',
+              { home_id: homeId },
+              false,
+              `Security status: ${homeName}`
+            );
+            const statusModules: any[] = Array.isArray(statusResp?.body?.home?.modules)
+              ? statusResp.body.home.modules
+              : [];
+            const statusById = new Map<string, any>();
+            for (const sm of statusModules) {
+              statusById.set(String(sm.id), sm);
+            }
+            for (const cam of cameras) {
+              const sm = statusById.get(cam.id);
+              if (sm) {
+                cam.monitoring = sm.monitoring;
+                cam.status = sm.status || sm.monitoring;
+                cam.sdStatus = sm.sd_status;
+                cam.alimStatus = sm.alim_status;
+                cam.wifiStrength = sm.wifi_strength;
+                cam.wifiState = sm.wifi_state;
+                cam.firmwareRevision = sm.firmware_revision;
+                cam.isLocal = sm.is_local;
+                cam.floodlight = sm.floodlight;
+                cam.sirenStatus = sm.siren_status;
+              }
+            }
+          } catch (statusErr: any) {
+            debugLogger.log(
+              'warn',
+              'Security',
+              `Could not fetch /homestatus for ${homeName}: ${statusErr?.message || statusErr}`
+            );
+          }
+
+          // Fetch event list via /api/getevents
+          try {
+            const eventsResp = await this.apiGet(
+              'getevents',
+              {
+                home_id: homeId,
+                size,
+                event_id: options?.offsetEventId,
+              },
+              false,
+              `Security events: ${homeName} (size=${size})`
+            );
+            const rawEvents: any[] =
+              eventsResp?.body?.home?.events ||
+              eventsResp?.body?.events ||
+              [];
+            for (const ev of rawEvents) {
+              allEvents.push(
+                this.normalizeSecurityEvent(
+                  ev,
+                  homeId,
+                  homeName,
+                  cameraNamesById,
+                  personsById
+                )
+              );
+            }
+          } catch (evErr: any) {
+            const msg = evErr?.message || String(evErr);
+            debugLogger.log(
+              'warn',
+              'Security',
+              `Could not fetch /getevents for ${homeName}: ${msg}`
+            );
+            if (
+              msg.includes('403') ||
+              msg.toLowerCase().includes('scope') ||
+              msg.toLowerCase().includes('forbidden')
+            ) {
+              return {
+                homes,
+                events: allEvents,
+                fetchedAt: Date.now(),
+                scopeError: msg,
+              };
+            }
+          }
+        }
+
+        if (cameras.length > 0 || persons.length > 0) {
+          homes.push({
+            id: homeId,
+            name: homeName,
+            timezone: h.timezone,
+            cameras,
+            persons,
+          });
+        }
+      }
+
+      // Fallback to classic /api/gethomedata if homesdata yielded no cameras
+      if (homes.every((h) => h.cameras.length === 0)) {
+        try {
+          const legacyResp = await this.apiGet(
+            'gethomedata',
+            options?.homeId ? { home_id: options.homeId } : {},
+            false,
+            'Security fallback: /gethomedata'
+          );
+          const legacyHomes: any[] = Array.isArray(legacyResp?.body?.homes)
+            ? legacyResp.body.homes
+            : [];
+          for (const lh of legacyHomes) {
+            const homeId = String(lh.id);
+            const homeName = String(lh.name || 'Home');
+            const persons: SecurityPerson[] = (Array.isArray(lh.persons) ? lh.persons : []).map(
+              (p: any) => {
+                const pid = String(p.id);
+                const pname = p.pseudo ? String(p.pseudo) : undefined;
+                if (pname) personsById.set(pid, pname);
+                return {
+                  id: pid,
+                  homeId,
+                  pseudo: pname,
+                  outOfSight: p.out_of_sight,
+                  lastSeen: p.last_seen,
+                  faceUrl: p.face?.url,
+                };
+              }
+            );
+            const cameras: SecurityCamera[] = (Array.isArray(lh.cameras) ? lh.cameras : []).map(
+              (c: any) => {
+                const cid = String(c.id);
+                const cname = String(c.name || c.type || cid);
+                cameraNamesById.set(cid, cname);
+                return {
+                  id: cid,
+                  homeId,
+                  homeName,
+                  name: cname,
+                  type: String(c.type || 'NACamera'),
+                  status: c.status,
+                  monitoring: c.status,
+                  sdStatus: c.sd_status,
+                  alimStatus: c.alim_status,
+                  isLocal: c.is_local,
+                };
+              }
+            );
+            for (const ev of Array.isArray(lh.events) ? lh.events : []) {
+              allEvents.push(
+                this.normalizeSecurityEvent(
+                  ev,
+                  homeId,
+                  homeName,
+                  cameraNamesById,
+                  personsById
+                )
+              );
+            }
+            if (cameras.length > 0) {
+              homes.push({
+                id: homeId,
+                name: homeName,
+                timezone: lh.place?.timezone,
+                cameras,
+                persons,
+              });
+            }
+          }
+        } catch (legacyErr: any) {
+          debugLogger.log(
+            'debug',
+            'Security',
+            `Fallback /gethomedata note: ${legacyErr?.message || legacyErr}`
+          );
+        }
+      }
+
+      allEvents.sort((a, b) => b.time - a.time);
+
+      return {
+        homes,
+        events: allEvents,
+        fetchedAt: Date.now(),
+      };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      debugLogger.log('error', 'Security', `Security fetch failed: ${msg}`);
+      if (
+        msg.includes('403') ||
+        msg.toLowerCase().includes('scope') ||
+        msg.toLowerCase().includes('forbidden') ||
+        msg.includes('401')
+      ) {
+        return {
+          homes: [],
+          events: [],
+          fetchedAt: Date.now(),
+          scopeError: msg,
+        };
+      }
+      throw err;
+    }
+  }
+
+  private getDemoSecurityData(): SecurityDataPayload {
+    const now = Math.floor(Date.now() / 1000);
+    const homeId = 'demo-home-zurich';
+    const homeName = 'Zürich Home (Demo)';
+
+    const cameras: SecurityCamera[] = [
+      {
+        id: '70:ee:50:aa:11:01',
+        homeId,
+        homeName,
+        name: 'Living Room Welcome',
+        type: 'NACamera',
+        roomName: 'Living Room',
+        monitoring: 'on',
+        status: 'on',
+        sdStatus: 4,
+        alimStatus: 2,
+        wifiStrength: 42,
+        wifiState: 'full',
+        firmwareRevision: 3026000,
+        isLocal: true,
+      },
+      {
+        id: '70:ee:50:aa:11:02',
+        homeId,
+        homeName,
+        name: 'Driveway Presence',
+        type: 'NOC',
+        roomName: 'Driveway',
+        monitoring: 'on',
+        status: 'on',
+        sdStatus: 4,
+        alimStatus: 2,
+        wifiStrength: 58,
+        wifiState: 'good',
+        firmwareRevision: 3042000,
+        floodlight: 'auto',
+        isLocal: false,
+      },
+      {
+        id: '70:ee:50:aa:11:03',
+        homeId,
+        homeName,
+        name: 'Front Doorbell',
+        type: 'NDB',
+        roomName: 'Entrance',
+        monitoring: 'on',
+        status: 'on',
+        sdStatus: 4,
+        alimStatus: 2,
+        wifiStrength: 63,
+        wifiState: 'average',
+        firmwareRevision: 1085000,
+        isLocal: false,
+      },
+    ];
+
+    const persons: SecurityPerson[] = [
+      { id: 'p-1', homeId, pseudo: 'Martin', outOfSight: false, lastSeen: now - 1400 },
+      { id: 'p-2', homeId, pseudo: 'Dana', outOfSight: true, lastSeen: now - 14400 },
+    ];
+
+    const events: SecurityEvent[] = [
+      {
+        id: 'demo-ev-1',
+        homeId,
+        homeName,
+        cameraId: cameras[1].id,
+        cameraName: cameras[1].name,
+        type: 'outdoor',
+        category: 'vehicle',
+        time: now - 420,
+        message: 'Car detected in Driveway',
+        videoId: 'demo-vid-1',
+        videoStatus: 'available',
+        subEvents: [
+          {
+            id: 'demo-sub-1',
+            type: 'vehicle',
+            time: now - 420,
+            message: 'Car detected',
+          },
+          {
+            id: 'demo-sub-2',
+            type: 'human',
+            time: now - 415,
+            message: 'Person seen near vehicle',
+          },
+        ],
+      },
+      {
+        id: 'demo-ev-2',
+        homeId,
+        homeName,
+        cameraId: cameras[0].id,
+        cameraName: cameras[0].name,
+        type: 'person',
+        category: 'human',
+        time: now - 1400,
+        message: 'Martin was seen by Living Room Welcome',
+        personId: 'p-1',
+        personName: 'Martin',
+        videoId: 'demo-vid-2',
+        videoStatus: 'available',
+      },
+      {
+        id: 'demo-ev-3',
+        homeId,
+        homeName,
+        cameraId: cameras[2].id,
+        cameraName: cameras[2].name,
+        type: 'incoming_call',
+        time: now - 5400,
+        message: 'Someone rang at Front Doorbell',
+        videoId: 'demo-vid-3',
+        videoStatus: 'available',
+      },
+      {
+        id: 'demo-ev-4',
+        homeId,
+        homeName,
+        cameraId: cameras[1].id,
+        cameraName: cameras[1].name,
+        type: 'outdoor',
+        category: 'animal',
+        time: now - 18900,
+        message: 'Animal detected in Driveway',
+        videoId: 'demo-vid-4',
+        videoStatus: 'available',
+        subEvents: [
+          {
+            id: 'demo-sub-3',
+            type: 'animal',
+            time: now - 18900,
+            message: 'Animal detected',
+          },
+        ],
+      },
+      {
+        id: 'demo-ev-5',
+        homeId,
+        homeName,
+        cameraId: cameras[0].id,
+        cameraName: cameras[0].name,
+        type: 'movement',
+        time: now - 36000,
+        message: 'Motion detected by Living Room Welcome',
+        videoId: 'demo-vid-5',
+        videoStatus: 'available',
+      },
+    ];
+
+    return {
+      homes: [
+        {
+          id: homeId,
+          name: homeName,
+          timezone: 'Europe/Zurich',
+          cameras,
+          persons,
+        },
+      ],
+      events,
+      fetchedAt: Date.now(),
     };
   }
 }

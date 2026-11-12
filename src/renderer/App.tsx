@@ -13,6 +13,7 @@ import {
   Play,
   RefreshCw,
   Settings,
+  Shield,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
@@ -26,6 +27,7 @@ import {
 } from './types';
 import { StationDashboard } from './components/StationDashboard';
 import { ChartStudio } from './components/ChartStudio';
+import { SecurityView } from './components/SecurityView';
 import { SettingsView } from './components/SettingsView';
 import { TaskbarWidget } from './components/TaskbarWidget';
 import { DebugConsoleWindow } from './components/DebugConsoleWindow';
@@ -59,9 +61,9 @@ export const App: React.FC = () => {
 };
 
 const MainStudioApp: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'charts' | 'settings'>(
-    'dashboard'
-  );
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'charts' | 'security' | 'settings'
+  >('dashboard');
   const [account, setAccount] = useState<AccountInfo>({ loggedIn: false });
   const [stations, setStations] = useState<WeatherStation[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -322,8 +324,8 @@ interface MainStudioShellProps {
   setWelcomeClientSecret: (val: string) => void;
   welcomeStoreLocally: boolean;
   setWelcomeStoreLocally: (val: boolean) => void;
-  activeTab: 'dashboard' | 'charts' | 'settings';
-  setActiveTab: (tab: 'dashboard' | 'charts' | 'settings') => void;
+  activeTab: 'dashboard' | 'charts' | 'security' | 'settings';
+  setActiveTab: (tab: 'dashboard' | 'charts' | 'security' | 'settings') => void;
   chartFocus: { moduleId: string; metric?: string } | null;
   setChartFocus: (focus: { moduleId: string; metric?: string } | null) => void;
   handleUpdateSettings: (partial: Partial<UserSettings>) => Promise<void>;
@@ -426,6 +428,13 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
           >
             <LineChart size={15} />
             <span>{t('nav_charts')}</span>
+          </button>
+          <button
+            className={`nav-tab-btn ${activeTab === 'security' ? 'active' : ''}`}
+            onClick={() => setActiveTab('security')}
+          >
+            <Shield size={15} />
+            <span>{t('nav_security')}</span>
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
@@ -780,6 +789,13 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
                 settings={settings}
                 initialFocus={chartFocus}
                 onClearFocus={() => setChartFocus(null)}
+              />
+            )}
+
+            {activeTab === 'security' && (
+              <SecurityView
+                account={account}
+                onOpenSettings={() => setActiveTab('settings')}
               />
             )}
           </>

@@ -371,3 +371,82 @@ export interface DebugStreamEvent {
   apiEntry?: ApiRequestLogEntry;
   stats: DebugTelemetryStats;
 }
+
+export type SecurityCameraType = 'NACamera' | 'NOC' | 'NDB' | string;
+
+export interface SecurityCamera {
+  id: string;
+  homeId: string;
+  homeName: string;
+  name: string;
+  type: SecurityCameraType;
+  roomName?: string;
+  monitoring?: string; // 'on' | 'off'
+  status?: string; // 'on' | 'off'
+  sdStatus?: string | number;
+  alimStatus?: string | number;
+  wifiStrength?: number;
+  wifiState?: string;
+  firmwareRevision?: number | string;
+  isLocal?: boolean;
+  floodlight?: string; // 'on' | 'off' | 'auto'
+  sirenStatus?: string;
+  lastSetup?: number;
+}
+
+export interface SecurityPerson {
+  id: string;
+  homeId: string;
+  pseudo?: string;
+  outOfSight?: boolean;
+  lastSeen?: number;
+  faceUrl?: string;
+}
+
+export interface SecuritySubEvent {
+  id?: string;
+  type: string;
+  time: number;
+  offset?: number;
+  message?: string;
+  snapshotUrl?: string;
+  snapshotExpiresAt?: number;
+  vignetteUrl?: string;
+  personId?: string;
+}
+
+export interface SecurityEvent {
+  id: string;
+  homeId: string;
+  homeName: string;
+  cameraId?: string;
+  cameraName?: string;
+  type: string;
+  subType?: number;
+  time: number;
+  category?: string;
+  message: string;
+  personId?: string;
+  personName?: string;
+  snapshotUrl?: string;
+  snapshotExpiresAt?: number;
+  vignetteUrl?: string;
+  videoId?: string;
+  videoStatus?: string;
+  subEvents?: SecuritySubEvent[];
+}
+
+export interface SecurityHome {
+  id: string;
+  name: string;
+  timezone?: string;
+  cameras: SecurityCamera[];
+  persons: SecurityPerson[];
+}
+
+export interface SecurityDataPayload {
+  homes: SecurityHome[];
+  events: SecurityEvent[];
+  fetchedAt: number;
+  scopeError?: string;
+}

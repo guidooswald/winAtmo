@@ -25,6 +25,7 @@ const EN = {
   // Navigation & General
   nav_sensors: 'Sensors',
   nav_charts: 'Charts',
+  nav_security: 'Security',
   nav_settings: 'Settings',
   taskbar_widget: 'Taskbar Widget',
   taskbar_widget_btn: 'Taskbar Widget: {status}',
@@ -253,6 +254,7 @@ export type TranslationKey = keyof typeof EN;
 const DE: Record<TranslationKey, string> = {
   nav_sensors: 'Sensoren',
   nav_charts: 'Diagramme',
+  nav_security: 'Sicherheit',
   nav_settings: 'Einstellungen',
   taskbar_widget: 'Taskleisten-Widget',
   taskbar_widget_btn: 'Taskleisten-Widget: {status}',
@@ -473,6 +475,7 @@ const DE: Record<TranslationKey, string> = {
 const FR: Record<TranslationKey, string> = {
   nav_sensors: 'Capteurs',
   nav_charts: 'Graphiques',
+  nav_security: 'Sécurité',
   nav_settings: 'Paramètres',
   taskbar_widget: 'Widget barre des tâches',
   taskbar_widget_btn: 'Widget barre des tâches : {status}',
@@ -693,6 +696,7 @@ const FR: Record<TranslationKey, string> = {
 const ES: Record<TranslationKey, string> = {
   nav_sensors: 'Sensores',
   nav_charts: 'Gráficos',
+  nav_security: 'Seguridad',
   nav_settings: 'Ajustes',
   taskbar_widget: 'Widget de barra de tareas',
   taskbar_widget_btn: 'Widget de barra de tareas: {status}',
@@ -913,6 +917,7 @@ const ES: Record<TranslationKey, string> = {
 const PT: Record<TranslationKey, string> = {
   nav_sensors: 'Sensores',
   nav_charts: 'Gráficos',
+  nav_security: 'Segurança',
   nav_settings: 'Definições',
   taskbar_widget: 'Widget da barra de tarefas',
   taskbar_widget_btn: 'Widget da barra de tarefas: {status}',
@@ -1133,6 +1138,7 @@ const PT: Record<TranslationKey, string> = {
 const IT: Record<TranslationKey, string> = {
   nav_sensors: 'Sensori',
   nav_charts: 'Grafici',
+  nav_security: 'Sicurezza',
   nav_settings: 'Impostazioni',
   taskbar_widget: 'Widget barra delle applicazioni',
   taskbar_widget_btn: 'Widget barra delle applicazioni: {status}',
@@ -1353,6 +1359,7 @@ const IT: Record<TranslationKey, string> = {
 const PL: Record<TranslationKey, string> = {
   nav_sensors: 'Czujniki',
   nav_charts: 'Wykresy',
+  nav_security: 'Bezpieczeństwo',
   nav_settings: 'Ustawienia',
   taskbar_widget: 'Widżet paska zadań',
   taskbar_widget_btn: 'Widżet paska zadań: {status}',
@@ -1573,6 +1580,7 @@ const PL: Record<TranslationKey, string> = {
 const CS: Record<TranslationKey, string> = {
   nav_sensors: 'Senzory',
   nav_charts: 'Grafy',
+  nav_security: 'Zabezpečení',
   nav_settings: 'Nastavení',
   taskbar_widget: 'Widget hlavního panelu',
   taskbar_widget_btn: 'Widget hlavního panelu: {status}',
@@ -1793,6 +1801,7 @@ const CS: Record<TranslationKey, string> = {
 const EL: Record<TranslationKey, string> = {
   nav_sensors: 'Αισθητήρες',
   nav_charts: 'Διαγράμματα',
+  nav_security: 'Ασφάλεια',
   nav_settings: 'Ρυθμίσεις',
   taskbar_widget: 'Widget γραμμής εργασιών',
   taskbar_widget_btn: 'Widget γραμμής εργασιών: {status}',

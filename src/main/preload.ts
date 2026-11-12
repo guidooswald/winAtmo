@@ -7,6 +7,7 @@ import {
   MeasureQueryStatus,
   MeasureSeries,
   NetatmoScale,
+  SecurityDataPayload,
   StorageStats,
   StoredApiKeysInfo,
   SyncProgress,
@@ -110,6 +111,13 @@ export interface WinAtmoAPI {
   updateSettings: (partial: Partial<UserSettings>) => Promise<UserSettings>;
   openExternal: (url: string) => Promise<void>;
 
+  // Netatmo Security (Cameras & Events)
+  getSecurityData: (options?: {
+    homeId?: string;
+    size?: number;
+    offsetEventId?: string;
+  }) => Promise<SecurityDataPayload>;
+
   // Debug Console & Telemetry
   openDebugWindow: () => void;
   getDebugSnapshot: () => Promise<DebugTelemetrySnapshot>;
@@ -205,6 +213,8 @@ const api: WinAtmoAPI = {
   updateSettings: (partial: Partial<UserSettings>) =>
     ipcRenderer.invoke('settings:update', partial),
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+
+  getSecurityData: (options) => ipcRenderer.invoke('security:get-data', options),
 
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),
