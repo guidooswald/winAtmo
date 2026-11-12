@@ -63,6 +63,9 @@ export const TaskbarWidget: React.FC = () => {
         window.winatmo.getSettings(),
         window.winatmo.getWidgetExpandDirection().catch(() => 'up' as const),
       ]);
+      const initialExpanded = Boolean(s?.widgetExpanded);
+      expandedRef.current = initialExpanded;
+      setExpanded(initialExpanded);
       setStations(cached.stations || []);
       setSettings(s);
       setExpandDirection(dir);
@@ -73,6 +76,13 @@ export const TaskbarWidget: React.FC = () => {
       setStations(next);
     });
     const unsubSettings = window.winatmo.onSettingsUpdated((next) => {
+      if (next.widgetExpanded !== undefined) {
+        const nextExp = Boolean(next.widgetExpanded);
+        if (nextExp !== expandedRef.current) {
+          expandedRef.current = nextExp;
+          setExpanded(nextExp);
+        }
+      }
       setSettings(next);
     });
     const unsubDirection = window.winatmo.onWidgetDirectionUpdated((dir) => {
@@ -181,7 +191,7 @@ export const TaskbarWidget: React.FC = () => {
       : Math.max(settings.widgetSize.width, minContentWidth);
 
     const targetHeight = expandedRef.current
-      ? 215
+      ? (settings.widgetExpandedSize?.height || 215)
       : ((isRecentThemeChange || !settings.widgetSize?.height)
           ? defaultCollapsedHeight
           : Math.max(settings.widgetSize.height, defaultCollapsedHeight));
@@ -304,7 +314,7 @@ export const TaskbarWidget: React.FC = () => {
     const onMove = (e: MouseEvent) => {
       if (!resizeRef.current.resizing) return;
       const isCompact = settings?.theme?.startsWith('compact');
-      const minH = isCompact ? 34 : 42;
+      const minH = expandedRef.current ? 140 : isCompact ? 34 : 42;
       const nextW = Math.max(
         120,
         resizeRef.current.startW + (e.screenX - resizeRef.current.startX)

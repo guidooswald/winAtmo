@@ -280,6 +280,8 @@ export interface UserSettings {
   widgetCompact: boolean;
   widgetPosition?: { x: number; y: number };
   widgetSize?: { width: number; height: number };
+  widgetExpanded?: boolean;
+  widgetExpandedSize?: { width: number; height: number };
   mainWindowBounds?: MainWindowBounds;
   pinnedSensors: PinnedSensorItem[];
   taskbarDisplayMode: 'sensor' | 'icon'; // Default 'sensor' (show sensor reading instead of icon in taskbar)

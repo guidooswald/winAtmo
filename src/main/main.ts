@@ -264,20 +264,27 @@ let widgetSizeSaveTimeout: NodeJS.Timeout | null = null;
 function saveWidgetSize(): void {
   if (!widgetWindow || widgetWindow.isDestroyed()) return;
   const [w, h] = widgetWindow.getContentSize();
+  const [x, y] = widgetWindow.getPosition();
   const settings = store.getSettings();
   const isCompact = settings.theme?.startsWith('compact');
   const defaultCollapsedHeight = isCompact ? 34 : 42;
 
   if (!isWidgetExpanded) {
     store.updateSettings({
+      widgetExpanded: false,
       widgetSize: { width: w, height: h },
+      widgetPosition: { x, y },
     });
   } else {
     const cur = settings.widgetSize;
     const collapsedH = collapsedBoundsBeforeExpand?.height || cur?.height || defaultCollapsedHeight;
     const collapsedW = collapsedBoundsBeforeExpand?.width || cur?.width || w;
+    const colY = widgetExpandDirection === 'down' ? y : y + h - collapsedH;
     store.updateSettings({
+      widgetExpanded: true,
+      widgetExpandedSize: { width: w, height: h },
       widgetSize: { width: collapsedW, height: collapsedH },
+      widgetPosition: { x, y: colY },
     });
   }
 }
@@ -501,22 +508,32 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
 
   const savedW = settings.widgetSize?.width;
   const savedH = settings.widgetSize?.height;
+  const collapsedH = savedH ? Math.max(30, Math.round(savedH)) : defaultCollapsedHeight;
 
   let width: number;
   let height: number;
 
   if (expanded) {
+    const savedExpW = settings.widgetExpandedSize?.width;
+    const savedExpH = settings.widgetExpandedSize?.height;
     width = Math.min(
       workArea.width,
-      savedW ? Math.max(120, Math.round(savedW)) : minSensorsWidth
+      savedExpW
+        ? Math.max(120, Math.round(savedExpW))
+        : savedW
+          ? Math.max(120, Math.round(savedW))
+          : minSensorsWidth
     );
-    height = 215;
+    height = Math.min(
+      workArea.height - 8,
+      savedExpH ? Math.max(140, Math.round(savedExpH)) : 215
+    );
   } else {
     width = Math.min(
       workArea.width,
       savedW ? Math.max(120, Math.round(savedW)) : minSensorsWidth
     );
-    height = savedH ? Math.max(30, Math.round(savedH)) : defaultCollapsedHeight;
+    height = Math.min(workArea.height - 8, collapsedH);
   }
 
   // Exact saved position if available
@@ -531,7 +548,9 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
 
   let x = saved ? saved.x : workArea.x + workArea.width - width - 16;
   let y = saved
-    ? (expanded ? ExpandedYAdjustment(saved.y, height, workArea) : saved.y)
+    ? expanded
+      ? ExpandedYAdjustment(saved.y, collapsedH, height, workArea)
+      : saved.y
     : workArea.y + workArea.height - height - 8;
 
   // Ensure inside visible bounds of this specific screen without artificial offsets
@@ -541,7 +560,10 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
   return { x, y, width, height };
 }
 
-function getOptimalExpandDirection(win: BrowserWindow): 'up' | 'down' {
+function getOptimalExpandDirection(
+  win: BrowserWindow,
+  expandedHeight = store?.getSettings()?.widgetExpandedSize?.height || 215
+): 'up' | 'down' {
   const [curX, curY] = win.getPosition();
   const [curW, curH] = win.getContentSize();
   const centerPoint = {
@@ -555,7 +577,7 @@ function getOptimalExpandDirection(win: BrowserWindow): 'up' | 'down' {
   const screenMidY = workArea.y + workArea.height / 2;
   const roomAbove = curY - workArea.y;
   const roomBelow = workArea.y + workArea.height - (curY + curH);
-  const neededRoom = 215 - curH;
+  const neededRoom = Math.max(140, expandedHeight) - curH;
 
   if (centerY < screenMidY) {
     return roomBelow >= neededRoom || roomBelow >= roomAbove ? 'down' : 'up';
@@ -566,11 +588,14 @@ function getOptimalExpandDirection(win: BrowserWindow): 'up' | 'down' {
 
 function ExpandedYAdjustment(
   savedY: number,
+  collapsedHeight: number,
   targetHeight: number,
   workArea: Electron.Rectangle
 ): number {
   if (savedY + targetHeight > workArea.y + workArea.height - 4) {
-    return workArea.y + workArea.height - targetHeight - 8;
+    // Expand upwards keeping the bottom edge aligned with the collapsed bar
+    const bottomEdge = savedY + collapsedHeight;
+    return Math.max(workArea.y + 4, bottomEdge - targetHeight);
   }
   return savedY;
 }
@@ -586,6 +611,11 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     return;
   }
 
+  // Restore saved expanded state when creating window cleanly
+  if (!widgetWindow || widgetWindow.isDestroyed()) {
+    isWidgetExpanded = Boolean(settings.widgetExpanded);
+  }
+
   const bounds = getDefaultWidgetBounds(isWidgetExpanded);
 
   if (widgetWindow && !widgetWindow.isDestroyed()) {
@@ -594,7 +624,7 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     // Keep OS window opacity at 1.0 so Windows DWM does not draw a layered rectangular box;
     // transparency is controlled per-pixel via CSS rgba() in TaskbarWidget.tsx.
     widgetWindow.setOpacity(1.0);
-    if (autoSizeForSensors) {
+    if (autoSizeForSensors && !isWidgetExpanded) {
       widgetTargetSize = { width: bounds.width, height: bounds.height };
       const cur = widgetWindow.getBounds();
       const display = screen.getDisplayNearestPoint({
@@ -653,6 +683,31 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     show: false,
   });
 
+  if (isWidgetExpanded) {
+    const isCompact = settings.theme?.startsWith('compact');
+    const defaultCollapsedH = isCompact ? 34 : 42;
+    const colW = settings.widgetSize?.width || bounds.width;
+    const colH = settings.widgetSize?.height || defaultCollapsedH;
+    const display = screen.getDisplayNearestPoint({
+      x: Math.round(bounds.x + bounds.width / 2),
+      y: Math.round(bounds.y + bounds.height / 2),
+    });
+    const workArea = display.workArea;
+    widgetExpandDirection = getOptimalExpandDirection(widgetWindow, bounds.height);
+    const colY =
+      widgetExpandDirection === 'down'
+        ? bounds.y
+        : Math.max(workArea.y, bounds.y + bounds.height - colH);
+    collapsedBoundsBeforeExpand = {
+      x: bounds.x,
+      y: colY,
+      width: colW,
+      height: colH,
+    };
+  } else {
+    collapsedBoundsBeforeExpand = null;
+  }
+
   widgetWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   widgetWindow.setAlwaysOnTop(settings.widgetAlwaysOnTop, 'pop-up-menu');
@@ -685,11 +740,21 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
     moveSaveTimeout = setTimeout(() => {
       if (!widgetWindow || widgetWindow.isDestroyed()) return;
       const [x, y] = widgetWindow.getPosition();
+      const [curW, curH] = widgetWindow.getContentSize();
       if (!isWidgetExpanded) {
         store.updateSettings({ widgetPosition: { x, y } });
         const dir = getOptimalExpandDirection(widgetWindow);
         widgetExpandDirection = dir;
         widgetWindow.webContents.send('widget:direction-updated', dir);
+      } else {
+        const curSettings = store.getSettings();
+        const isCompact = curSettings.theme?.startsWith('compact');
+        const colH =
+          collapsedBoundsBeforeExpand?.height ||
+          curSettings.widgetSize?.height ||
+          (isCompact ? 34 : 42);
+        const colY = widgetExpandDirection === 'down' ? y : y + curH - colH;
+        store.updateSettings({ widgetPosition: { x, y: colY } });
       }
     }, 250);
   });
@@ -932,12 +997,17 @@ function updateTrayTooltipAndMenu(): void {
     {
       label: 'Reset Taskbar Widget Position',
       click: () => {
+        isWidgetExpanded = false;
+        collapsedBoundsBeforeExpand = null;
         const next = store.updateSettings({
           widgetPosition: undefined,
           widgetSize: undefined,
+          widgetExpanded: false,
+          widgetExpandedSize: undefined,
         });
         if (widgetWindow && !widgetWindow.isDestroyed()) {
           const b = getDefaultWidgetBounds(false);
+          widgetTargetSize = { width: b.width, height: b.height };
           widgetWindow.setBounds(b);
         }
         broadcastToAllWindows('settings:updated', next);
@@ -1115,12 +1185,16 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('widget:reset-position', () => {
+    isWidgetExpanded = false;
+    collapsedBoundsBeforeExpand = null;
     const updated = store.updateSettings({
       widgetPosition: undefined,
       widgetSize: undefined,
+      widgetExpanded: false,
+      widgetExpandedSize: undefined,
     });
     if (widgetWindow && !widgetWindow.isDestroyed()) {
-      const b = getDefaultWidgetBounds(isWidgetExpanded);
+      const b = getDefaultWidgetBounds(false);
       widgetTargetSize = { width: b.width, height: b.height };
       widgetWindow.setContentSize(b.width, b.height);
       widgetWindow.setPosition(b.x, b.y);
@@ -1139,6 +1213,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('widget:set-expanded', (_e, expanded: boolean): 'up' | 'down' => {
     if (!widgetWindow || widgetWindow.isDestroyed()) {
       isWidgetExpanded = expanded;
+      store.updateSettings({ widgetExpanded: expanded });
       return widgetExpandDirection;
     }
 
@@ -1149,7 +1224,7 @@ function registerIpcHandlers(): void {
       y: Math.round(curY + curH / 2),
     });
     const workArea = display.workArea;
-    const expandedHeight = 215;
+    const curSettings = store.getSettings();
 
     if (expanded) {
       // Save exact collapsed bounds before expanding so we can restore them when closing charts
@@ -1160,12 +1235,24 @@ function registerIpcHandlers(): void {
           width: curW,
           height: curH,
         };
-        widgetExpandDirection = getOptimalExpandDirection(widgetWindow);
+      }
+
+      const savedExp = curSettings.widgetExpandedSize;
+      const expandedHeight = savedExp?.height
+        ? Math.min(workArea.height - 8, Math.max(140, Math.round(savedExp.height)))
+        : 215;
+      const baseCollapsedW = collapsedBoundsBeforeExpand
+        ? collapsedBoundsBeforeExpand.width
+        : curW;
+      const targetWidth = savedExp?.width
+        ? Math.min(workArea.width - 8, Math.max(120, Math.round(savedExp.width)))
+        : baseCollapsedW;
+
+      if (!isWidgetExpanded) {
+        widgetExpandDirection = getOptimalExpandDirection(widgetWindow, expandedHeight);
       }
 
       isWidgetExpanded = true;
-      const targetWidth = collapsedBoundsBeforeExpand ? collapsedBoundsBeforeExpand.width : curW;
-      // Keep current width strictly fixed (never resize width when expanding)
       widgetTargetSize = { width: targetWidth, height: expandedHeight };
 
       let newY: number;
@@ -1193,14 +1280,32 @@ function registerIpcHandlers(): void {
         width: targetWidth,
         height: expandedHeight,
       });
+
+      const updated = store.updateSettings({
+        widgetExpanded: true,
+        widgetSize: collapsedBoundsBeforeExpand
+          ? {
+              width: collapsedBoundsBeforeExpand.width,
+              height: collapsedBoundsBeforeExpand.height,
+            }
+          : curSettings.widgetSize,
+        widgetExpandedSize: { width: targetWidth, height: expandedHeight },
+      });
+      broadcastToAllWindows('settings:updated', updated);
     } else {
-      // Closing charts: restore the initial collapsed position & size before expanding
+      // Closing charts: persist current expanded size, then restore collapsed bounds
+      const prevExpandedSize = isWidgetExpanded
+        ? { width: curW, height: curH }
+        : curSettings.widgetExpandedSize;
+
       const savedCollapsed = collapsedBoundsBeforeExpand;
-      const curSettings = store.getSettings();
       const isCompact = curSettings.theme?.startsWith('compact');
       const defaultH = isCompact ? 34 : 42;
-      const collapsedH = savedCollapsed ? savedCollapsed.height : defaultH;
-      const targetWidth = savedCollapsed ? savedCollapsed.width : curW;
+      const collapsedH =
+        savedCollapsed?.height || curSettings.widgetSize?.height || defaultH;
+      const targetWidth =
+        savedCollapsed?.width || curSettings.widgetSize?.width || curW;
+
       isWidgetExpanded = false;
       widgetTargetSize = { width: targetWidth, height: collapsedH };
 
@@ -1238,10 +1343,13 @@ function registerIpcHandlers(): void {
         width: targetWidth,
         height: collapsedH,
       });
-      store.updateSettings({
+      const updated = store.updateSettings({
+        widgetExpanded: false,
+        widgetExpandedSize: prevExpandedSize,
         widgetPosition: { x: newX, y: restoreY },
         widgetSize: { width: targetWidth, height: collapsedH },
       });
+      broadcastToAllWindows('settings:updated', updated);
     }
 
     return widgetExpandDirection;
@@ -1273,8 +1381,12 @@ function registerIpcHandlers(): void {
       });
       const workArea = display.workArea;
       const maxW = Math.max(120, workArea.width);
+      const minH = isWidgetExpanded ? 140 : 30;
       const w = Math.min(maxW, Math.max(120, Math.round(size.width)));
-      const h = Math.max(30, Math.round(size.height));
+      const h = Math.min(
+        Math.max(minH, workArea.height - 8),
+        Math.max(minH, Math.round(size.height))
+      );
       widgetTargetSize = { width: w, height: h };
 
       let nextX = curX;
@@ -1284,9 +1396,16 @@ function registerIpcHandlers(): void {
         nextX = workArea.x;
       }
 
+      let nextY = curY;
+      if (nextY + h > workArea.y + workArea.height) {
+        nextY = Math.max(workArea.y, workArea.y + workArea.height - h);
+      } else if (nextY < workArea.y) {
+        nextY = workArea.y;
+      }
+
       widgetWindow.setBounds({
         x: nextX,
-        y: curY,
+        y: nextY,
         width: w,
         height: h,
       });

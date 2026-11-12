@@ -2992,6 +2992,8 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 8px;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .flyout-sensor-card {
