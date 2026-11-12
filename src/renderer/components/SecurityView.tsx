@@ -497,6 +497,40 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
 
     loadInitial();
 
+    const unsubUpdated =
+      typeof window.winatmo?.onSecurityUpdated === 'function'
+        ? window.winatmo.onSecurityUpdated((payload) => {
+            if (cancelled) return;
+            setData((prev) => {
+              if (!prev) return payload;
+              const prevSnapById = new Map<string, string>();
+              for (const e of prev.events) {
+                if (e.snapshotUrl?.startsWith('data:')) {
+                  prevSnapById.set(e.id, e.snapshotUrl);
+                }
+              }
+              if (prevSnapById.size === 0) return payload;
+              return {
+                ...payload,
+                events: payload.events.map((ev) => {
+                  if (
+                    !ev.snapshotUrl?.startsWith('data:') &&
+                    prevSnapById.has(ev.id)
+                  ) {
+                    const cachedData = prevSnapById.get(ev.id)!;
+                    return {
+                      ...ev,
+                      snapshotUrl: cachedData,
+                      vignetteUrl: cachedData,
+                    };
+                  }
+                  return ev;
+                }),
+              };
+            });
+          })
+        : undefined;
+
     const unsubCleared =
       typeof window.winatmo?.onSecurityCleared === 'function'
         ? window.winatmo.onSecurityCleared(() => {
@@ -508,6 +542,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
 
     return () => {
       cancelled = true;
+      unsubUpdated?.();
       unsubCleared?.();
     };
   }, [account.loggedIn, account.authMethod, loadSecurity]);

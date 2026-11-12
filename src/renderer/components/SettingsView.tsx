@@ -710,15 +710,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="select-input"
                 >
                   <option value={2}>Refresh every 2 min</option>
-                  <option value={5}>Refresh every 5 min (Default)</option>
-                  <option value={10}>Refresh every 10 min</option>
+                  <option value={5}>Refresh every 5 min</option>
+                  <option value={10}>Refresh every 10 min (Default)</option>
                   <option value={15}>Refresh every 15 min</option>
                   <option value={30}>Refresh every 30 min</option>
                 </select>
               </div>
               <small className="field-hint">
-                Netatmo Weather Stations upload measurements to the Netatmo Cloud
-                approximately every 10 minutes.
+                Netatmo Weather Stations upload measurements approximately every
+                10 minutes. This cycle also refreshes Security camera status &amp;
+                unseen events.
               </small>
             </div>
           </div>

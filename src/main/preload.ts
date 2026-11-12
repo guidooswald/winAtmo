@@ -178,6 +178,7 @@ export interface WinAtmoAPI {
     cb: (payload: { moduleId: string; metric?: string }) => void
   ) => () => void;
   onDebugStream: (cb: (event: DebugStreamEvent) => void) => () => void;
+  onSecurityUpdated: (cb: (payload: SecurityDataPayload) => void) => () => void;
   onSecurityCleared: (cb: () => void) => () => void;
 }
 
@@ -322,6 +323,11 @@ const api: WinAtmoAPI = {
     const handler = (_e: any, event: DebugStreamEvent) => cb(event);
     ipcRenderer.on('debug:stream', handler);
     return () => ipcRenderer.removeListener('debug:stream', handler);
+  },
+  onSecurityUpdated: (cb) => {
+    const handler = (_e: any, payload: SecurityDataPayload) => cb(payload);
+    ipcRenderer.on('security:updated', handler);
+    return () => ipcRenderer.removeListener('security:updated', handler);
   },
   onSecurityCleared: (cb) => {
     const handler = () => cb();

@@ -1118,7 +1118,7 @@ function setupRefreshSchedule(): void {
     refreshTimer = null;
   }
 
-  const minutes = Math.max(1, store.getSettings().refreshIntervalMinutes || 5);
+  const minutes = Math.max(1, store.getSettings().refreshIntervalMinutes || 10);
   refreshTimer = setInterval(async () => {
     const session = store.getSession();
     if (!session.loggedIn) return;
@@ -1135,6 +1135,13 @@ function setupRefreshSchedule(): void {
       updateTrayTooltipAndMenu();
     } catch (err) {
       console.warn('[Main] Scheduled refresh error:', err);
+    }
+
+    try {
+      const securityPayload = await client.fetchSecurityData({ size: 40 });
+      broadcastToAllWindows('security:updated', securityPayload);
+    } catch (secErr) {
+      console.warn('[Main] Scheduled security refresh error:', secErr);
     }
   }, minutes * 60 * 1000);
 }
@@ -2109,6 +2116,12 @@ app.whenReady().then(async () => {
         broadcastToAllWindows('stations:updated', store.getCachedStations());
         updateTrayTooltipAndMenu();
       });
+      client
+        .fetchSecurityData({ size: 40 })
+        .then((securityPayload) => {
+          broadcastToAllWindows('security:updated', securityPayload);
+        })
+        .catch(() => {});
     }, 800);
   }
 });

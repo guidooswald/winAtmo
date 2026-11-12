@@ -72,7 +72,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   historyDays: 14, // Default 14 days as requested
   historyMaxMode: false, // Can be toggled in settings to load up to Netatmo's maximum (since station setup)
   defaultScale: '30min',
-  refreshIntervalMinutes: 5,
+  refreshIntervalMinutes: 10,
   temperatureUnit: 'C',
   pressureUnit: 'mbar',
   windUnit: 'kph',
@@ -225,10 +225,37 @@ export class AppStore {
           ? parsed.cachedStations
           : [];
         const normalizedStations = this.normalizeStations(rawStations);
+        const parsedSettings = parsed.settings || {};
         const settings: UserSettings = {
           ...DEFAULT_SETTINGS,
-          ...(parsed.settings || {}),
+          ...parsedSettings,
         };
+
+        // Migrate legacy 5-minute default to the new 10-minute default once
+        if (!(parsed as any).migratedDefaultRefresh10) {
+          if (parsedSettings.refreshIntervalMinutes === 5) {
+            settings.refreshIntervalMinutes = 10;
+          }
+          (parsed as any).migratedDefaultRefresh10 = true;
+          try {
+            fs.writeFileSync(
+              this.filePath,
+              JSON.stringify(
+                {
+                  ...parsed,
+                  migratedDefaultRefresh10: true,
+                  settings: {
+                    ...parsedSettings,
+                    refreshIntervalMinutes: settings.refreshIntervalMinutes,
+                  },
+                },
+                null,
+                2
+              ),
+              'utf-8'
+            );
+          } catch {}
+        }
 
         const rawSession = { ...DEFAULT_SESSION, ...(parsed.session || {}) };
 

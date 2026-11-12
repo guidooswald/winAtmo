@@ -270,7 +270,7 @@ export interface UserSettings {
   historyDays: number; // Default 14 days, up to 3650+ or max
   historyMaxMode: boolean; // When true, loads from station's date_setup (max Netatmo allows)
   defaultScale: NetatmoScale; // Default '30min'
-  refreshIntervalMinutes: number; // Default 5
+  refreshIntervalMinutes: number; // Default 10
   temperatureUnit: 'C' | 'F';
   pressureUnit: 'mbar' | 'hPa' | 'inHg' | 'mmHg';
   windUnit: 'kph' | 'ms' | 'mph' | 'kn';
