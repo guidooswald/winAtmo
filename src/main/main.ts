@@ -760,6 +760,13 @@ function createOrShowDebugWindow(): void {
     debugWindow = null;
   });
 
+  debugWindow.once('ready-to-show', () => {
+    if (!debugWindow || debugWindow.isDestroyed()) return;
+    if (debugWindow.isMinimized()) debugWindow.restore();
+    debugWindow.show();
+    debugWindow.focus();
+  });
+
   const entry = getRendererEntryUrl('debug');
   if (entry.isDev) {
     debugWindow.loadURL(entry.url);

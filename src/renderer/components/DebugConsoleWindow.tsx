@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -85,6 +85,8 @@ export const DebugConsoleWindow: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'api' | 'logs'>('api');
   const [selectedApiId, setSelectedApiId] = useState<string | null>(null);
   const [followLatest, setFollowLatest] = useState<boolean>(true);
+  const followLatestRef = useRef<boolean>(true);
+  followLatestRef.current = followLatest;
   const [prettyPrint, setPrettyPrint] = useState<boolean>(true);
   const [levelFilter, setLevelFilter] = useState<'all' | DebugLogLevel>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -126,7 +128,9 @@ export const DebugConsoleWindow: React.FC = () => {
       } else if (event.type === 'api' && event.apiEntry) {
         const entry = event.apiEntry;
         setApiRequests((prev) => [...prev.slice(-249), entry]);
-        setSelectedApiId((prevId) => (followLatest || !prevId ? entry.id : prevId));
+        setSelectedApiId((prevId) =>
+          followLatestRef.current || !prevId ? entry.id : prevId
+        );
       }
     });
 
@@ -135,7 +139,7 @@ export const DebugConsoleWindow: React.FC = () => {
       unsubProgress();
       unsubDebug();
     };
-  }, [followLatest]);
+  }, []);
 
   useEffect(() => {
     if (settings?.theme) {

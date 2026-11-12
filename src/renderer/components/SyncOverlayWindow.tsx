@@ -165,7 +165,7 @@ export const SyncOverlayWindow: React.FC<SyncOverlayWindowProps> = ({
           <button
             type="button"
             className="sync-debug-link-btn"
-            onClick={() => window.winatmo.openDebugWindow()}
+            onClick={() => window.winatmo?.openDebugWindow?.()}
             title="Open API & Sync Debug Console (raw API output, transfer rates, logs)"
           >
             <Terminal size={11} />

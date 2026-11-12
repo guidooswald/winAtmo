@@ -92,6 +92,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
   const [refreshingToken, setRefreshingToken] = useState<boolean>(false);
   const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
+  const [debugRestartNeeded, setDebugRestartNeeded] = useState<boolean>(false);
+
+  const handleOpenDebugWindow = () => {
+    if (typeof window.winatmo?.openDebugWindow === 'function') {
+      setDebugRestartNeeded(false);
+      window.winatmo.openDebugWindow();
+    } else {
+      setDebugRestartNeeded(true);
+    }
+  };
 
   const loadKeysInfo = async () => {
     try {
@@ -728,7 +738,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="storage-actions-row">
             <button
               className="action-btn subtle"
-              onClick={() => window.winatmo.openDebugWindow()}
+              onClick={handleOpenDebugWindow}
               title="Open API & Sync Debug Console (raw API output, transfer rates, logs)"
             >
               <Terminal size={14} />
@@ -1576,13 +1586,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <button
               type="button"
               className="action-btn primary"
-              onClick={() => window.winatmo.openDebugWindow()}
+              onClick={handleOpenDebugWindow}
             >
               <Terminal size={14} />
               Open Debug Window
             </button>
           </div>
         </div>
+        {debugRestartNeeded && (
+          <div className="modal-danger-alert" style={{ marginTop: 12 }}>
+            <AlertTriangle size={15} />
+            <span>
+              winAtmo&apos;s background Electron main/preload process is running an older build. Please close winAtmo and restart it (e.g. <code>npm run dev</code>) to enable the Debug Console window.
+            </span>
+          </div>
+        )}
       </div>
 
       {showLogoutConfirm && (
