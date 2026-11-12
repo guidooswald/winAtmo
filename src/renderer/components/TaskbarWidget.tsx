@@ -377,7 +377,7 @@ export const TaskbarWidget: React.FC = () => {
           </div>
 
           <div className="widget-flyout-grid widget-no-drag">
-            {activePins.map((pin) => {
+            {activePins.map((pin, idx) => {
               const st = stations.find((s) => s.id === pin.stationId);
               const mod = st?.modules.find((m) => m.id === pin.moduleId);
               const d = mod?.dashboard;
@@ -387,6 +387,7 @@ export const TaskbarWidget: React.FC = () => {
                 pin.color ||
                 METRIC_METADATA[pin.metric]?.defaultColor ||
                 '#38bdf8';
+              const gradId = `widget-spark-grad-${idx}`;
 
               return (
                 <div
@@ -396,27 +397,48 @@ export const TaskbarWidget: React.FC = () => {
                     window.winatmo.openMainWindow(pin.moduleId, pin.metric)
                   }
                 >
-                  <div className="flyout-card-top">
-                    <span className="flyout-mod-name">{pin.moduleName}</span>
-                    <span className="flyout-metric-tag">
-                      {METRIC_METADATA[pin.metric]?.shortLabel}
-                    </span>
-                  </div>
-                  <div className="flyout-val-row">
-                    <strong style={{ color }}>
-                      {formatMetricValue(val, pin.metric, settings)}
-                    </strong>
+                  <div className="flyout-card-header">
+                    <div className="flyout-card-top">
+                      <span className="flyout-mod-name">{pin.moduleName}</span>
+                      <span className="flyout-metric-tag">
+                        {METRIC_METADATA[pin.metric]?.shortLabel}
+                      </span>
+                    </div>
+                    <div className="flyout-val-row">
+                      <strong style={{ color }}>
+                        {formatMetricValue(val, pin.metric, settings)}
+                      </strong>
+                    </div>
                   </div>
                   {spark.length > 2 && (
-                    <svg viewBox="0 0 110 28" className="mini-sparkline-svg">
-                      <path
-                        d={buildMiniSparkPath(spark, 110, 28)}
-                        fill="none"
-                        stroke={color}
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                      />
-                    </svg>
+                    <div className="mini-sparkline-wrap">
+                      <svg
+                        viewBox="0 0 200 100"
+                        preserveAspectRatio="none"
+                        className="mini-sparkline-svg"
+                      >
+                        <defs>
+                          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+                            <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+                          </linearGradient>
+                        </defs>
+                        <path
+                          d={buildMiniAreaPath(spark, 200, 100)}
+                          fill={`url(#${gradId})`}
+                          stroke="none"
+                        />
+                        <path
+                          d={buildMiniSparkPath(spark, 200, 100)}
+                          fill="none"
+                          stroke={color}
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      </svg>
+                    </div>
                   )}
                 </div>
               );
@@ -538,10 +560,16 @@ function buildMiniSparkPath(vals: number[], w: number, h: number): string {
   return vals
     .map((v, i) => {
       const x = (i / Math.max(1, vals.length - 1)) * (w - 4) + 2;
-      const y = h - 3 - ((v - min) / span) * (h - 6);
+      const y = h - 6 - ((v - min) / span) * (h - 12);
       return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(' ');
+}
+
+function buildMiniAreaPath(vals: number[], w: number, h: number): string {
+  const line = buildMiniSparkPath(vals, w, h);
+  if (!line) return '';
+  return `${line} L${(w - 2).toFixed(1)},${h} L2.0,${h} Z`;
 }
 
 function resolveSensorTrend(

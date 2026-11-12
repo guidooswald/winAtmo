@@ -2961,6 +2961,7 @@ body {
 
 .widget-flyout-panel {
   flex: 1;
+  min-height: 0;
   margin-bottom: 6px;
   border-radius: var(--radius-md);
   background: rgba(var(--widget-bg-rgb), 0.96);
@@ -2977,6 +2978,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   font-size: 11.5px;
   font-weight: 700;
   color: var(--text-secondary);
@@ -2990,6 +2992,7 @@ body {
 .widget-flyout-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  grid-auto-rows: minmax(86px, 1fr);
   gap: 8px;
   flex: 1;
   min-height: 0;
@@ -3004,11 +3007,21 @@ body {
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .flyout-sensor-card:hover {
   border-color: var(--border-strong);
+}
+
+.flyout-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .flyout-card-top {
@@ -3028,11 +3041,22 @@ body {
 
 .flyout-val-row strong {
   font-size: 15px;
+  line-height: 1.15;
+}
+
+.mini-sparkline-wrap {
+  flex: 1;
+  min-height: 26px;
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 .mini-sparkline-svg {
   width: 100%;
-  height: 26px;
+  height: 100%;
+  display: block;
 }
 
 /* ========================================================
