@@ -127,6 +127,29 @@ function classifyEventFilter(ev: SecurityEvent): string {
   return 'system';
 }
 
+const STATUS_ONLY_EVENT_TYPES = new Set([
+  'connection',
+  'disconnection',
+  'connected',
+  'disconnected',
+  'on',
+  'off',
+  'boot',
+  'sd',
+  'alim',
+  'person_away',
+  'home_empty',
+  'daily_summary',
+]);
+
+function canEventHaveImage(ev: SecurityEvent, imgUrl?: string): boolean {
+  if (imgUrl) return true;
+  if (ev.videoId || ev.videoStatus === 'available') return true;
+  const typeLower = (ev.type || '').toLowerCase();
+  if (STATUS_ONLY_EVENT_TYPES.has(typeLower)) return false;
+  return classifyEventFilter(ev) !== 'system';
+}
+
 function renderEventTypeIcon(typeStr: string, size = 14) {
   const t = typeStr.toLowerCase();
   if (t.includes('vehicle') || t === 'car') return <Car size={size} />;
@@ -1154,24 +1177,28 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                 ev.videoStatus !== 'deleted';
               const filterKind = classifyEventFilter(ev);
               const subTypes = ev.subEvents?.map((s) => s.type) || [];
+              const supportsImage = canEventHaveImage(ev, imgUrl);
+              const canClickThumb = (imgUrl && !imgFailed) || supportsImage;
 
               return (
                 <div key={ev.id} className="security-event-row">
                   <div
-                    className={`event-thumb-box clickable ${
-                      !imgUrl || imgFailed ? 'missing' : ''
+                    className={`event-thumb-box ${canClickThumb ? 'clickable' : ''} ${
+                      supportsImage && (!imgUrl || imgFailed) ? 'missing' : ''
                     }`}
                     onClick={() => {
                       if (imgUrl && !imgFailed) {
                         setLightboxEvent(ev);
-                      } else if (!isReloadingImg) {
+                      } else if (supportsImage && !isReloadingImg) {
                         handleRefreshEventImage(ev);
                       }
                     }}
                     title={
                       imgUrl && !imgFailed
                         ? 'Click to enlarge snapshot'
-                        : 'Click to reload or fetch snapshot from Netatmo'
+                        : supportsImage
+                          ? 'Click to reload or fetch snapshot from Netatmo'
+                          : 'Status event (no camera snapshot)'
                     }
                   >
                     {imgUrl && !imgFailed ? (
@@ -1246,31 +1273,33 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                           <ImageIcon size={12} /> View Snapshot
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className={`event-media-btn ${
-                          !imgUrl || imgFailed ? 'reload' : 'subtle'
-                        }`}
-                        onClick={() => handleRefreshEventImage(ev)}
-                        disabled={isReloadingImg}
-                        title={
-                          imgUrl && !imgFailed
-                            ? 'Refresh / update snapshot from Netatmo'
-                            : 'Try to load snapshot from Netatmo'
-                        }
-                      >
-                        <RefreshCw
-                          size={11}
-                          className={isReloadingImg ? 'spin' : ''}
-                        />
-                        {isReloadingImg
-                          ? 'Loading...'
-                          : imgUrl && !imgFailed
-                            ? 'Update Image'
-                            : imgFailed
-                              ? 'Retry Image'
-                              : 'Load Image'}
-                      </button>
+                      {supportsImage && (
+                        <button
+                          type="button"
+                          className={`event-media-btn ${
+                            !imgUrl || imgFailed ? 'reload' : 'subtle'
+                          }`}
+                          onClick={() => handleRefreshEventImage(ev)}
+                          disabled={isReloadingImg}
+                          title={
+                            imgUrl && !imgFailed
+                              ? 'Refresh / update snapshot from Netatmo'
+                              : 'Try to load snapshot from Netatmo'
+                          }
+                        >
+                          <RefreshCw
+                            size={11}
+                            className={isReloadingImg ? 'spin' : ''}
+                          />
+                          {isReloadingImg
+                            ? 'Loading...'
+                            : imgUrl && !imgFailed
+                              ? 'Update Image'
+                              : imgFailed
+                                ? 'Retry Image'
+                                : 'Load Image'}
+                        </button>
+                      )}
                       {hasVideo && (
                         <button
                           type="button"
