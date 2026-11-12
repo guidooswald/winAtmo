@@ -4361,6 +4361,35 @@ body {
   padding: 2px 2px 0;
 }
 
+.persons-empty-action-row {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.persons-home-empty-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.persons-empty-notice {
+  font-size: 11.5px;
+  padding: 6px 9px;
+  border-radius: var(--radius-xs);
+}
+
+.persons-empty-notice.ok {
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: var(--accent-emerald);
+}
+
+.persons-empty-notice.err {
+  background: rgba(244, 63, 94, 0.14);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  color: var(--accent-rose);
+}
+
 .presence-dot {
   width: 7px;
   height: 7px;

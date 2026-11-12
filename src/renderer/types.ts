@@ -492,3 +492,9 @@ export interface SecurityMediaFetchResult {
   dataBuffer?: Uint8Array;
   error?: string;
 }
+
+export interface SetPersonsAwayResult {
+  ok: boolean;
+  error?: string;
+  needsWriteScope?: boolean;
+}

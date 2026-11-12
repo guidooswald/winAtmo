@@ -11,6 +11,7 @@ import {
   SecurityEventImageRefreshResult,
   SecurityEventVideoResult,
   SecurityMediaFetchResult,
+  SetPersonsAwayResult,
   StorageStats,
   StoredApiKeysInfo,
   SyncProgress,
@@ -142,6 +143,7 @@ export interface WinAtmoAPI {
     rangeStart?: number;
     rangeEnd?: number;
   }) => Promise<SecurityMediaFetchResult>;
+  setHomeEmpty: (options: { homeIds: string[] }) => Promise<SetPersonsAwayResult>;
 
   // Debug Console & Telemetry
   openDebugWindow: () => void;
@@ -249,6 +251,8 @@ const api: WinAtmoAPI = {
   getSecurityEventVideo: (options) =>
     ipcRenderer.invoke('security:get-event-video', options),
   fetchSecurityMedia: (req) => ipcRenderer.invoke('security:fetch-media', req),
+  setHomeEmpty: (options) =>
+    ipcRenderer.invoke('security:set-home-empty', options),
 
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),

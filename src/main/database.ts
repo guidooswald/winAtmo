@@ -811,6 +811,15 @@ export class TimeSeriesDatabase {
     };
   }
 
+  public markHomePersonsAway(homeId: string): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare(
+        'UPDATE security_persons SET out_of_sight = 1, updated_at = ? WHERE home_id = ?'
+      )
+      .run(now, homeId);
+  }
+
   public clearSecurityData(): StorageStats {
     this.db.exec(`
       DELETE FROM security_events;

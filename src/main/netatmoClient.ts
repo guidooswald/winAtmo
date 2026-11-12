@@ -21,6 +21,7 @@ import {
   SecurityMediaFetchResult,
   SecurityPerson,
   SecuritySubEvent,
+  SetPersonsAwayResult,
   StationModule,
   StoredCookie,
   SyncProgress,
@@ -359,10 +360,11 @@ export class NetatmoClient {
   }
 
   /**
-   * Executes an authenticated GET request against Netatmo API with automatic fallback
-   * between `app.netatmo.net` and `api.netatmo.com` and automatic token refresh on 401/403.
+   * Executes an authenticated GET or POST request against Netatmo API with automatic
+   * fallback between `app.netatmo.net` and `api.netatmo.com` and token refresh on 401/403.
    */
-  private async apiGet(
+  private async apiRequest(
+    method: 'GET' | 'POST',
     endpoint: string,
     params: Record<string, string | number | boolean | undefined> = {},
     retried = false,
@@ -377,9 +379,11 @@ export class NetatmoClient {
         ? 'app.netatmo.net'
         : 'api.netatmo.com';
 
+    const cleanParams: Record<string, string> = {};
     const searchParams = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== null && v !== '') {
+        cleanParams[k] = String(v);
         searchParams.set(k, String(v));
       }
     }
@@ -394,21 +398,27 @@ export class NetatmoClient {
       const reqStart = performance.now();
       let res: Response;
       try {
-        res = await fetch(url, {
-          method: 'GET',
+        const headers: Record<string, string> = {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+        };
+        const fetchInit: RequestInit = {
+          method,
           signal: AbortSignal.timeout(20000),
-          headers: {
-            Accept: 'application/json',
-            Authorization: `Bearer ${token}`,
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-          },
-        });
+          headers,
+        };
+        if (method === 'POST' && Object.keys(cleanParams).length > 0) {
+          headers['Content-Type'] = 'application/json';
+          fetchInit.body = JSON.stringify(cleanParams);
+        }
+        res = await fetch(url, fetchInit);
       } catch (netErr: any) {
         lastNetworkErr = netErr;
         const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
         debugLogger.recordApiRequest({
-          method: 'GET',
+          method,
           endpoint,
           baseHost: base,
           url,
@@ -422,7 +432,7 @@ export class NetatmoClient {
         debugLogger.log(
           'warn',
           'API',
-          `GET /${endpoint} failed on ${base} (${netErr?.code || netErr?.message}), trying fallback...`
+          `${method} /${endpoint} failed on ${base} (${netErr?.code || netErr?.message}), trying fallback...`
         );
         // Network or DNS error on this domain (e.g. ENOTFOUND or timeout); try fallback domain
         continue;
@@ -453,7 +463,7 @@ export class NetatmoClient {
             : 'Forbidden');
 
         debugLogger.recordApiRequest({
-          method: 'GET',
+          method,
           endpoint,
           baseHost: base,
           url,
@@ -475,7 +485,7 @@ export class NetatmoClient {
           );
           try {
             await this.ensureAccessToken(true);
-            return this.apiGet(endpoint, params, true, requestNote);
+            return this.apiRequest(method, endpoint, params, true, requestNote);
           } catch (refreshErr: any) {
             throw new Error(
               `Netatmo session expired: ${
@@ -492,7 +502,7 @@ export class NetatmoClient {
 
       if (res.status === 429) {
         debugLogger.recordApiRequest({
-          method: 'GET',
+          method,
           endpoint,
           baseHost: base,
           url,
@@ -512,7 +522,7 @@ export class NetatmoClient {
         // Rate limit hit - wait 2.5 seconds and retry once
         await new Promise((r) => setTimeout(r, 2500));
         if (!retried) {
-          return this.apiGet(endpoint, params, true, requestNote);
+          return this.apiRequest(method, endpoint, params, true, requestNote);
         }
         throw new Error(
           'Netatmo API rate limit reached. Please wait a moment before syncing again.'
@@ -521,7 +531,7 @@ export class NetatmoClient {
 
       if (res.ok && parsedJson) {
         debugLogger.recordApiRequest({
-          method: 'GET',
+          method,
           endpoint,
           baseHost: base,
           url,
@@ -541,7 +551,7 @@ export class NetatmoClient {
       // Other non-ok response
       lastHttpErrMsg = parsedJson?.error?.message || `HTTP ${res.status}`;
       debugLogger.recordApiRequest({
-        method: 'GET',
+        method,
         endpoint,
         baseHost: base,
         url,
@@ -581,6 +591,24 @@ export class NetatmoClient {
     }
 
     throw new Error(`Netatmo API request to /${endpoint} failed.`);
+  }
+
+  private async apiGet(
+    endpoint: string,
+    params: Record<string, string | number | boolean | undefined> = {},
+    retried = false,
+    requestNote?: string
+  ): Promise<any> {
+    return this.apiRequest('GET', endpoint, params, retried, requestNote);
+  }
+
+  private async apiPost(
+    endpoint: string,
+    params: Record<string, string | number | boolean | undefined> = {},
+    retried = false,
+    requestNote?: string
+  ): Promise<any> {
+    return this.apiRequest('POST', endpoint, params, retried, requestNote);
   }
 
   /**
@@ -2123,21 +2151,8 @@ export class NetatmoClient {
           roomNamesById.set(String(r.id), String(r.name || ''));
         }
 
-        const persons: SecurityPerson[] = (Array.isArray(h.persons) ? h.persons : []).map(
-          (p: any) => {
-            const pid = String(p.id);
-            const pname = p.pseudo ? String(p.pseudo) : undefined;
-            if (pname) personsById.set(pid, pname);
-            return {
-              id: pid,
-              homeId,
-              pseudo: pname,
-              outOfSight: p.out_of_sight,
-              lastSeen: p.last_seen,
-              faceUrl: p.face?.url,
-            };
-          }
-        );
+        const rawHomePersons: any[] = Array.isArray(h.persons) ? h.persons : [];
+        let statusPersons: any[] = [];
 
         const cameras: SecurityCamera[] = [];
         for (const m of Array.isArray(h.modules) ? h.modules : []) {
@@ -2157,7 +2172,7 @@ export class NetatmoClient {
         }
 
         if (cameras.length > 0) {
-          // Fetch live camera status via /api/homestatus
+          // Fetch live camera & person presence status via /api/homestatus
           try {
             const statusResp = await this.apiGet(
               'homestatus',
@@ -2165,8 +2180,12 @@ export class NetatmoClient {
               false,
               `Security status: ${homeName}`
             );
-            const statusModules: any[] = Array.isArray(statusResp?.body?.home?.modules)
-              ? statusResp.body.home.modules
+            const statusHome = statusResp?.body?.home;
+            statusPersons = Array.isArray(statusHome?.persons)
+              ? statusHome.persons
+              : [];
+            const statusModules: any[] = Array.isArray(statusHome?.modules)
+              ? statusHome.modules
               : [];
             const statusById = new Map<string, any>();
             for (const sm of statusModules) {
@@ -2197,6 +2216,16 @@ export class NetatmoClient {
               `Could not fetch /homestatus for ${homeName}: ${statusErr?.message || statusErr}`
             );
           }
+        }
+
+        const persons = this.mergeAndFilterPersons(
+          rawHomePersons,
+          statusPersons,
+          homeId,
+          personsById
+        );
+
+        if (cameras.length > 0) {
 
           // Fetch event list via /api/getevents (incremental unseen-only when SQLite storage is enabled)
           try {
@@ -2315,20 +2344,11 @@ export class NetatmoClient {
           for (const lh of legacyHomes) {
             const homeId = String(lh.id);
             const homeName = String(lh.name || 'Home');
-            const persons: SecurityPerson[] = (Array.isArray(lh.persons) ? lh.persons : []).map(
-              (p: any) => {
-                const pid = String(p.id);
-                const pname = p.pseudo ? String(p.pseudo) : undefined;
-                if (pname) personsById.set(pid, pname);
-                return {
-                  id: pid,
-                  homeId,
-                  pseudo: pname,
-                  outOfSight: p.out_of_sight,
-                  lastSeen: p.last_seen,
-                  faceUrl: p.face?.url,
-                };
-              }
+            const persons = this.mergeAndFilterPersons(
+              Array.isArray(lh.persons) ? lh.persons : [],
+              undefined,
+              homeId,
+              personsById
             );
             const cameras: SecurityCamera[] = (Array.isArray(lh.cameras) ? lh.cameras : []).map(
               (c: any) => {
@@ -2917,6 +2937,163 @@ export class NetatmoClient {
           ? 'Netatmo did not return a snapshot or vignette URL for this event.'
           : 'Snapshot could not be loaded (link expired or unavailable on Netatmo).',
     };
+  }
+
+  /**
+   * Merges static person profiles from `/homesdata` with live presence (`out_of_sight`, `last_seen`)
+   * from `/homestatus`, filters out stale/unnamed historic face blobs, and sorts At Home / recently seen first.
+   */
+  private mergeAndFilterPersons(
+    rawPersons: any[],
+    statusPersons: any[] | undefined,
+    homeId: string,
+    personsById: Map<string, string>
+  ): SecurityPerson[] {
+    const mergedById = new Map<
+      string,
+      SecurityPerson & { inStatus: boolean }
+    >();
+
+    for (const p of rawPersons) {
+      if (!p?.id) continue;
+      const pid = String(p.id);
+      const pname =
+        typeof p.pseudo === 'string' && p.pseudo.trim()
+          ? p.pseudo.trim()
+          : undefined;
+      if (pname) personsById.set(pid, pname);
+      mergedById.set(pid, {
+        id: pid,
+        homeId,
+        pseudo: pname,
+        outOfSight:
+          p.out_of_sight !== undefined ? Boolean(p.out_of_sight) : true,
+        lastSeen: p.last_seen !== undefined ? Number(p.last_seen) : undefined,
+        faceUrl: p.face?.url,
+        inStatus: false,
+      });
+    }
+
+    for (const sp of statusPersons || []) {
+      if (!sp?.id) continue;
+      const pid = String(sp.id);
+      const existing = mergedById.get(pid);
+      const pname =
+        (typeof sp.pseudo === 'string' && sp.pseudo.trim()
+          ? sp.pseudo.trim()
+          : undefined) || existing?.pseudo;
+      if (pname) personsById.set(pid, pname);
+
+      mergedById.set(pid, {
+        id: pid,
+        homeId,
+        pseudo: pname,
+        outOfSight:
+          sp.out_of_sight !== undefined
+            ? Boolean(sp.out_of_sight)
+            : existing?.outOfSight ?? true,
+        lastSeen:
+          sp.last_seen !== undefined
+            ? Number(sp.last_seen)
+            : existing?.lastSeen,
+        faceUrl: sp.face?.url || existing?.faceUrl,
+        inStatus: true,
+      });
+    }
+
+    const recentCutoffSec = Math.floor(Date.now() / 1000) - 30 * 86400;
+    const relevant: SecurityPerson[] = [];
+
+    for (const entry of mergedById.values()) {
+      const { inStatus, ...person } = entry;
+      const isAtHome = person.outOfSight === false;
+      const seenRecently = Boolean(
+        person.lastSeen && person.lastSeen >= recentCutoffSec
+      );
+      const hasName = Boolean(person.pseudo);
+
+      // Show only people currently at home OR recently seen (never 700+ unnamed/historic ghosts)
+      if (isAtHome || (seenRecently && (hasName || inStatus))) {
+        relevant.push(person);
+      }
+    }
+
+    relevant.sort((a, b) => {
+      const aHome = a.outOfSight === false ? 0 : 1;
+      const bHome = b.outOfSight === false ? 0 : 1;
+      if (aHome !== bHome) return aHome - bHome;
+      const lsDiff = (b.lastSeen || 0) - (a.lastSeen || 0);
+      if (lsDiff !== 0) return lsDiff;
+      return (a.pseudo || '').localeCompare(b.pseudo || '');
+    });
+
+    return relevant;
+  }
+
+  /**
+   * Notifies Netatmo (`POST /api/setpersonsaway` without `person_id`) that the home(s)
+   * are empty and everybody has left.
+   */
+  public async setHomeEmpty(options: {
+    homeIds: string[];
+  }): Promise<SetPersonsAwayResult> {
+    const session = this.store.getSession();
+    if (!session.loggedIn) {
+      return { ok: false, error: 'Not signed in to Netatmo.' };
+    }
+
+    const ids = (options.homeIds || []).filter(Boolean);
+    if (ids.length === 0) {
+      return { ok: false, error: 'No home ID available.' };
+    }
+
+    if (session.authMethod === 'demo') {
+      return { ok: true };
+    }
+
+    const shouldStore = this.store.getSettings().storeSecurityData !== false;
+
+    try {
+      for (const hid of ids) {
+        await this.apiPost(
+          'setpersonsaway',
+          { home_id: hid },
+          false,
+          `Security: mark home empty (${hid})`
+        );
+        if (shouldStore) {
+          this.db.markHomePersonsAway(hid);
+        }
+      }
+      debugLogger.log(
+        'info',
+        'Security',
+        `Marked ${ids.length} home(s) empty via /api/setpersonsaway`,
+        ids.join(', '),
+        'security'
+      );
+      return { ok: true };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      const needsWriteScope =
+        msg.includes('403') ||
+        msg.toLowerCase().includes('scope') ||
+        msg.toLowerCase().includes('forbidden');
+      debugLogger.log(
+        'error',
+        'Security',
+        `setpersonsaway failed: ${msg}`,
+        undefined,
+        'security'
+      );
+      return {
+        ok: false,
+        needsWriteScope,
+        error: needsWriteScope
+          ? 'Netatmo rejected setting home away (requires write_camera scope or Netatmo Web Sign-In).'
+          : msg,
+      };
+    }
   }
 
   /**

@@ -1849,6 +1849,13 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle(
+    'security:set-home-empty',
+    async (_e, options: { homeIds: string[] }) => {
+      return client.setHomeEmpty(options);
+    }
+  );
+
   // Debug Console Window & Telemetry IPC
   ipcMain.on('debug:open-window', () => {
     createOrShowDebugWindow();

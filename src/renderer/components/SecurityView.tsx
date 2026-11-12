@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   User,
   Users,
+  UserX,
   Video,
   Wifi,
   X,
@@ -160,6 +161,11 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   const [videoEvent, setVideoEvent] = useState<SecurityEvent | null>(null);
   const [videoLoading, setVideoLoading] = useState<boolean>(false);
   const [videoState, setVideoState] = useState<SecurityEventVideoResult | null>(null);
+  const [settingHomeEmpty, setSettingHomeEmpty] = useState<boolean>(false);
+  const [homeEmptyNotice, setHomeEmptyNotice] = useState<{
+    tone: 'ok' | 'err';
+    text: string;
+  } | null>(null);
 
   const handleRefreshEventImage = useCallback(async (ev: SecurityEvent) => {
     if (typeof window.winatmo?.refreshSecurityEventImage !== 'function') {
@@ -394,9 +400,88 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   }, [homes, selectedHomeId]);
 
   const allPersons: SecurityPerson[] = useMemo(() => {
-    return homes
+    const cutoffSec = Math.floor(Date.now() / 1000) - 30 * 86400;
+    const raw = homes
       .filter((h) => selectedHomeId === 'all' || h.id === selectedHomeId)
       .flatMap((h) => h.persons);
+
+    const filtered = raw.filter((p) => {
+      if (p.outOfSight === false) return true;
+      if (p.lastSeen && p.lastSeen >= cutoffSec && p.pseudo) return true;
+      return false;
+    });
+
+    filtered.sort((a, b) => {
+      const aHome = a.outOfSight === false ? 0 : 1;
+      const bHome = b.outOfSight === false ? 0 : 1;
+      if (aHome !== bHome) return aHome - bHome;
+      const lsDiff = (b.lastSeen || 0) - (a.lastSeen || 0);
+      if (lsDiff !== 0) return lsDiff;
+      return (a.pseudo || '').localeCompare(b.pseudo || '');
+    });
+
+    return filtered;
+  }, [homes, selectedHomeId]);
+
+  const handleSetHomeEmpty = useCallback(async () => {
+    if (typeof window.winatmo?.setHomeEmpty !== 'function') {
+      setHomeEmptyNotice({
+        tone: 'err',
+        text: 'Restart Electron (npm run dev) to enable setting home empty.',
+      });
+      return;
+    }
+
+    const targetHomeIds =
+      selectedHomeId !== 'all'
+        ? [selectedHomeId]
+        : homes.map((h) => h.id);
+    if (targetHomeIds.length === 0) return;
+
+    setSettingHomeEmpty(true);
+    setHomeEmptyNotice(null);
+
+    try {
+      const res = await window.winatmo.setHomeEmpty({ homeIds: targetHomeIds });
+      if (!res.ok) {
+        setHomeEmptyNotice({
+          tone: 'err',
+          text: res.error || 'Failed to notify Netatmo that home is empty.',
+        });
+        return;
+      }
+
+      const idSet = new Set(targetHomeIds);
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              homes: prev.homes.map((h) =>
+                idSet.has(h.id)
+                  ? {
+                      ...h,
+                      persons: h.persons.map((p) => ({
+                        ...p,
+                        outOfSight: true,
+                      })),
+                    }
+                  : h
+              ),
+            }
+          : prev
+      );
+      setHomeEmptyNotice({
+        tone: 'ok',
+        text: 'Netatmo updated: home marked empty (everybody away).',
+      });
+    } catch (err: any) {
+      setHomeEmptyNotice({
+        tone: 'err',
+        text: err?.message || 'Failed to mark home empty.',
+      });
+    } finally {
+      setSettingHomeEmpty(false);
+    }
   }, [homes, selectedHomeId]);
 
   const filteredEvents = useMemo(() => {
@@ -681,9 +766,9 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
           </div>
         )}
 
-        {/* Known Persons (Home / Away presence dropdown) */}
-        {allPersons.length > 0 && (() => {
-          const homeCount = allPersons.filter((p) => !p.outOfSight).length;
+        {/* Known Persons (Home / Away presence dropdown + Mark Home Empty) */}
+        {(homes.length > 0 || allPersons.length > 0) && (() => {
+          const homeCount = allPersons.filter((p) => p.outOfSight === false).length;
           const activePerson =
             selectedPersonId !== 'all'
               ? allPersons.find((p) => p.id === selectedPersonId)
@@ -706,14 +791,17 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                 className="select-input security-persons-select"
                 value={selectedPersonId}
                 onChange={(e) => setSelectedPersonId(e.target.value)}
+                disabled={allPersons.length === 0}
               >
                 <option value="all">
-                  All Known Persons ({allPersons.length})
+                  {allPersons.length === 0
+                    ? 'No recently seen persons at home'
+                    : `All Recent Persons (${allPersons.length})`}
                 </option>
                 {allPersons.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.pseudo || 'Unknown'} —{' '}
-                    {p.outOfSight ? 'Away' : 'At Home'}
+                    {p.outOfSight === false ? 'At Home' : 'Away'}
                   </option>
                 ))}
               </select>
@@ -721,13 +809,13 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                 <div className="persons-selected-meta">
                   <span
                     className={`presence-dot ${
-                      activePerson.outOfSight ? 'away' : 'home'
+                      activePerson.outOfSight === false ? 'home' : 'away'
                     }`}
                   />
                   <span>
                     {activePerson.pseudo || 'Unknown'} is{' '}
                     <strong>
-                      {activePerson.outOfSight ? 'Away' : 'At Home'}
+                      {activePerson.outOfSight === false ? 'At Home' : 'Away'}
                     </strong>
                     {activePerson.lastSeen
                       ? ` • Last seen ${formatDate(
@@ -735,6 +823,31 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                         )} ${formatTime(activePerson.lastSeen * 1000)}`
                       : ''}
                   </span>
+                </div>
+              )}
+              <div className="persons-empty-action-row">
+                <button
+                  type="button"
+                  className="action-btn subtle persons-home-empty-btn"
+                  onClick={handleSetHomeEmpty}
+                  disabled={settingHomeEmpty || homes.length === 0}
+                  title="Send POST /api/setpersonsaway to tell Netatmo that everybody left and the home is empty"
+                >
+                  {settingHomeEmpty ? (
+                    <RefreshCw size={13} className="spin" />
+                  ) : (
+                    <UserX size={13} />
+                  )}
+                  {settingHomeEmpty
+                    ? 'Notifying Netatmo...'
+                    : 'Home is Empty (Everybody Left)'}
+                </button>
+              </div>
+              {homeEmptyNotice && (
+                <div
+                  className={`persons-empty-notice ${homeEmptyNotice.tone}`}
+                >
+                  {homeEmptyNotice.text}
                 </div>
               )}
             </div>
