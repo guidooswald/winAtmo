@@ -199,6 +199,16 @@ export class SecurityMediaProxy {
       forwardHeaders['Range'] = req.headers.range;
     }
 
+    const targetHost = (() => {
+      try {
+        return new URL(targetUrl).host;
+      } catch {
+        return 'camera';
+      }
+    })();
+    const isHlsPlaylistTarget = /\.m3u8(\?|$)/i.test(targetUrl);
+    const reqStart = performance.now();
+
     try {
       const netatmoSes = session.fromPartition(NETATMO_PARTITION);
       const fetcher =
@@ -217,7 +227,7 @@ export class SecurityMediaProxy {
       this.allowUrlOrigin(finalUrl);
 
       const contentType = upstream.headers.get('content-type') || '';
-      const isPlaylistUrl = /\.m3u8(\?|$)/i.test(finalUrl) || /\.m3u8(\?|$)/i.test(targetUrl);
+      const isPlaylistUrl = /\.m3u8(\?|$)/i.test(finalUrl) || isHlsPlaylistTarget;
       const isPlaylistMime =
         contentType.toLowerCase().includes('mpegurl') ||
         contentType.toLowerCase().includes('x-mpegurl');
@@ -225,14 +235,31 @@ export class SecurityMediaProxy {
       if (!upstream.ok) {
         let snippet = '';
         try {
-          snippet = (await upstream.text()).slice(0, 200);
+          snippet = (await upstream.text()).slice(0, 500);
         } catch {}
+        const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+        debugLogger.recordApiRequest({
+          method: req.method || 'GET',
+          endpoint: isPlaylistUrl ? 'hls/manifest' : 'hls/segment',
+          baseHost: targetHost,
+          url: targetUrl,
+          source: 'security',
+          status: upstream.status,
+          ok: false,
+          durationMs,
+          bytesReceived: Buffer.byteLength(snippet, 'utf8'),
+          rawBody: snippet || undefined,
+          error: `HTTP ${upstream.status} ${upstream.statusText || ''}`.trim(),
+          note: 'Security HLS video proxy',
+        });
         debugLogger.log(
           'warn',
           'SecurityVideo',
           `HLS proxy HTTP ${upstream.status} for ${targetUrl}${
             snippet ? `: ${snippet}` : ''
-          }`
+          }`,
+          undefined,
+          'security'
         );
         res.writeHead(upstream.status, {
           'Content-Type': contentType || 'text/plain',
@@ -252,12 +279,27 @@ export class SecurityMediaProxy {
       }
 
       const rawBuf = Buffer.from(await upstream.arrayBuffer());
+      const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
 
       // Detect playlist even if server sends application/octet-stream or text/plain
       const headAscii = rawBuf.subarray(0, 64).toString('utf8').trimStart();
       if (isPlaylistUrl || isPlaylistMime || headAscii.startsWith('#EXTM3U')) {
+        const rawText = rawBuf.toString('utf8');
+        debugLogger.recordApiRequest({
+          method: req.method || 'GET',
+          endpoint: 'hls/manifest',
+          baseHost: targetHost,
+          url: targetUrl,
+          source: 'security',
+          status: upstream.status,
+          ok: true,
+          durationMs,
+          bytesReceived: rawBuf.byteLength,
+          rawBody: rawText,
+          note: 'Security HLS manifest (.m3u8)',
+        });
         const rewritten = rewriteM3u8Manifest(
-          rawBuf.toString('utf8'),
+          rawText,
           finalUrl,
           (abs) => this.buildProxyUrl(abs),
           (abs) => this.allowUrlOrigin(abs)
@@ -272,6 +314,28 @@ export class SecurityMediaProxy {
         return;
       }
 
+      debugLogger.recordApiRequest({
+        method: req.method || 'GET',
+        endpoint: 'hls/segment',
+        baseHost: targetHost,
+        url: targetUrl,
+        source: 'security',
+        status: upstream.status,
+        ok: true,
+        durationMs,
+        bytesReceived: rawBuf.byteLength,
+        rawBody: JSON.stringify(
+          {
+            contentType: contentType || 'video/mp2t',
+            bytes: rawBuf.byteLength,
+            finalUrl,
+          },
+          null,
+          2
+        ),
+        note: 'Security HLS video segment',
+      });
+
       const outHeaders: Record<string, string> = {
         'Content-Type': contentType || 'video/mp2t',
         'Content-Length': String(rawBuf.byteLength),
@@ -285,10 +349,26 @@ export class SecurityMediaProxy {
       res.end(rawBuf);
     } catch (err: any) {
       const msg = err?.message || String(err);
+      const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+      debugLogger.recordApiRequest({
+        method: req.method || 'GET',
+        endpoint: isHlsPlaylistTarget ? 'hls/manifest' : 'hls/segment',
+        baseHost: targetHost,
+        url: targetUrl,
+        source: 'security',
+        status: null,
+        ok: false,
+        durationMs,
+        bytesReceived: 0,
+        error: msg,
+        note: 'Security HLS video proxy',
+      });
       debugLogger.log(
         'error',
         'SecurityVideo',
-        `HLS proxy error for ${targetUrl}: ${msg}`
+        `HLS proxy error for ${targetUrl}: ${msg}`,
+        undefined,
+        'security'
       );
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'text/plain' });

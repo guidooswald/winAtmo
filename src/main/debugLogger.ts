@@ -2,6 +2,7 @@ import {
   ApiRequestLogEntry,
   DebugLogEntry,
   DebugLogLevel,
+  DebugSourceDomain,
   DebugStreamEvent,
   DebugTelemetrySnapshot,
   DebugTelemetryStats,
@@ -43,6 +44,53 @@ function inferCategoryFromMessage(msg: string): string {
     return 'Auth';
   }
   return 'App';
+}
+
+function inferLogSource(category: string, message: string): DebugSourceDomain {
+  const cat = category.toLowerCase();
+  const msg = message.toLowerCase();
+  if (cat.startsWith('security')) return 'security';
+  if (cat === 'auth') return 'auth';
+  if (
+    msg.includes('/homesdata') ||
+    msg.includes('/homestatus') ||
+    msg.includes('/getevents') ||
+    msg.includes('/gethomedata') ||
+    msg.includes('hls proxy')
+  ) {
+    return 'security';
+  }
+  return 'weather';
+}
+
+const SECURITY_ENDPOINTS = new Set([
+  'homesdata',
+  'homestatus',
+  'getevents',
+  'geteventsuntil',
+  'getnextevents',
+  'getlasteventof',
+  'gethomedata',
+  'getcamerapicture',
+  'setpersonshome',
+  'setpersonsaway',
+]);
+
+function inferApiSource(endpoint: string, note?: string): DebugSourceDomain {
+  const ep = endpoint.toLowerCase().replace(/^\/+/, '');
+  const n = (note || '').toLowerCase();
+  if (
+    SECURITY_ENDPOINTS.has(ep) ||
+    ep.startsWith('security/') ||
+    ep.startsWith('hls/') ||
+    ep.startsWith('vod/') ||
+    ep === 'command/ping' ||
+    n.startsWith('security')
+  ) {
+    return 'security';
+  }
+  if (ep.startsWith('oauth2')) return 'auth';
+  return 'weather';
 }
 
 export class DebugLogger {
@@ -120,13 +168,15 @@ export class DebugLogger {
     level: DebugLogLevel,
     category: string,
     message: string,
-    details?: string
+    details?: string,
+    source?: DebugSourceDomain
   ): void {
     const entry: DebugLogEntry = {
       id: `log-${++this.seq}`,
       timestamp: Date.now(),
       level,
       category,
+      source: source || inferLogSource(category, message),
       message: redactSensitiveText(message),
       details: details ? redactSensitiveText(details) : undefined,
     };
@@ -148,6 +198,7 @@ export class DebugLogger {
     endpoint: string;
     baseHost: string;
     url: string;
+    source?: DebugSourceDomain;
     status: number | null;
     ok: boolean;
     durationMs: number;
@@ -179,6 +230,7 @@ export class DebugLogger {
       endpoint: input.endpoint,
       baseHost: input.baseHost,
       url: redactSensitiveText(input.url),
+      source: input.source || inferApiSource(input.endpoint, input.note),
       status: input.status,
       ok: input.ok,
       durationMs: safeDuration,

@@ -322,12 +322,14 @@ export interface SessionData {
 }
 
 export type DebugLogLevel = 'info' | 'warn' | 'error' | 'debug';
+export type DebugSourceDomain = 'weather' | 'security' | 'auth';
 
 export interface DebugLogEntry {
   id: string;
   timestamp: number;
   level: DebugLogLevel;
   category: string;
+  source?: DebugSourceDomain;
   message: string;
   details?: string;
 }
@@ -339,6 +341,7 @@ export interface ApiRequestLogEntry {
   endpoint: string;
   baseHost: string;
   url: string;
+  source?: DebugSourceDomain;
   status: number | null;
   ok: boolean;
   durationMs: number;

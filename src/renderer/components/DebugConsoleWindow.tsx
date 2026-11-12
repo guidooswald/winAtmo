@@ -18,6 +18,7 @@ import {
   ApiRequestLogEntry,
   DebugLogEntry,
   DebugLogLevel,
+  DebugSourceDomain,
   DebugTelemetryStats,
   SyncProgress,
   UserSettings,
@@ -172,6 +173,7 @@ export const DebugConsoleWindow: React.FC = () => {
   const followLatestRef = useRef<boolean>(true);
   followLatestRef.current = followLatest;
   const [prettyPrint, setPrettyPrint] = useState<boolean>(true);
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'weather' | 'security'>('all');
   const [levelFilter, setLevelFilter] = useState<'all' | DebugLogLevel>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -243,31 +245,83 @@ export const DebugConsoleWindow: React.FC = () => {
     }
   }, [settings?.theme]);
 
+  const getApiSource = (r: ApiRequestLogEntry): DebugSourceDomain => {
+    if (r.source) return r.source;
+    const ep = r.endpoint.toLowerCase();
+    if (
+      ep.includes('homesdata') ||
+      ep.includes('homestatus') ||
+      ep.includes('getevents') ||
+      ep.includes('gethomedata') ||
+      ep.includes('camerapicture') ||
+      ep.includes('command/ping') ||
+      ep.startsWith('hls/')
+    ) {
+      return 'security';
+    }
+    if (ep.startsWith('oauth2')) return 'auth';
+    return 'weather';
+  };
+
+  const getLogSource = (l: DebugLogEntry): DebugSourceDomain => {
+    if (l.source) return l.source;
+    if (l.category.toLowerCase().startsWith('security')) return 'security';
+    if (l.category.toLowerCase() === 'auth') return 'auth';
+    return 'weather';
+  };
+
+  const sourceCounts = useMemo(() => {
+    const items = activeTab === 'api' ? apiRequests : logs;
+    let weather = 0;
+    let security = 0;
+    if (activeTab === 'api') {
+      for (const r of items as ApiRequestLogEntry[]) {
+        const s = getApiSource(r);
+        if (s === 'security') security++;
+        else if (s === 'weather') weather++;
+      }
+    } else {
+      for (const l of items as DebugLogEntry[]) {
+        const s = getLogSource(l);
+        if (s === 'security') security++;
+        else if (s === 'weather') weather++;
+      }
+    }
+    return { all: items.length, weather, security };
+  }, [activeTab, apiRequests, logs]);
+
   const orderedApiRequests = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const list = [...apiRequests].reverse();
-    if (!q) return list;
-    return list.filter(
-      (r) =>
+    const list = [...apiRequests].reverse().filter((r) => {
+      if (sourceFilter !== 'all' && getApiSource(r) !== sourceFilter) {
+        return false;
+      }
+      if (!q) return true;
+      return (
         r.endpoint.toLowerCase().includes(q) ||
         r.baseHost.toLowerCase().includes(q) ||
         (r.note || '').toLowerCase().includes(q) ||
         (r.error || '').toLowerCase().includes(q) ||
         String(r.status || '').includes(q)
-    );
-  }, [apiRequests, searchQuery]);
+      );
+    });
+    return list;
+  }, [apiRequests, searchQuery, sourceFilter]);
 
   const selectedApi = useMemo(() => {
     return (
-      apiRequests.find((r) => r.id === selectedApiId) ||
+      orderedApiRequests.find((r) => r.id === selectedApiId) ||
       orderedApiRequests[0] ||
       null
     );
-  }, [apiRequests, orderedApiRequests, selectedApiId]);
+  }, [orderedApiRequests, selectedApiId]);
 
   const filteredLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return [...logs].reverse().filter((l) => {
+      if (sourceFilter !== 'all' && getLogSource(l) !== sourceFilter) {
+        return false;
+      }
       if (levelFilter !== 'all' && l.level !== levelFilter) return false;
       if (!q) return true;
       return (
@@ -276,7 +330,7 @@ export const DebugConsoleWindow: React.FC = () => {
         (l.details || '').toLowerCase().includes(q)
       );
     });
-  }, [logs, levelFilter, searchQuery]);
+  }, [logs, levelFilter, searchQuery, sourceFilter]);
 
   const handleCopy = async (text: string, label: string) => {
     try {
@@ -419,6 +473,27 @@ export const DebugConsoleWindow: React.FC = () => {
             </button>
           </div>
 
+          <div className="pill-group" aria-label="Filter API source">
+            <button
+              className={`pill-btn ${sourceFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setSourceFilter('all')}
+            >
+              All ({sourceCounts.all})
+            </button>
+            <button
+              className={`pill-btn ${sourceFilter === 'weather' ? 'active' : ''}`}
+              onClick={() => setSourceFilter('weather')}
+            >
+              Weather Station ({sourceCounts.weather})
+            </button>
+            <button
+              className={`pill-btn ${sourceFilter === 'security' ? 'active' : ''}`}
+              onClick={() => setSourceFilter('security')}
+            >
+              Security ({sourceCounts.security})
+            </button>
+          </div>
+
           <div className="debug-search-box">
             <Search size={13} />
             <input
@@ -507,6 +582,15 @@ export const DebugConsoleWindow: React.FC = () => {
                       <div className="debug-api-row-top">
                         <span className={`debug-status-badge ${statusClass}`}>
                           {req.status ?? 'NET ERR'}
+                        </span>
+                        <span
+                          className={`debug-source-badge ${getApiSource(req)}`}
+                        >
+                          {getApiSource(req) === 'security'
+                            ? 'SECURITY'
+                            : getApiSource(req) === 'auth'
+                              ? 'AUTH'
+                              : 'WEATHER'}
                         </span>
                         <span className="debug-api-endpoint">
                           {req.method} /{req.endpoint}
@@ -611,6 +695,15 @@ export const DebugConsoleWindow: React.FC = () => {
                         }`}
                       >
                         {selectedApi.status ?? 'NETWORK ERROR'}
+                      </span>
+                      <span
+                        className={`debug-source-badge ${getApiSource(selectedApi)}`}
+                      >
+                        {getApiSource(selectedApi) === 'security'
+                          ? 'SECURITY'
+                          : getApiSource(selectedApi) === 'auth'
+                            ? 'AUTH'
+                            : 'WEATHER'}
                       </span>
                       <strong>
                         {selectedApi.method} /{selectedApi.endpoint}
@@ -721,16 +814,31 @@ export const DebugConsoleWindow: React.FC = () => {
                   <p>No log messages match the current filter.</p>
                 </div>
               ) : (
-                filteredLogs.map((log) => (
-                  <div key={log.id} className={`debug-log-row level-${log.level}`}>
-                    <span className="debug-log-ts">{formatTs(log.timestamp)}</span>
-                    <span className={`debug-log-lvl level-${log.level}`}>
-                      {log.level.toUpperCase()}
-                    </span>
-                    <span className="debug-log-cat">{log.category}</span>
-                    <span className="debug-log-msg">{log.message}</span>
-                  </div>
-                ))
+                filteredLogs.map((log) => {
+                  const logSrc = getLogSource(log);
+                  return (
+                    <div key={log.id} className={`debug-log-row level-${log.level}`}>
+                      <span className="debug-log-ts">{formatTs(log.timestamp)}</span>
+                      <span className={`debug-log-lvl level-${log.level}`}>
+                        {log.level.toUpperCase()}
+                      </span>
+                      <span className={`debug-source-badge ${logSrc}`}>
+                        {logSrc === 'security'
+                          ? 'SECURITY'
+                          : logSrc === 'auth'
+                            ? 'AUTH'
+                            : 'WEATHER'}
+                      </span>
+                      <span className="debug-log-cat">{log.category}</span>
+                      <span className="debug-log-msg">
+                        {log.message}
+                        {log.details && (
+                          <div className="debug-log-details">{log.details}</div>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>

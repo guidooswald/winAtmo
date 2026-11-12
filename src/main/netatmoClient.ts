@@ -2380,6 +2380,24 @@ export class NetatmoClient {
         }
       }
 
+      const totalCams = homes.reduce((acc, h) => acc + h.cameras.length, 0);
+      const totalPersons = homes.reduce((acc, h) => acc + h.persons.length, 0);
+      debugLogger.log(
+        'info',
+        'Security',
+        `Loaded ${homes.length} home(s), ${totalCams} camera(s), ${totalPersons} person(s), ${allEvents.length} fetched event(s)`,
+        allEvents.length > 0
+          ? allEvents
+              .slice(0, 10)
+              .map(
+                (e) =>
+                  `[${new Date(e.time * 1000).toISOString()}] ${e.cameraName || 'Camera'}: ${e.message}`
+              )
+              .join(' | ')
+          : undefined,
+        'security'
+      );
+
       if (shouldStore) {
         this.db.upsertSecurityData({ homes, events: allEvents });
         return this.db.getSecurityData(options?.homeId);
@@ -2465,6 +2483,16 @@ export class NetatmoClient {
       } catch {}
     }
 
+    const endpointLabel =
+      parsed.pathname.replace(/^\/api\//, '').replace(/^\/+/, '').slice(0, 64) ||
+      'media';
+    const mediaNote = parsed.pathname.includes('/vod/')
+      ? 'Security VOD probe'
+      : parsed.pathname.includes('getcamerapicture')
+        ? 'Security camera snapshot'
+        : 'Security media fetch';
+    const reqStart = performance.now();
+
     try {
       const netatmoSes = session.fromPartition('persist:netatmo');
       const fetcher =
@@ -2483,6 +2511,25 @@ export class NetatmoClient {
       const contentType = res.headers.get('content-type') || undefined;
 
       if (!res.ok) {
+        let errSnippet = '';
+        try {
+          errSnippet = (await res.text()).slice(0, 1000);
+        } catch {}
+        const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint: endpointLabel,
+          baseHost: parsed.host,
+          url: parsed.toString(),
+          source: 'security',
+          status: res.status,
+          ok: false,
+          durationMs,
+          bytesReceived: Buffer.byteLength(errSnippet, 'utf8'),
+          rawBody: errSnippet || undefined,
+          error: `HTTP ${res.status} ${res.statusText || ''}`.trim(),
+          note: mediaNote,
+        });
         return {
           ok: false,
           status: res.status,
@@ -2495,6 +2542,21 @@ export class NetatmoClient {
 
       if (req.responseType === 'text') {
         const dataText = await res.text();
+        const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+        const bytesReceived = Buffer.byteLength(dataText, 'utf8');
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint: endpointLabel,
+          baseHost: parsed.host,
+          url: parsed.toString(),
+          source: 'security',
+          status: res.status,
+          ok: true,
+          durationMs,
+          bytesReceived,
+          rawBody: dataText,
+          note: mediaNote,
+        });
         return {
           ok: true,
           status: res.status,
@@ -2506,17 +2568,60 @@ export class NetatmoClient {
       }
 
       const buf = await res.arrayBuffer();
+      const u8 = new Uint8Array(buf);
+      const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+      debugLogger.recordApiRequest({
+        method: 'GET',
+        endpoint: endpointLabel,
+        baseHost: parsed.host,
+        url: parsed.toString(),
+        source: 'security',
+        status: res.status,
+        ok: true,
+        durationMs,
+        bytesReceived: u8.byteLength,
+        rawBody: JSON.stringify(
+          {
+            contentType: contentType || 'application/octet-stream',
+            bytes: u8.byteLength,
+            finalUrl,
+          },
+          null,
+          2
+        ),
+        note: mediaNote,
+      });
       return {
         ok: true,
         status: res.status,
         statusText: res.statusText || 'OK',
         finalUrl,
         contentType,
-        dataBuffer: new Uint8Array(buf),
+        dataBuffer: u8,
       };
     } catch (err: any) {
       const msg = err?.message || String(err);
-      debugLogger.log('warn', 'Security', `Media fetch failed (${parsed.host}): ${msg}`);
+      const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+      debugLogger.recordApiRequest({
+        method: 'GET',
+        endpoint: endpointLabel,
+        baseHost: parsed.host,
+        url: parsed.toString(),
+        source: 'security',
+        status: null,
+        ok: false,
+        durationMs,
+        bytesReceived: 0,
+        error: msg,
+        note: mediaNote,
+      });
+      debugLogger.log(
+        'warn',
+        'Security',
+        `Media fetch failed (${parsed.host}): ${msg}`,
+        undefined,
+        'security'
+      );
       return {
         ok: false,
         status: 0,
@@ -2583,19 +2688,60 @@ export class NetatmoClient {
 
     let localUrl: string | undefined;
     if (vpnUrl && isLocal) {
+      const pingUrl = `${vpnUrl}/command/ping`;
+      const pingHost = (() => {
+        try {
+          return new URL(pingUrl).host;
+        } catch {
+          return 'netatmo.net';
+        }
+      })();
+      const pingStart = performance.now();
       try {
-        const pingRes = await fetch(`${vpnUrl}/command/ping`, {
+        const pingRes = await fetch(pingUrl, {
           method: 'GET',
           signal: AbortSignal.timeout(2200),
         });
+        const pingText = await pingRes.text();
+        const durationMs = Math.max(1, Math.round(performance.now() - pingStart));
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint: 'command/ping',
+          baseHost: pingHost,
+          url: pingUrl,
+          source: 'security',
+          status: pingRes.status,
+          ok: pingRes.ok,
+          durationMs,
+          bytesReceived: Buffer.byteLength(pingText, 'utf8'),
+          rawBody: pingText,
+          error: pingRes.ok ? undefined : `HTTP ${pingRes.status}`,
+          note: `Security camera local LAN ping (${cameraId})`,
+        });
         if (pingRes.ok) {
-          const pingJson: any = await pingRes.json();
-          if (typeof pingJson?.local_url === 'string' && pingJson.local_url.startsWith('http')) {
+          const pingJson: any = JSON.parse(pingText);
+          if (
+            typeof pingJson?.local_url === 'string' &&
+            pingJson.local_url.startsWith('http')
+          ) {
             localUrl = pingJson.local_url.replace(/\/+$/, '');
           }
         }
-      } catch {
-        // LAN ping is best-effort; fallback to cloud vpnUrl cleanly
+      } catch (pingErr: any) {
+        const durationMs = Math.max(1, Math.round(performance.now() - pingStart));
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint: 'command/ping',
+          baseHost: pingHost,
+          url: pingUrl,
+          source: 'security',
+          status: null,
+          ok: false,
+          durationMs,
+          bytesReceived: 0,
+          error: pingErr?.message || String(pingErr),
+          note: `Security camera local LAN ping (${cameraId})`,
+        });
       }
     }
 
