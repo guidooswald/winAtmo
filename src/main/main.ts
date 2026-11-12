@@ -263,8 +263,7 @@ function debouncedSaveMainBounds(): void {
 let widgetSizeSaveTimeout: NodeJS.Timeout | null = null;
 function saveWidgetSize(): void {
   if (!widgetWindow || widgetWindow.isDestroyed()) return;
-  const [w, h] = widgetWindow.getContentSize();
-  const [x, y] = widgetWindow.getPosition();
+  const b = widgetWindow.getBounds();
   const settings = store.getSettings();
   const isCompact = settings.theme?.startsWith('compact');
   const defaultCollapsedHeight = isCompact ? 34 : 42;
@@ -272,19 +271,19 @@ function saveWidgetSize(): void {
   if (!isWidgetExpanded) {
     store.updateSettings({
       widgetExpanded: false,
-      widgetSize: { width: w, height: h },
-      widgetPosition: { x, y },
+      widgetSize: { width: b.width, height: b.height },
+      widgetPosition: { x: b.x, y: b.y },
     });
   } else {
     const cur = settings.widgetSize;
-    const collapsedH = collapsedBoundsBeforeExpand?.height || cur?.height || defaultCollapsedHeight;
-    const collapsedW = collapsedBoundsBeforeExpand?.width || cur?.width || w;
-    const colY = widgetExpandDirection === 'down' ? y : y + h - collapsedH;
+    const collapsedH =
+      collapsedBoundsBeforeExpand?.height || cur?.height || defaultCollapsedHeight;
+    const colY = widgetExpandDirection === 'down' ? b.y : b.y + b.height - collapsedH;
     store.updateSettings({
       widgetExpanded: true,
-      widgetExpandedSize: { width: w, height: h },
-      widgetSize: { width: collapsedW, height: collapsedH },
-      widgetPosition: { x, y: colY },
+      widgetExpandedSize: { width: b.width, height: b.height },
+      widgetSize: { width: b.width, height: collapsedH },
+      widgetPosition: { x: b.x, y: colY },
     });
   }
 }
@@ -514,14 +513,13 @@ function getDefaultWidgetBounds(expanded = isWidgetExpanded): {
   let height: number;
 
   if (expanded) {
-    const savedExpW = settings.widgetExpandedSize?.width;
     const savedExpH = settings.widgetExpandedSize?.height;
     width = Math.min(
       workArea.width,
-      savedExpW
-        ? Math.max(120, Math.round(savedExpW))
-        : savedW
-          ? Math.max(120, Math.round(savedW))
+      savedW
+        ? Math.max(120, Math.round(savedW))
+        : settings.widgetExpandedSize?.width
+          ? Math.max(120, Math.round(settings.widgetExpandedSize.width))
           : minSensorsWidth
     );
     height = Math.min(
@@ -1217,11 +1215,10 @@ function registerIpcHandlers(): void {
       return widgetExpandDirection;
     }
 
-    const [curX, curY] = widgetWindow.getPosition();
-    const [curW, curH] = widgetWindow.getContentSize();
+    const curBounds = widgetWindow.getBounds();
     const display = screen.getDisplayNearestPoint({
-      x: Math.round(curX + curW / 2),
-      y: Math.round(curY + curH / 2),
+      x: Math.round(curBounds.x + curBounds.width / 2),
+      y: Math.round(curBounds.y + curBounds.height / 2),
     });
     const workArea = display.workArea;
     const curSettings = store.getSettings();
@@ -1230,10 +1227,10 @@ function registerIpcHandlers(): void {
       // Save exact collapsed bounds before expanding so we can restore them when closing charts
       if (!isWidgetExpanded) {
         collapsedBoundsBeforeExpand = {
-          x: curX,
-          y: curY,
-          width: curW,
-          height: curH,
+          x: curBounds.x,
+          y: curBounds.y,
+          width: curBounds.width,
+          height: curBounds.height,
         };
       }
 
@@ -1241,12 +1238,8 @@ function registerIpcHandlers(): void {
       const expandedHeight = savedExp?.height
         ? Math.min(workArea.height - 8, Math.max(140, Math.round(savedExp.height)))
         : 215;
-      const baseCollapsedW = collapsedBoundsBeforeExpand
-        ? collapsedBoundsBeforeExpand.width
-        : curW;
-      const targetWidth = savedExp?.width
-        ? Math.min(workArea.width - 8, Math.max(120, Math.round(savedExp.width)))
-        : baseCollapsedW;
+      // Keep X width strictly unchanged when clicking expand
+      const targetWidth = curBounds.width;
 
       if (!isWidgetExpanded) {
         widgetExpandDirection = getOptimalExpandDirection(widgetWindow, expandedHeight);
@@ -1258,22 +1251,22 @@ function registerIpcHandlers(): void {
       let newY: number;
       if (widgetExpandDirection === 'down') {
         // Towards top of display: keep top edge fixed and expand downwards
-        newY = curY;
-        if (newY + expandedHeight > workArea.y + workArea.height - 4) {
-          newY = Math.max(workArea.y + 4, workArea.y + workArea.height - expandedHeight - 4);
+        newY = curBounds.y;
+        if (newY + expandedHeight > workArea.y + workArea.height) {
+          newY = Math.max(workArea.y, workArea.y + workArea.height - expandedHeight);
         }
       } else {
         // Towards bottom of display: keep bottom edge fixed and expand upwards
-        const bottomEdge = curY + curH;
-        newY = Math.max(workArea.y + 4, bottomEdge - expandedHeight);
+        const bottomEdge = curBounds.y + curBounds.height;
+        newY = Math.max(workArea.y, bottomEdge - expandedHeight);
       }
 
       const newX = Math.max(
-        workArea.x + 4,
-        Math.min(curX, workArea.x + workArea.width - targetWidth - 4)
+        workArea.x,
+        Math.min(curBounds.x, workArea.x + workArea.width - targetWidth)
       );
 
-      // Atomically set position and bounds to avoid Windows clamping width to screen boundary
+      // Atomically set position and bounds keeping width strictly unchanged
       widgetWindow.setBounds({
         x: newX,
         y: newY,
@@ -1293,9 +1286,9 @@ function registerIpcHandlers(): void {
       });
       broadcastToAllWindows('settings:updated', updated);
     } else {
-      // Closing charts: persist current expanded size, then restore collapsed bounds
+      // Closing charts: persist current expanded height while keeping X width unchanged
       const prevExpandedSize = isWidgetExpanded
-        ? { width: curW, height: curH }
+        ? { width: curBounds.width, height: curBounds.height }
         : curSettings.widgetExpandedSize;
 
       const savedCollapsed = collapsedBoundsBeforeExpand;
@@ -1303,8 +1296,7 @@ function registerIpcHandlers(): void {
       const defaultH = isCompact ? 34 : 42;
       const collapsedH =
         savedCollapsed?.height || curSettings.widgetSize?.height || defaultH;
-      const targetWidth =
-        savedCollapsed?.width || curSettings.widgetSize?.width || curW;
+      const targetWidth = curBounds.width;
 
       isWidgetExpanded = false;
       widgetTargetSize = { width: targetWidth, height: collapsedH };
@@ -1312,19 +1304,21 @@ function registerIpcHandlers(): void {
       let restoreY: number;
       if (
         savedCollapsed &&
-        Math.abs(curX - savedCollapsed.x) <= 12 &&
+        Math.abs(curBounds.x - savedCollapsed.x) <= 12 &&
         (widgetExpandDirection === 'down'
-          ? Math.abs(curY - savedCollapsed.y) <= 12
-          : Math.abs(curY + curH - (savedCollapsed.y + savedCollapsed.height)) <= 16)
+          ? Math.abs(curBounds.y - savedCollapsed.y) <= 12
+          : Math.abs(
+              curBounds.y + curBounds.height - (savedCollapsed.y + savedCollapsed.height)
+            ) <= 16)
       ) {
         // Widget wasn't dragged elsewhere while expanded -> restore exact initial Y
         restoreY = savedCollapsed.y;
       } else if (widgetExpandDirection === 'down') {
         // Minimize upwards to current top edge
-        restoreY = curY;
+        restoreY = curBounds.y;
       } else {
         // Minimize downwards to current bottom edge
-        restoreY = curY + curH - collapsedH;
+        restoreY = curBounds.y + curBounds.height - collapsedH;
       }
 
       restoreY = Math.max(
@@ -1333,7 +1327,7 @@ function registerIpcHandlers(): void {
       );
       const newX = Math.max(
         workArea.x,
-        Math.min(curX, workArea.x + workArea.width - targetWidth)
+        Math.min(curBounds.x, workArea.x + workArea.width - targetWidth)
       );
 
       collapsedBoundsBeforeExpand = null;
