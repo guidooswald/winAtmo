@@ -138,6 +138,10 @@ export interface WinAtmoAPI {
     eventId?: string;
     videoId?: string;
   }) => Promise<SecurityEventVideoResult>;
+  getCameraLiveStream: (options: {
+    homeId: string;
+    cameraId: string;
+  }) => Promise<SecurityEventVideoResult>;
   fetchSecurityMedia: (req: {
     url: string;
     responseType?: 'text' | 'arraybuffer';
@@ -272,6 +276,8 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('security:refresh-event-image', options),
   getSecurityEventVideo: (options) =>
     ipcRenderer.invoke('security:get-event-video', options),
+  getCameraLiveStream: (options) =>
+    ipcRenderer.invoke('security:get-live-stream', options),
   fetchSecurityMedia: (req) => ipcRenderer.invoke('security:fetch-media', req),
   setHomeEmpty: (options) =>
     ipcRenderer.invoke('security:set-home-empty', options),

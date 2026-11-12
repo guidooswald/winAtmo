@@ -7,6 +7,7 @@ interface HlsVideoPlayerProps {
   fallbackUrls?: string[];
   posterUrl?: string;
   isDemo?: boolean;
+  isLive?: boolean;
   onRetryResolve?: () => void;
 }
 
@@ -15,6 +16,7 @@ export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
   fallbackUrls = [],
   posterUrl,
   isDemo,
+  isLive,
   onRetryResolve,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -144,11 +146,22 @@ export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
     return (
       <div className="security-video-demo-box">
         <Film size={32} />
-        <strong>Demo Recorded Clip Preview</strong>
+        <strong>
+          {isLive ? 'Demo Live Camera Preview' : 'Demo Recorded Clip Preview'}
+        </strong>
         <p>
-          In live Netatmo mode, recorded camera events stream directly from the
-          camera&apos;s HLS VOD endpoint (
-          <code>{'{vpn_url}/vod/{video_id}/index.m3u8'}</code>).
+          {isLive ? (
+            <>
+              In live Netatmo mode, the camera streams directly from its HLS
+              live endpoint (<code>{'{vpn_url}/live/index.m3u8'}</code>).
+            </>
+          ) : (
+            <>
+              In live Netatmo mode, recorded camera events stream directly from
+              the camera&apos;s HLS VOD endpoint (
+              <code>{'{vpn_url}/vod/{video_id}/index.m3u8'}</code>).
+            </>
+          )}
         </p>
       </div>
     );

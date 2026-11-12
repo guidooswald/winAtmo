@@ -1841,6 +1841,19 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    'security:get-live-stream',
+    async (
+      _e,
+      options: {
+        homeId: string;
+        cameraId: string;
+      }
+    ) => {
+      return client.getCameraLiveStream(options);
+    }
+  );
+
+  ipcMain.handle(
     'security:fetch-media',
     async (
       _e,

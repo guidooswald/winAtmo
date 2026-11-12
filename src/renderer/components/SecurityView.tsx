@@ -185,9 +185,14 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   const [reloadingImages, setReloadingImages] = useState<Record<string, boolean>>({});
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
   const [lightboxEvent, setLightboxEvent] = useState<SecurityEvent | null>(null);
-  const [videoEvent, setVideoEvent] = useState<SecurityEvent | null>(null);
+  const [videoTarget, setVideoTarget] = useState<
+    | { kind: 'event'; event: SecurityEvent }
+    | { kind: 'live'; camera: SecurityCamera }
+    | null
+  >(null);
   const [videoLoading, setVideoLoading] = useState<boolean>(false);
   const [videoState, setVideoState] = useState<SecurityEventVideoResult | null>(null);
+  const streamReqIdRef = useRef(0);
   const [settingHomeEmpty, setSettingHomeEmpty] = useState<boolean>(false);
   const [homeEmptyNotice, setHomeEmptyNotice] = useState<{
     tone: 'ok' | 'err';
@@ -470,7 +475,11 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
             : prev
         );
         setLightboxEvent((prev) => (prev?.id === ev.id ? applyUpdate(prev) : prev));
-        setVideoEvent((prev) => (prev?.id === ev.id ? applyUpdate(prev) : prev));
+        setVideoTarget((prev) =>
+          prev?.kind === 'event' && prev.event.id === ev.id
+            ? { kind: 'event', event: applyUpdate(prev.event) }
+            : prev
+        );
         setFailedImages((prev) => {
           const next = { ...prev };
           delete next[ev.id];
@@ -504,37 +513,82 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     }
   }, []);
 
-  const handleOpenVideo = useCallback(async (ev: SecurityEvent) => {
-    setVideoEvent(ev);
-    setVideoLoading(true);
-    setVideoState(null);
+  const openVideoStreamModal = useCallback(
+    async (
+      target:
+        | { kind: 'event'; event: SecurityEvent }
+        | { kind: 'live'; camera: SecurityCamera },
+      resolveStream: () => Promise<SecurityEventVideoResult> | null,
+      fallbackError: string
+    ) => {
+      const reqId = ++streamReqIdRef.current;
+      setVideoTarget(target);
+      setVideoLoading(true);
+      setVideoState(null);
 
-    if (typeof window.winatmo?.getSecurityEventVideo !== 'function') {
-      setVideoState({
-        ok: false,
-        error: 'Restart Electron (npm run dev) to load video streaming IPC.',
-      });
-      setVideoLoading(false);
-      return;
-    }
+      try {
+        const pending = resolveStream();
+        if (!pending) {
+          setVideoState({
+            ok: false,
+            error:
+              'Restart Electron (npm run dev) to load video streaming IPC.',
+          });
+          return;
+        }
+        const res = await pending;
+        if (streamReqIdRef.current === reqId) {
+          setVideoState(res);
+        }
+      } catch (err: any) {
+        if (streamReqIdRef.current === reqId) {
+          setVideoState({
+            ok: false,
+            error: err?.message || fallbackError,
+          });
+        }
+      } finally {
+        if (streamReqIdRef.current === reqId) {
+          setVideoLoading(false);
+        }
+      }
+    },
+    []
+  );
 
-    try {
-      const res = await window.winatmo.getSecurityEventVideo({
-        homeId: ev.homeId,
-        cameraId: ev.cameraId,
-        eventId: ev.id,
-        videoId: ev.videoId,
-      });
-      setVideoState(res);
-    } catch (err: any) {
-      setVideoState({
-        ok: false,
-        error: err?.message || 'Failed to load video stream.',
-      });
-    } finally {
-      setVideoLoading(false);
-    }
-  }, []);
+  const handleOpenVideo = useCallback(
+    (ev: SecurityEvent) =>
+      openVideoStreamModal(
+        { kind: 'event', event: ev },
+        () =>
+          typeof window.winatmo?.getSecurityEventVideo === 'function'
+            ? window.winatmo.getSecurityEventVideo({
+                homeId: ev.homeId,
+                cameraId: ev.cameraId,
+                eventId: ev.id,
+                videoId: ev.videoId,
+              })
+            : null,
+        'Failed to load video stream.'
+      ),
+    [openVideoStreamModal]
+  );
+
+  const handleOpenLiveCamera = useCallback(
+    (camera: SecurityCamera) =>
+      openVideoStreamModal(
+        { kind: 'live', camera },
+        () =>
+          typeof window.winatmo?.getCameraLiveStream === 'function'
+            ? window.winatmo.getCameraLiveStream({
+                homeId: camera.homeId,
+                cameraId: camera.id,
+              })
+            : null,
+        'Failed to load live camera stream.'
+      ),
+    [openVideoStreamModal]
+  );
 
   const loadSecurity = useCallback(async () => {
     if (typeof window.winatmo?.getSecurityData !== 'function') {
@@ -1050,14 +1104,29 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                   </div>
 
                   <div className="camera-card-footer">
-                    <span>
-                      MAC: <code>{cam.id}</code>
-                    </span>
-                    <span>
-                      {cam.firmwareRevision !== undefined
-                        ? `FW ${cam.firmwareRevision}`
-                        : ''}
-                    </span>
+                    <div className="camera-card-meta">
+                      <span>
+                        MAC: <code>{cam.id}</code>
+                      </span>
+                      {cam.firmwareRevision !== undefined && (
+                        <span>FW {cam.firmwareRevision}</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="camera-live-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenLiveCamera(cam);
+                      }}
+                      title={
+                        isMonitoring
+                          ? 'Watch live camera feed'
+                          : 'Attempt to open live camera feed (monitoring is currently off)'
+                      }
+                    >
+                      <Video size={12} /> Live Feed
+                    </button>
                   </div>
                 </div>
               );
@@ -1550,254 +1619,306 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
         </div>
       )}
 
-      {/* Recorded Event Video Player Modal (Resizable) */}
-      {videoEvent && (
-        <div
-          className="modal-backdrop"
-          onClick={() => setVideoEvent(null)}
-        >
+      {/* Recorded Event Video / Live Camera Player Modal (Resizable) */}
+      {videoTarget && (() => {
+        const isLive = videoTarget.kind === 'live';
+        const activeEvent =
+          videoTarget.kind === 'event' ? videoTarget.event : null;
+        const activeCamera =
+          videoTarget.kind === 'live' ? videoTarget.camera : null;
+        const reloadActiveStream = () => {
+          if (activeEvent) {
+            handleOpenVideo(activeEvent);
+          } else if (activeCamera) {
+            handleOpenLiveCamera(activeCamera);
+          }
+        };
+        const streamModeLabel = videoState?.ok
+          ? videoState.isDemo
+            ? 'Demo Preview'
+            : videoState.isLocalStream
+              ? 'Local Camera Stream'
+              : 'Netatmo Cloud VPN Stream'
+          : null;
+
+        return (
           <div
-            ref={videoModalRef}
-            className={`security-lightbox-card security-video-modal ${
-              isResizingVideoModal ? 'resizing' : ''
-            }`}
-            style={
-              videoModalMaximized
-                ? {
-                    width: 'calc(100vw - 32px)',
-                    height: 'calc(100vh - 32px)',
-                    maxHeight: 'calc(100vh - 32px)',
-                  }
-                : {
-                    width: `${Math.min(
-                      videoModalSize.width,
-                      typeof window !== 'undefined'
-                        ? window.innerWidth - 32
-                        : 920
-                    )}px`,
-                    height: `${Math.min(
-                      videoModalSize.height,
-                      typeof window !== 'undefined'
-                        ? window.innerHeight - 32
-                        : 680
-                    )}px`,
-                    maxHeight: 'calc(100vh - 32px)',
-                  }
-            }
-            onClick={(e) => e.stopPropagation()}
+            className="modal-backdrop"
+            onClick={() => setVideoTarget(null)}
           >
-            <div className="security-lightbox-header">
-              <div>
-                <h4>{videoEvent.message}</h4>
-                <span>
-                  {videoEvent.cameraName} •{' '}
-                  {formatDate(videoEvent.time * 1000)}{' '}
-                  {formatTime(videoEvent.time * 1000)}
-                  {videoState?.ok && (
-                    <>
-                      {' • '}
-                      {videoState.isDemo
-                        ? 'Demo Preview'
-                        : videoState.isLocalStream
-                          ? 'Local Camera Stream'
-                          : 'Netatmo Cloud VPN Stream'}
-                    </>
-                  )}
-                </span>
-              </div>
-              <div className="security-lightbox-actions">
-                <button
-                  type="button"
-                  className="action-btn subtle"
-                  disabled={videoLoading}
-                  onClick={() => handleOpenVideo(videoEvent)}
-                >
-                  <RefreshCw
-                    size={13}
-                    className={videoLoading ? 'spin' : ''}
-                  />
-                  Reload Stream
-                </button>
-                <button
-                  type="button"
-                  className="action-btn primary"
-                  disabled={Boolean(
-                    downloadingMedia[`video:${videoEvent.id}`]
-                  )}
-                  onClick={() => handleDownloadVideo(videoEvent)}
-                  title="Download video clip to computer"
-                >
-                  {downloadingMedia[`video:${videoEvent.id}`] ? (
-                    <RefreshCw size={13} className="spin" />
-                  ) : (
-                    <Download size={13} />
-                  )}
-                  {downloadingMedia[`video:${videoEvent.id}`]
-                    ? 'Downloading...'
-                    : 'Download Video'}
-                </button>
-                {(videoEvent.snapshotUrl || videoEvent.vignetteUrl) &&
-                  !failedImages[videoEvent.id] && (
-                    <>
-                      <button
-                        type="button"
-                        className="action-btn subtle"
-                        disabled={Boolean(
-                          downloadingMedia[`snap:${videoEvent.id}`]
-                        )}
-                        onClick={() => handleDownloadSnapshot(videoEvent)}
-                        title="Download event snapshot image"
-                      >
-                        <Download size={13} /> Snapshot
-                      </button>
-                      <button
-                        type="button"
-                        className="action-btn subtle"
-                        onClick={() => {
-                          const target = videoEvent;
-                          setVideoEvent(null);
-                          setLightboxEvent(target);
-                        }}
-                      >
-                        <ImageIcon size={13} /> View Snapshot
-                      </button>
-                    </>
-                  )}
-                <button
-                  type="button"
-                  className="sync-overlay-close-btn"
-                  title={videoModalMaximized ? 'Restore size' : 'Maximize'}
-                  onClick={() => setVideoModalMaximized((m) => !m)}
-                >
-                  {videoModalMaximized ? (
-                    <Minimize2 size={15} />
-                  ) : (
-                    <Maximize2 size={15} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="sync-overlay-close-btn"
-                  onClick={() => setVideoEvent(null)}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-
-            {renderVideoDownloadProgress(videoEvent.id)}
-
-            {downloadNotice?.eventId === videoEvent.id && (
-              <div className={`event-download-note ${downloadNotice.tone}`}>
-                {downloadNotice.text}
-              </div>
-            )}
-
-            {videoLoading ? (
-              <div className="security-video-status-card">
-                <RefreshCw size={22} className="spin" />
-                <span>Resolving camera stream from Netatmo...</span>
-              </div>
-            ) : !videoState?.ok ? (
-              <div className="security-video-status-card error">
-                <AlertTriangle size={22} />
+            <div
+              ref={videoModalRef}
+              className={`security-lightbox-card security-video-modal ${
+                isResizingVideoModal ? 'resizing' : ''
+              }`}
+              style={
+                videoModalMaximized
+                  ? {
+                      width: 'calc(100vw - 32px)',
+                      height: 'calc(100vh - 32px)',
+                      maxHeight: 'calc(100vh - 32px)',
+                    }
+                  : {
+                      width: `${Math.min(
+                        videoModalSize.width,
+                        typeof window !== 'undefined'
+                          ? window.innerWidth - 32
+                          : 920
+                      )}px`,
+                      height: `${Math.min(
+                        videoModalSize.height,
+                        typeof window !== 'undefined'
+                          ? window.innerHeight - 32
+                          : 680
+                      )}px`,
+                      maxHeight: 'calc(100vh - 32px)',
+                    }
+              }
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="security-lightbox-header">
                 <div>
-                  <strong>Video Unavailable</strong>
-                  <p>{videoState?.error || 'Could not load video clip.'}</p>
+                  <h4 className="security-video-modal-title">
+                    {isLive && (
+                      <span className="live-feed-pill">
+                        <span className="live-dot" />
+                        LIVE
+                      </span>
+                    )}
+                    {activeEvent ? activeEvent.message : activeCamera?.name}
+                  </h4>
+                  <span>
+                    {activeEvent ? (
+                      <>
+                        {activeEvent.cameraName} •{' '}
+                        {formatDate(activeEvent.time * 1000)}{' '}
+                        {formatTime(activeEvent.time * 1000)}
+                      </>
+                    ) : (
+                      <>
+                        {getCameraModelLabel(activeCamera?.type || '')}
+                        {activeCamera?.homeName
+                          ? ` • ${activeCamera.homeName}`
+                          : ''}
+                      </>
+                    )}
+                    {streamModeLabel && <> • {streamModeLabel}</>}
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  className="action-btn subtle"
-                  onClick={() => handleOpenVideo(videoEvent)}
-                >
-                  <RefreshCw size={13} /> Retry
-                </button>
+                <div className="security-lightbox-actions">
+                  <button
+                    type="button"
+                    className="action-btn subtle"
+                    disabled={videoLoading}
+                    onClick={reloadActiveStream}
+                  >
+                    <RefreshCw
+                      size={13}
+                      className={videoLoading ? 'spin' : ''}
+                    />
+                    Reload Stream
+                  </button>
+                  {activeEvent && (
+                    <>
+                      <button
+                        type="button"
+                        className="action-btn primary"
+                        disabled={Boolean(
+                          downloadingMedia[`video:${activeEvent.id}`]
+                        )}
+                        onClick={() => handleDownloadVideo(activeEvent)}
+                        title="Download video clip to computer"
+                      >
+                        {downloadingMedia[`video:${activeEvent.id}`] ? (
+                          <RefreshCw size={13} className="spin" />
+                        ) : (
+                          <Download size={13} />
+                        )}
+                        {downloadingMedia[`video:${activeEvent.id}`]
+                          ? 'Downloading...'
+                          : 'Download Video'}
+                      </button>
+                      {(activeEvent.snapshotUrl || activeEvent.vignetteUrl) &&
+                        !failedImages[activeEvent.id] && (
+                          <>
+                            <button
+                              type="button"
+                              className="action-btn subtle"
+                              disabled={Boolean(
+                                downloadingMedia[`snap:${activeEvent.id}`]
+                              )}
+                              onClick={() => handleDownloadSnapshot(activeEvent)}
+                              title="Download event snapshot image"
+                            >
+                              <Download size={13} /> Snapshot
+                            </button>
+                            <button
+                              type="button"
+                              className="action-btn subtle"
+                              onClick={() => {
+                                const target = activeEvent;
+                                setVideoTarget(null);
+                                setLightboxEvent(target);
+                              }}
+                            >
+                              <ImageIcon size={13} /> View Snapshot
+                            </button>
+                          </>
+                        )}
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="sync-overlay-close-btn"
+                    title={videoModalMaximized ? 'Restore size' : 'Maximize'}
+                    onClick={() => setVideoModalMaximized((m) => !m)}
+                  >
+                    {videoModalMaximized ? (
+                      <Minimize2 size={15} />
+                    ) : (
+                      <Maximize2 size={15} />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="sync-overlay-close-btn"
+                    onClick={() => setVideoTarget(null)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
-            ) : (
-              <HlsVideoPlayer
-                hlsUrl={videoState.hlsUrl}
-                fallbackUrls={videoState.fallbackHlsUrls}
-                posterUrl={videoEvent.snapshotUrl || videoEvent.vignetteUrl}
-                isDemo={videoState.isDemo}
-                onRetryResolve={() => handleOpenVideo(videoEvent)}
-              />
-            )}
 
-            {videoEvent.subEvents && videoEvent.subEvents.length > 0 && (
-              <div className="security-lightbox-subevents">
-                {videoEvent.subEvents.map((se, i) => (
-                  <div key={i} className="lightbox-sub-item">
-                    <strong>{se.type}</strong>
-                    <span>{se.message || formatTime(se.time * 1000)}</span>
+              {activeEvent && renderVideoDownloadProgress(activeEvent.id)}
+
+              {activeEvent && downloadNotice?.eventId === activeEvent.id && (
+                <div className={`event-download-note ${downloadNotice.tone}`}>
+                  {downloadNotice.text}
+                </div>
+              )}
+
+              {videoLoading ? (
+                <div className="security-video-status-card">
+                  <RefreshCw size={22} className="spin" />
+                  <span>
+                    {isLive
+                      ? 'Connecting to live camera stream...'
+                      : 'Resolving camera stream from Netatmo...'}
+                  </span>
+                </div>
+              ) : !videoState?.ok ? (
+                <div className="security-video-status-card error">
+                  <AlertTriangle size={22} />
+                  <div>
+                    <strong>
+                      {isLive ? 'Live Stream Unavailable' : 'Video Unavailable'}
+                    </strong>
+                    <p>
+                      {videoState?.error ||
+                        (isLive
+                          ? 'Could not connect to live camera feed.'
+                          : 'Could not load video clip.')}
+                    </p>
                   </div>
-                ))}
-              </div>
-            )}
+                  <button
+                    type="button"
+                    className="action-btn subtle"
+                    onClick={reloadActiveStream}
+                  >
+                    <RefreshCw size={13} /> Retry
+                  </button>
+                </div>
+              ) : (
+                <HlsVideoPlayer
+                  hlsUrl={videoState.hlsUrl}
+                  fallbackUrls={videoState.fallbackHlsUrls}
+                  posterUrl={
+                    activeEvent
+                      ? activeEvent.snapshotUrl || activeEvent.vignetteUrl
+                      : undefined
+                  }
+                  isDemo={videoState.isDemo}
+                  isLive={isLive}
+                  onRetryResolve={reloadActiveStream}
+                />
+              )}
 
-            {!videoModalMaximized && (
-              <div
-                className="security-modal-resize-handle"
-                title="Drag to resize video window"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const el = videoModalRef.current;
-                  if (!el) return;
-                  const startRect = el.getBoundingClientRect();
-                  const startX = e.clientX;
-                  const startY = e.clientY;
-                  let latest = {
-                    width: Math.round(startRect.width),
-                    height: Math.round(startRect.height),
-                  };
-                  setIsResizingVideoModal(true);
+              {activeEvent?.subEvents && activeEvent.subEvents.length > 0 && (
+                <div className="security-lightbox-subevents">
+                  {activeEvent.subEvents.map((se, i) => (
+                    <div key={i} className="lightbox-sub-item">
+                      <strong>{se.type}</strong>
+                      <span>{se.message || formatTime(se.time * 1000)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-                  const onMove = (ev: MouseEvent) => {
-                    // Multiply delta by 2 because centered flex modal grows symmetrically
-                    const nextW = Math.round(
-                      Math.max(
-                        440,
-                        Math.min(
-                          window.innerWidth - 32,
-                          startRect.width + (ev.clientX - startX) * 2
+              {!videoModalMaximized && (
+                <div
+                  className="security-modal-resize-handle"
+                  title="Drag to resize video window"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const el = videoModalRef.current;
+                    if (!el) return;
+                    const startRect = el.getBoundingClientRect();
+                    const startX = e.clientX;
+                    const startY = e.clientY;
+                    let latest = {
+                      width: Math.round(startRect.width),
+                      height: Math.round(startRect.height),
+                    };
+                    setIsResizingVideoModal(true);
+
+                    const onMove = (ev: MouseEvent) => {
+                      // Multiply delta by 2 because centered flex modal grows symmetrically
+                      const nextW = Math.round(
+                        Math.max(
+                          440,
+                          Math.min(
+                            window.innerWidth - 32,
+                            startRect.width + (ev.clientX - startX) * 2
+                          )
                         )
-                      )
-                    );
-                    const nextH = Math.round(
-                      Math.max(
-                        360,
-                        Math.min(
-                          window.innerHeight - 32,
-                          startRect.height + (ev.clientY - startY) * 2
-                        )
-                      )
-                    );
-                    latest = { width: nextW, height: nextH };
-                    setVideoModalSize(latest);
-                  };
-
-                  const onUp = () => {
-                    setIsResizingVideoModal(false);
-                    window.removeEventListener('mousemove', onMove);
-                    window.removeEventListener('mouseup', onUp);
-                    document.body.style.cursor = '';
-                    try {
-                      localStorage.setItem(
-                        'winatmo_video_modal_size',
-                        JSON.stringify(latest)
                       );
-                    } catch {}
-                  };
+                      const nextH = Math.round(
+                        Math.max(
+                          360,
+                          Math.min(
+                            window.innerHeight - 32,
+                            startRect.height + (ev.clientY - startY) * 2
+                          )
+                        )
+                      );
+                      latest = { width: nextW, height: nextH };
+                      setVideoModalSize(latest);
+                    };
 
-                  document.body.style.cursor = 'nwse-resize';
-                  window.addEventListener('mousemove', onMove);
-                  window.addEventListener('mouseup', onUp);
-                }}
-              />
-            )}
+                    const onUp = () => {
+                      setIsResizingVideoModal(false);
+                      window.removeEventListener('mousemove', onMove);
+                      window.removeEventListener('mouseup', onUp);
+                      document.body.style.cursor = '';
+                      try {
+                        localStorage.setItem(
+                          'winatmo_video_modal_size',
+                          JSON.stringify(latest)
+                        );
+                      } catch {}
+                    };
+
+                    document.body.style.cursor = 'nwse-resize';
+                    window.addEventListener('mousemove', onMove);
+                    window.addEventListener('mouseup', onUp);
+                  }}
+                />
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

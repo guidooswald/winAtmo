@@ -3099,6 +3099,163 @@ export class NetatmoClient {
   }
 
   /**
+   * Resolves stream endpoints (`localUrl` + `vpnUrl`), allows their origins in `securityMediaProxy`,
+   * and probes HLS candidate playlists in priority order.
+   */
+  private async probeCameraStreamCandidates(options: {
+    homeId: string;
+    cameraId: string;
+    localPaths: string[];
+    vpnPaths: string[];
+    unavailableError: string;
+  }): Promise<{
+    ok: boolean;
+    vpnUrl?: string;
+    localUrl?: string;
+    candidates: string[];
+    workingCandidates: string[];
+    error?: string;
+    needsAccessScope?: boolean;
+    isDemo?: boolean;
+  }> {
+    const sessionData = this.store.getSession();
+    if (!sessionData.loggedIn) {
+      return {
+        ok: false,
+        candidates: [],
+        workingCandidates: [],
+        error: 'Not signed in to Netatmo.',
+      };
+    }
+
+    if (sessionData.authMethod === 'demo') {
+      return {
+        ok: true,
+        isDemo: true,
+        candidates: [],
+        workingCandidates: [],
+      };
+    }
+
+    const { vpnUrl, localUrl } = await this.resolveCameraUrls(
+      options.homeId,
+      options.cameraId
+    );
+
+    if (!vpnUrl && !localUrl) {
+      return {
+        ok: false,
+        candidates: [],
+        workingCandidates: [],
+        needsAccessScope: true,
+        error:
+          'Netatmo did not expose a camera stream URL (vpn_url). Video playback requires Netatmo Web Sign-In or OAuth access_camera / access_presence scopes.',
+      };
+    }
+
+    const candidates: string[] = [];
+    if (localUrl) {
+      securityMediaProxy.allowUrlOrigin(localUrl);
+      for (const p of options.localPaths) {
+        candidates.push(`${localUrl}${p}`);
+      }
+    }
+    if (vpnUrl) {
+      securityMediaProxy.allowUrlOrigin(vpnUrl);
+      for (const p of options.vpnPaths) {
+        candidates.push(`${vpnUrl}${p}`);
+      }
+    }
+
+    const workingCandidates: string[] = [];
+    let lastError: string | undefined;
+    for (const candidate of candidates) {
+      const probe = await this.fetchSecurityMedia({
+        url: candidate,
+        responseType: 'text',
+      });
+      if (probe.ok && probe.dataText && probe.dataText.includes('#EXTM3U')) {
+        workingCandidates.push(candidate);
+        if (localUrl && candidate.startsWith(localUrl)) {
+          continue;
+        }
+        break;
+      }
+      lastError = probe.error || `HTTP ${probe.status}`;
+    }
+
+    if (workingCandidates.length === 0) {
+      return {
+        ok: false,
+        vpnUrl,
+        localUrl,
+        candidates,
+        workingCandidates: [],
+        error: `${options.unavailableError} (${lastError || 'stream unavailable'}).`,
+      };
+    }
+
+    return {
+      ok: true,
+      vpnUrl,
+      localUrl,
+      candidates,
+      workingCandidates,
+    };
+  }
+
+  /**
+   * Wraps probed HLS candidates in local `securityMediaProxy` URLs for Chromium `<video>` playback.
+   */
+  private async buildProxiedStreamResult(discovered: {
+    ok: boolean;
+    vpnUrl?: string;
+    localUrl?: string;
+    candidates: string[];
+    workingCandidates: string[];
+    error?: string;
+    needsAccessScope?: boolean;
+    isDemo?: boolean;
+    localHintPath?: string;
+  }): Promise<SecurityEventVideoResult> {
+    if (discovered.isDemo) {
+      return { ok: true, isDemo: true };
+    }
+    if (!discovered.ok || discovered.workingCandidates.length === 0) {
+      return {
+        ok: false,
+        vpnUrl: discovered.vpnUrl,
+        localUrl: discovered.localUrl,
+        fallbackHlsUrls: discovered.candidates,
+        needsAccessScope: discovered.needsAccessScope,
+        error: discovered.error || 'Video stream unavailable.',
+      };
+    }
+
+    const primaryRaw = discovered.workingCandidates[0];
+    const remainingRaw = discovered.candidates.filter((u) => u !== primaryRaw);
+    const orderedRaw = [primaryRaw, ...remainingRaw];
+    const proxied = await Promise.all(
+      orderedRaw.map((u) => securityMediaProxy.toProxyUrl(u))
+    );
+
+    return {
+      ok: true,
+      hlsUrl: proxied[0],
+      localHlsUrl:
+        discovered.localUrl && discovered.localHintPath
+          ? `${discovered.localUrl}${discovered.localHintPath}`
+          : undefined,
+      fallbackHlsUrls: proxied.slice(1),
+      vpnUrl: discovered.vpnUrl,
+      localUrl: discovered.localUrl,
+      isLocalStream: Boolean(
+        discovered.localUrl && primaryRaw.startsWith(discovered.localUrl)
+      ),
+    };
+  }
+
+  /**
    * Discovers ordered candidate VOD `.m3u8` URLs (`localUrl` + `vpnUrl`) for an event.
    */
   private async discoverVideoCandidates(options: {
@@ -3173,79 +3330,27 @@ export class NetatmoClient {
       };
     }
 
-    const { vpnUrl, localUrl } = await this.resolveCameraUrls(
-      options.homeId,
-      options.cameraId
-    );
-
-    if (!vpnUrl && !localUrl) {
-      return {
-        ok: false,
-        videoId,
-        candidates: [],
-        workingCandidates: [],
-        needsAccessScope: true,
-        error:
-          'Netatmo did not expose a camera stream URL (vpn_url). Video playback requires Netatmo Web Sign-In or OAuth access_camera / access_presence scopes.',
-      };
-    }
-
     const encodedVid = encodeURIComponent(videoId);
-    const candidates: string[] = [];
-    if (localUrl) {
-      securityMediaProxy.allowUrlOrigin(localUrl);
-      candidates.push(`${localUrl}/vod/${encodedVid}/index_local.m3u8`);
-      candidates.push(`${localUrl}/vod/${encodedVid}/index.m3u8`);
-      candidates.push(
-        `${localUrl}/vod/${encodedVid}/files/high/index_local.m3u8`
-      );
-      candidates.push(`${localUrl}/vod/${encodedVid}/files/high/index.m3u8`);
-    }
-    if (vpnUrl) {
-      securityMediaProxy.allowUrlOrigin(vpnUrl);
-      candidates.push(`${vpnUrl}/vod/${encodedVid}/index.m3u8`);
-      candidates.push(`${vpnUrl}/vod/${encodedVid}/files/high/index.m3u8`);
-      candidates.push(`${vpnUrl}/vod/${encodedVid}/files/medium/index.m3u8`);
-    }
-
-    const workingCandidates: string[] = [];
-    let lastError: string | undefined;
-    for (const candidate of candidates) {
-      const probe = await this.fetchSecurityMedia({
-        url: candidate,
-        responseType: 'text',
-      });
-      if (probe.ok && probe.dataText && probe.dataText.includes('#EXTM3U')) {
-        workingCandidates.push(candidate);
-        if (localUrl && candidate.startsWith(localUrl)) {
-          continue;
-        }
-        break;
-      }
-      lastError = probe.error || `HTTP ${probe.status}`;
-    }
-
-    if (workingCandidates.length === 0) {
-      return {
-        ok: false,
-        videoId,
-        vpnUrl,
-        localUrl,
-        candidates,
-        workingCandidates: [],
-        error: `Recorded video clip could not be opened (${
-          lastError || 'unavailable on camera SD card or expired'
-        }).`,
-      };
-    }
+    const probed = await this.probeCameraStreamCandidates({
+      homeId: options.homeId,
+      cameraId: options.cameraId,
+      localPaths: [
+        `/vod/${encodedVid}/index_local.m3u8`,
+        `/vod/${encodedVid}/index.m3u8`,
+        `/vod/${encodedVid}/files/high/index_local.m3u8`,
+        `/vod/${encodedVid}/files/high/index.m3u8`,
+      ],
+      vpnPaths: [
+        `/vod/${encodedVid}/index.m3u8`,
+        `/vod/${encodedVid}/files/high/index.m3u8`,
+        `/vod/${encodedVid}/files/medium/index.m3u8`,
+      ],
+      unavailableError: 'Recorded video clip could not be opened',
+    });
 
     return {
-      ok: true,
+      ...probed,
       videoId,
-      vpnUrl,
-      localUrl,
-      candidates,
-      workingCandidates,
     };
   }
 
@@ -3259,42 +3364,50 @@ export class NetatmoClient {
     videoId?: string;
   }): Promise<SecurityEventVideoResult> {
     const discovered = await this.discoverVideoCandidates(options);
-    if (discovered.isDemo) {
-      return { ok: true, isDemo: true };
-    }
-    if (!discovered.ok || discovered.workingCandidates.length === 0) {
+    return this.buildProxiedStreamResult({
+      ...discovered,
+      localHintPath: discovered.videoId
+        ? `/vod/${encodeURIComponent(discovered.videoId)}/index_local.m3u8`
+        : undefined,
+    });
+  }
+
+  /**
+   * Resolves the playable live HLS stream URL (`{local_url|vpn_url}/live/index*.m3u8`) for a camera.
+   */
+  public async getCameraLiveStream(options: {
+    homeId: string;
+    cameraId: string;
+  }): Promise<SecurityEventVideoResult> {
+    if (!options.cameraId) {
       return {
         ok: false,
-        vpnUrl: discovered.vpnUrl,
-        localUrl: discovered.localUrl,
-        fallbackHlsUrls: discovered.candidates,
-        needsAccessScope: discovered.needsAccessScope,
-        error: discovered.error || 'Video stream unavailable.',
+        error: 'Camera ID is required for live streaming.',
       };
     }
 
-    const primaryRaw = discovered.workingCandidates[0];
-    const remainingRaw = discovered.candidates.filter((u) => u !== primaryRaw);
-    const orderedRaw = [primaryRaw, ...remainingRaw];
-    const proxied = await Promise.all(
-      orderedRaw.map((u) => securityMediaProxy.toProxyUrl(u))
-    );
+    const discovered = await this.probeCameraStreamCandidates({
+      homeId: options.homeId,
+      cameraId: options.cameraId,
+      localPaths: [
+        '/live/index_local.m3u8',
+        '/live/index.m3u8',
+        '/live/files/high/index_local.m3u8',
+        '/live/files/high/index.m3u8',
+      ],
+      vpnPaths: [
+        '/live/index.m3u8',
+        '/live/files/high/index.m3u8',
+        '/live/files/medium/index.m3u8',
+      ],
+      unavailableError:
+        'Live camera stream could not be opened (camera may be offline or monitoring is disabled)',
+    });
 
-    return {
-      ok: true,
-      hlsUrl: proxied[0],
-      localHlsUrl: discovered.localUrl
-        ? `${discovered.localUrl}/vod/${encodeURIComponent(
-            discovered.videoId || ''
-          )}/index_local.m3u8`
-        : undefined,
-      fallbackHlsUrls: proxied.slice(1),
-      vpnUrl: discovered.vpnUrl,
-      localUrl: discovered.localUrl,
-      isLocalStream: Boolean(
-        discovered.localUrl && primaryRaw.startsWith(discovered.localUrl)
-      ),
-    };
+    return this.buildProxiedStreamResult({
+      ...discovered,
+      localHintPath: '/live/index_local.m3u8',
+    });
   }
 
   /**
