@@ -12,6 +12,7 @@ import {
   SecurityEventImageRefreshResult,
   SecurityEventVideoResult,
   SecurityMediaFetchResult,
+  SecurityVideoDownloadProgress,
   SetPersonsAwayResult,
   StorageStats,
   StoredApiKeysInfo,
@@ -180,6 +181,9 @@ export interface WinAtmoAPI {
   onDebugStream: (cb: (event: DebugStreamEvent) => void) => () => void;
   onSecurityUpdated: (cb: (payload: SecurityDataPayload) => void) => () => void;
   onSecurityCleared: (cb: () => void) => () => void;
+  onSecurityVideoDownloadProgress: (
+    cb: (progress: SecurityVideoDownloadProgress) => void
+  ) => () => void;
 }
 
 const api: WinAtmoAPI = {
@@ -333,6 +337,13 @@ const api: WinAtmoAPI = {
     const handler = () => cb();
     ipcRenderer.on('security:cleared', handler);
     return () => ipcRenderer.removeListener('security:cleared', handler);
+  },
+  onSecurityVideoDownloadProgress: (cb) => {
+    const handler = (_e: any, progress: SecurityVideoDownloadProgress) =>
+      cb(progress);
+    ipcRenderer.on('security:video-download-progress', handler);
+    return () =>
+      ipcRenderer.removeListener('security:video-download-progress', handler);
   },
 };
 

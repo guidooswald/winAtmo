@@ -1964,6 +1964,9 @@ function registerIpcHandlers(): void {
         },
         async (filePath, data) => {
           await fs.promises.writeFile(filePath, data);
+        },
+        (progress) => {
+          broadcastToAllWindows('security:video-download-progress', progress);
         }
       );
     }

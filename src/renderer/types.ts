@@ -507,3 +507,14 @@ export interface SecurityDownloadResult {
   segmentCount?: number;
   error?: string;
 }
+
+export interface SecurityVideoDownloadProgress {
+  eventId?: string;
+  videoId?: string;
+  phase: 'resolving' | 'downloading' | 'writing' | 'done' | 'error' | 'canceled';
+  completedSegments: number;
+  totalSegments: number;
+  bytesDownloaded: number;
+  percent: number;
+  message?: string;
+}

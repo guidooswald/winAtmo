@@ -37,6 +37,7 @@ import {
   SecurityEvent,
   SecurityEventVideoResult,
   SecurityPerson,
+  SecurityVideoDownloadProgress,
 } from '../types';
 import { useI18n } from '../utils/i18n';
 import { HlsVideoPlayer } from './HlsVideoPlayer';
@@ -200,6 +201,46 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     tone: 'ok' | 'err';
     text: string;
   } | null>(null);
+  const [videoDownloadProgress, setVideoDownloadProgress] = useState<
+    Record<string, SecurityVideoDownloadProgress>
+  >({});
+
+  const formatDownloadBytes = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const renderVideoDownloadProgress = (eventId: string) => {
+    if (!downloadingMedia[`video:${eventId}`]) return null;
+    const prog = videoDownloadProgress[eventId];
+    const isIndeterminate = !prog || prog.totalSegments <= 0;
+    const pct = prog ? Math.max(0, Math.min(100, prog.percent)) : 0;
+
+    return (
+      <div className="video-download-progress-card">
+        <div className="video-download-progress-top">
+          <span>
+            {prog?.message || 'Preparing video download...'}
+            {prog && prog.bytesDownloaded > 0
+              ? ` (${formatDownloadBytes(prog.bytesDownloaded)})`
+              : ''}
+          </span>
+          <strong>
+            {isIndeterminate ? '...' : `${pct}%`}
+          </strong>
+        </div>
+        <div className="video-download-progress-track">
+          <div
+            className={`video-download-progress-fill ${
+              isIndeterminate ? 'indeterminate' : ''
+            }`}
+            style={isIndeterminate ? undefined : { width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    );
+  };
   const videoModalRef = useRef<HTMLDivElement | null>(null);
   const [isResizingVideoModal, setIsResizingVideoModal] = useState(false);
   const [videoModalMaximized, setVideoModalMaximized] = useState(false);
@@ -319,6 +360,19 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
       const key = `video:${ev.id}`;
       setDownloadingMedia((prev) => ({ ...prev, [key]: true }));
       setDownloadNotice(null);
+      setVideoDownloadProgress((prev) => ({
+        ...prev,
+        [ev.id]: {
+          eventId: ev.id,
+          videoId: ev.videoId,
+          phase: 'resolving',
+          completedSegments: 0,
+          totalSegments: 0,
+          bytesDownloaded: 0,
+          percent: 0,
+          message: 'Preparing video download...',
+        },
+      }));
 
       try {
         const res = await window.winatmo.downloadSecurityVideo({
@@ -354,6 +408,11 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
         });
       } finally {
         setDownloadingMedia((prev) => ({ ...prev, [key]: false }));
+        setVideoDownloadProgress((prev) => {
+          const next = { ...prev };
+          delete next[ev.id];
+          return next;
+        });
       }
     },
     [buildDownloadBaseName]
@@ -563,10 +622,23 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
           })
         : undefined;
 
+    const unsubVideoProg =
+      typeof window.winatmo?.onSecurityVideoDownloadProgress === 'function'
+        ? window.winatmo.onSecurityVideoDownloadProgress((progress) => {
+            if (!cancelled && progress.eventId) {
+              setVideoDownloadProgress((prev) => ({
+                ...prev,
+                [progress.eventId!]: progress,
+              }));
+            }
+          })
+        : undefined;
+
     return () => {
       cancelled = true;
       unsubUpdated?.();
       unsubCleared?.();
+      unsubVideoProg?.();
     };
   }, [account.loggedIn, account.authMethod, loadSecurity]);
 
@@ -1341,6 +1413,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                     {imgErrorMsg && (
                       <div className="event-media-note">{imgErrorMsg}</div>
                     )}
+                    {renderVideoDownloadProgress(ev.id)}
                     {downloadNotice?.eventId === ev.id && (
                       <div
                         className={`event-download-note ${downloadNotice.tone}`}
@@ -1611,6 +1684,8 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                 </button>
               </div>
             </div>
+
+            {renderVideoDownloadProgress(videoEvent.id)}
 
             {downloadNotice?.eventId === videoEvent.id && (
               <div className={`event-download-note ${downloadNotice.tone}`}>

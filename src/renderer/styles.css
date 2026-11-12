@@ -4686,6 +4686,60 @@ body {
   color: var(--accent-rose);
 }
 
+.video-download-progress-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-surface);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.video-download-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.video-download-progress-top strong {
+  color: var(--accent-sky);
+  font-variant-numeric: tabular-nums;
+}
+
+.video-download-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.video-download-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-sky), var(--accent-emerald));
+  transition: width 0.18s ease;
+}
+
+.video-download-progress-fill.indeterminate {
+  width: 42%;
+  animation: videoProgressIndeterminate 1.25s infinite ease-in-out;
+}
+
+@keyframes videoProgressIndeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
 .event-time-col {
   display: flex;
   flex-direction: column;

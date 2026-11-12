@@ -22,6 +22,7 @@ import {
   SecurityMediaFetchResult,
   SecurityPerson,
   SecuritySubEvent,
+  SecurityVideoDownloadProgress,
   SetPersonsAwayResult,
   StationModule,
   StoredCookie,
@@ -3364,7 +3365,8 @@ export class NetatmoClient {
       videoId?: string;
     },
     chooseSavePath: (suggestedExt: 'ts' | 'mp4') => Promise<string | null>,
-    writeTargetFile: (filePath: string, data: Buffer) => Promise<void>
+    writeTargetFile: (filePath: string, data: Buffer) => Promise<void>,
+    onProgress?: (progress: SecurityVideoDownloadProgress) => void
   ): Promise<{
     success: boolean;
     canceled?: boolean;
@@ -3373,27 +3375,60 @@ export class NetatmoClient {
     segmentCount?: number;
     error?: string;
   }> {
+    const emitProg = (
+      phase: SecurityVideoDownloadProgress['phase'],
+      completedSegments: number,
+      totalSegments: number,
+      bytesDownloaded: number,
+      message?: string
+    ) => {
+      const percent =
+        phase === 'writing' || phase === 'done'
+          ? 100
+          : totalSegments > 0
+            ? Math.min(99, Math.round((completedSegments / totalSegments) * 100))
+            : 0;
+      onProgress?.({
+        eventId: options.eventId,
+        videoId: options.videoId,
+        phase,
+        completedSegments,
+        totalSegments,
+        bytesDownloaded,
+        percent,
+        message,
+      });
+    };
+
+    emitProg('resolving', 0, 0, 0, 'Resolving camera video stream...');
     const discovered = await this.discoverVideoCandidates(options);
     if (discovered.isDemo) {
+      const msg = 'Demo events do not contain a downloadable live video stream.';
+      emitProg('error', 0, 0, 0, msg);
       return {
         success: false,
-        error: 'Demo events do not contain a downloadable live video stream.',
+        error: msg,
       };
     }
     if (!discovered.ok || discovered.workingCandidates.length === 0) {
+      const msg = discovered.error || 'Video clip is unavailable.';
+      emitProg('error', 0, 0, 0, msg);
       return {
         success: false,
-        error: discovered.error || 'Video clip is unavailable.',
+        error: msg,
       };
     }
 
+    emitProg('resolving', 0, 0, 0, 'Reading HLS segment playlist...');
     const mediaPlaylistRes = await this.resolveMediaPlaylist(
       discovered.workingCandidates[0]
     );
     if (!mediaPlaylistRes.ok || !mediaPlaylistRes.text || !mediaPlaylistRes.baseUrl) {
+      const msg = mediaPlaylistRes.error || 'Failed to read HLS media playlist.';
+      emitProg('error', 0, 0, 0, msg);
       return {
         success: false,
-        error: mediaPlaylistRes.error || 'Failed to read HLS media playlist.',
+        error: msg,
       };
     }
 
@@ -3402,18 +3437,31 @@ export class NetatmoClient {
       mediaPlaylistRes.baseUrl
     );
     if (parsedPlaylist.segments.length === 0) {
+      const msg = 'No video segments found in HLS playlist.';
+      emitProg('error', 0, 0, 0, msg);
       return {
         success: false,
-        error: 'No video segments found in HLS playlist.',
+        error: msg,
       };
     }
 
     const savePath = await chooseSavePath(parsedPlaylist.ext);
     if (!savePath) {
+      emitProg('canceled', 0, parsedPlaylist.segments.length, 0);
       return { success: false, canceled: true };
     }
 
+    const totalSegments = parsedPlaylist.segments.length;
+    let totalBytes = 0;
     const chunks: Buffer[] = [];
+
+    emitProg(
+      'downloading',
+      0,
+      totalSegments,
+      0,
+      `Downloading 0 / ${totalSegments} segments...`
+    );
 
     if (parsedPlaylist.initMapUrl) {
       const initRes = await this.fetchSecurityMedia({
@@ -3421,7 +3469,9 @@ export class NetatmoClient {
         responseType: 'arraybuffer',
       });
       if (initRes.ok && initRes.dataBuffer) {
-        chunks.push(Buffer.from(initRes.dataBuffer));
+        const initBuf = Buffer.from(initRes.dataBuffer);
+        totalBytes += initBuf.byteLength;
+        chunks.push(initBuf);
       }
     }
 
@@ -3437,11 +3487,13 @@ export class NetatmoClient {
       });
 
       if (!res.ok || !res.dataBuffer) {
+        const msg = `Failed while downloading segment ${
+          segIndex + 1
+        }/${totalSegments}: ${res.error || `HTTP ${res.status}`}`;
+        emitProg('error', segIndex, totalSegments, totalBytes, msg);
         return {
           success: false,
-          error: `Failed while downloading segment ${segIndex + 1}/${
-            parsedPlaylist.segments.length
-          }: ${res.error || `HTTP ${res.status}`}`,
+          error: msg,
         };
       }
 
@@ -3454,9 +3506,11 @@ export class NetatmoClient {
             responseType: 'arraybuffer',
           });
           if (!keyRes.ok || !keyRes.dataBuffer || keyRes.dataBuffer.byteLength !== 16) {
+            const msg = 'Failed to fetch HLS decryption key.';
+            emitProg('error', segIndex, totalSegments, totalBytes, msg);
             return {
               success: false,
-              error: 'Failed to fetch HLS decryption key.',
+              error: msg,
             };
           }
           keyBuf = Buffer.from(keyRes.dataBuffer);
@@ -3476,16 +3530,26 @@ export class NetatmoClient {
       }
 
       chunks.push(segBuf);
+      totalBytes += segBuf.byteLength;
       segIndex++;
+      emitProg(
+        'downloading',
+        segIndex,
+        totalSegments,
+        totalBytes,
+        `Downloading segment ${segIndex} / ${totalSegments}`
+      );
     }
 
+    emitProg('writing', totalSegments, totalSegments, totalBytes, 'Writing video file...');
     const finalBuffer = Buffer.concat(chunks);
     await writeTargetFile(savePath, finalBuffer);
+    emitProg('done', totalSegments, totalSegments, finalBuffer.byteLength, 'Download complete');
 
     debugLogger.log(
       'info',
       'SecurityVideo',
-      `Downloaded security video (${parsedPlaylist.segments.length} segments, ${finalBuffer.byteLength} bytes) to ${savePath}`,
+      `Downloaded security video (${totalSegments} segments, ${finalBuffer.byteLength} bytes) to ${savePath}`,
       undefined,
       'security'
     );
@@ -3494,7 +3558,7 @@ export class NetatmoClient {
       success: true,
       filePath: savePath,
       bytesWritten: finalBuffer.byteLength,
-      segmentCount: parsedPlaylist.segments.length,
+      segmentCount: totalSegments,
     };
   }
 
