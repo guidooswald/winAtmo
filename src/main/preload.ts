@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   AccountInfo,
+  DebugStreamEvent,
+  DebugTelemetrySnapshot,
   MeasureQueryRequest,
   MeasureQueryStatus,
   MeasureSeries,
@@ -108,6 +110,11 @@ export interface WinAtmoAPI {
   updateSettings: (partial: Partial<UserSettings>) => Promise<UserSettings>;
   openExternal: (url: string) => Promise<void>;
 
+  // Debug Console & Telemetry
+  openDebugWindow: () => void;
+  getDebugSnapshot: () => Promise<DebugTelemetrySnapshot>;
+  clearDebugLogs: () => Promise<DebugTelemetrySnapshot>;
+
   // Event Subscriptions
   onAccountUpdated: (cb: (account: AccountInfo) => void) => () => void;
   onStationsUpdated: (cb: (stations: WeatherStation[]) => void) => () => void;
@@ -118,6 +125,7 @@ export interface WinAtmoAPI {
   onFocusSensor: (
     cb: (payload: { moduleId: string; metric?: string }) => void
   ) => () => void;
+  onDebugStream: (cb: (event: DebugStreamEvent) => void) => () => void;
 }
 
 const api: WinAtmoAPI = {
@@ -198,6 +206,10 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('settings:update', partial),
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
 
+  openDebugWindow: () => ipcRenderer.send('debug:open-window'),
+  getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),
+  clearDebugLogs: () => ipcRenderer.invoke('debug:clear'),
+
   onAccountUpdated: (cb) => {
     const handler = (_e: any, account: AccountInfo) => cb(account);
     ipcRenderer.on('account:updated', handler);
@@ -236,6 +248,11 @@ const api: WinAtmoAPI = {
     ) => cb(payload);
     ipcRenderer.on('sensor:focus', handler);
     return () => ipcRenderer.removeListener('sensor:focus', handler);
+  },
+  onDebugStream: (cb) => {
+    const handler = (_e: any, event: DebugStreamEvent) => cb(event);
+    ipcRenderer.on('debug:stream', handler);
+    return () => ipcRenderer.removeListener('debug:stream', handler);
   },
 };
 

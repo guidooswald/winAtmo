@@ -17,6 +17,7 @@ import { AppStore } from './store';
 import { TimeSeriesDatabase } from './database';
 import { NetatmoClient } from './netatmoClient';
 import { WebAuthManager } from './webAuth';
+import { debugLogger } from './debugLogger';
 import {
   initTaskbarIconRenderer,
   resolveTaskbarReading,
@@ -39,6 +40,7 @@ app.setAppUserModelId('guidooswald.winAtmo');
 
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
+let debugWindow: BrowserWindow | null = null;
 let isWidgetExpanded = false;
 let widgetExpandDirection: 'up' | 'down' = 'up';
 let widgetTargetSize = { width: 420, height: 48 };
@@ -455,6 +457,10 @@ function createMainWindow(shouldShow = true): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    if (!store?.getSettings()?.minimizeToTray && isQuitting) {
+      if (debugWindow && !debugWindow.isDestroyed()) debugWindow.close();
+      if (widgetWindow && !widgetWindow.isDestroyed()) widgetWindow.close();
+    }
   });
 }
 
@@ -698,12 +704,90 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
   });
 }
 
+function createOrShowDebugWindow(): void {
+  if (debugWindow && !debugWindow.isDestroyed()) {
+    if (debugWindow.isMinimized()) debugWindow.restore();
+    debugWindow.show();
+    debugWindow.focus();
+    return;
+  }
+
+  const settings = store ? store.getSettings() : null;
+  const currentTheme = settings ? settings.theme : 'fluent-dark';
+  const initialBg = THEME_BG_COLORS[currentTheme] || '#090d16';
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+  const width = Math.min(1240, Math.max(820, workArea.width - 80));
+  const height = Math.min(820, Math.max(560, workArea.height - 80));
+
+  debugWindow = new BrowserWindow({
+    width,
+    height,
+    minWidth: 800,
+    minHeight: 520,
+    center: true,
+    backgroundColor: initialBg,
+    darkTheme: !LIGHT_THEME_IDS.has(currentTheme),
+    autoHideMenuBar: true,
+    frame: false,
+    title: 'winAtmo • API & Sync Debug Console',
+    icon: createTrayNativeImage(),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+    show: true,
+  });
+
+  debugWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  debugWindow.on('page-title-updated', (e) => {
+    e.preventDefault();
+  });
+
+  debugWindow.on('maximize', () => {
+    debugWindow?.webContents.send('window:maximized-change', true);
+  });
+
+  debugWindow.on('unmaximize', () => {
+    debugWindow?.webContents.send('window:maximized-change', false);
+  });
+
+  debugWindow.on('closed', () => {
+    debugWindow = null;
+  });
+
+  const entry = getRendererEntryUrl('debug');
+  if (entry.isDev) {
+    debugWindow.loadURL(entry.url);
+  } else {
+    debugWindow.loadFile(entry.filePath, { query: { mode: 'debug' } });
+  }
+
+  debugWindow.webContents.on('did-fail-load', () => {
+    debugWindow?.loadFile(entry.filePath, { query: { mode: 'debug' } });
+  });
+
+  debugWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12' && input.type === 'keyDown') {
+      debugWindow?.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+}
+
 function broadcastToAllWindows(channel: string, payload: any): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
   if (widgetWindow && !widgetWindow.isDestroyed()) {
     widgetWindow.webContents.send(channel, payload);
+  }
+  if (debugWindow && !debugWindow.isDestroyed()) {
+    debugWindow.webContents.send(channel, payload);
   }
 }
 
@@ -1568,9 +1652,28 @@ function registerIpcHandlers(): void {
       }
     } catch {}
   });
+
+  // Debug Console Window & Telemetry IPC
+  ipcMain.on('debug:open-window', () => {
+    createOrShowDebugWindow();
+  });
+
+  ipcMain.handle('debug:get-snapshot', () => {
+    return debugLogger.getSnapshot();
+  });
+
+  ipcMain.handle('debug:clear', () => {
+    debugLogger.clear();
+    return debugLogger.getSnapshot();
+  });
 }
 
 app.whenReady().then(async () => {
+  debugLogger.attachConsoleCapture();
+  debugLogger.subscribe((event) => {
+    broadcastToAllWindows('debug:stream', event);
+  });
+
   store = new AppStore();
   await store.init();
   db = new TimeSeriesDatabase();

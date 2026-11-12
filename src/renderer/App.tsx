@@ -28,6 +28,7 @@ import { StationDashboard } from './components/StationDashboard';
 import { ChartStudio } from './components/ChartStudio';
 import { SettingsView } from './components/SettingsView';
 import { TaskbarWidget } from './components/TaskbarWidget';
+import { DebugConsoleWindow } from './components/DebugConsoleWindow';
 import { SyncOverlayWindow } from './components/SyncOverlayWindow';
 import { WindowTopBar } from './components/WindowTopBar';
 import { applyThemeToDocument, THEMES } from './utils/themes';
@@ -41,12 +42,17 @@ declare global {
 }
 
 export const App: React.FC = () => {
-  const isWidgetMode =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('mode') === 'widget';
+  const mode =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('mode')
+      : null;
 
-  if (isWidgetMode) {
+  if (mode === 'widget') {
     return <TaskbarWidget />;
+  }
+
+  if (mode === 'debug') {
+    return <DebugConsoleWindow />;
   }
 
   return <MainStudioApp />;

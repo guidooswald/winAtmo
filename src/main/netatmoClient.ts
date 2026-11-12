@@ -1,5 +1,6 @@
 import { AppStore } from './store';
 import { TimeSeriesDatabase, BatchMeasurementRow } from './database';
+import { debugLogger } from './debugLogger';
 import {
   AccountInfo,
   DashboardReadings,
@@ -232,9 +233,11 @@ export class NetatmoClient {
     const clientSecret = settings.oauthClientSecret;
 
     if (session.refreshToken && clientId && clientSecret) {
+      const tokenStart = performance.now();
       try {
         const res = await fetch('https://api.netatmo.com/oauth2/token', {
           method: 'POST',
+          signal: AbortSignal.timeout(15000),
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
           },
@@ -246,7 +249,27 @@ export class NetatmoClient {
           }).toString(),
         });
 
-        const data = await res.json().catch(() => null);
+        const rawText = await res.text();
+        const tokenDuration = Math.max(1, Math.round(performance.now() - tokenStart));
+        const tokenBytes = Buffer.byteLength(rawText, 'utf8');
+        let data: any = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch {}
+
+        debugLogger.recordApiRequest({
+          method: 'POST',
+          endpoint: 'oauth2/token',
+          baseHost: 'api.netatmo.com',
+          url: 'https://api.netatmo.com/oauth2/token',
+          status: res.status,
+          ok: res.ok && !!data?.access_token,
+          durationMs: tokenDuration,
+          bytesReceived: tokenBytes,
+          rawBody: rawText,
+          error: res.ok ? undefined : data?.error || `HTTP ${res.status}`,
+          note: 'OAuth2 refresh_token',
+        });
 
         if (res.ok && data?.access_token) {
           const newExpiresAt = now + (Number(data.expires_in) || 10800);
@@ -282,7 +305,20 @@ export class NetatmoClient {
             data
           );
         }
-      } catch (err) {
+      } catch (err: any) {
+        const tokenDuration = Math.max(1, Math.round(performance.now() - tokenStart));
+        debugLogger.recordApiRequest({
+          method: 'POST',
+          endpoint: 'oauth2/token',
+          baseHost: 'api.netatmo.com',
+          url: 'https://api.netatmo.com/oauth2/token',
+          status: null,
+          ok: false,
+          durationMs: tokenDuration,
+          bytesReceived: 0,
+          error: err?.message || 'Network error',
+          note: 'OAuth2 refresh_token',
+        });
         console.warn('[NetatmoClient] OAuth token refresh network error:', err);
       }
     }
@@ -318,7 +354,8 @@ export class NetatmoClient {
   private async apiGet(
     endpoint: string,
     params: Record<string, string | number | boolean | undefined> = {},
-    retried = false
+    retried = false,
+    requestNote?: string
   ): Promise<any> {
     const token = await this.ensureAccessToken(false);
     const session = this.store.getSession();
@@ -343,10 +380,12 @@ export class NetatmoClient {
 
     for (const base of [preferredBase, fallbackBase]) {
       const url = `https://${base}/api/${endpoint}${qs ? '?' + qs : ''}`;
+      const reqStart = performance.now();
       let res: Response;
       try {
         res = await fetch(url, {
           method: 'GET',
+          signal: AbortSignal.timeout(20000),
           headers: {
             Accept: 'application/json',
             Authorization: `Bearer ${token}`,
@@ -356,31 +395,76 @@ export class NetatmoClient {
         });
       } catch (netErr: any) {
         lastNetworkErr = netErr;
+        const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint,
+          baseHost: base,
+          url,
+          status: null,
+          ok: false,
+          durationMs,
+          bytesReceived: 0,
+          error: netErr?.message || netErr?.code || 'Network error / timeout',
+          note: requestNote,
+        });
+        debugLogger.log(
+          'warn',
+          'API',
+          `GET /${endpoint} failed on ${base} (${netErr?.code || netErr?.message}), trying fallback...`
+        );
         // Network or DNS error on this domain (e.g. ENOTFOUND or timeout); try fallback domain
         continue;
       }
 
       lastHttpStatus = res.status;
+      let rawText = '';
+      try {
+        rawText = await res.text();
+      } catch (readErr: any) {
+        rawText = '';
+      }
+      const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
+      const bytesReceived = Buffer.byteLength(rawText, 'utf8');
+
+      let parsedJson: any = null;
+      try {
+        parsedJson = rawText ? JSON.parse(rawText) : null;
+      } catch {}
 
       if (res.status === 401 || res.status === 403) {
-        let errCode = 0;
-        let errMsg = '';
-        try {
-          const errJson = await res.json();
-          errCode = errJson?.error?.code || 0;
-          errMsg = errJson?.error?.message || '';
-        } catch {}
+        const errCode = parsedJson?.error?.code || 0;
+        const errMsg = parsedJson?.error?.message || '';
         lastHttpErrMsg =
           errMsg ||
           (res.status === 401
             ? 'Access token expired or invalid'
             : 'Forbidden');
 
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint,
+          baseHost: base,
+          url,
+          status: res.status,
+          ok: false,
+          durationMs,
+          bytesReceived,
+          rawBody: rawText,
+          error: lastHttpErrMsg,
+          note: requestNote,
+        });
+
         // Error codes 2 (Invalid access token) or 3 (Access token expired)
         if (!retried && (errCode === 2 || errCode === 3 || res.status === 401)) {
+          debugLogger.log(
+            'warn',
+            'Auth',
+            `Received HTTP ${res.status} on /${endpoint}, refreshing access token and retrying...`
+          );
           try {
             await this.ensureAccessToken(true);
-            return this.apiGet(endpoint, params, true);
+            return this.apiGet(endpoint, params, true, requestNote);
           } catch (refreshErr: any) {
             throw new Error(
               `Netatmo session expired: ${
@@ -396,31 +480,73 @@ export class NetatmoClient {
       }
 
       if (res.status === 429) {
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint,
+          baseHost: base,
+          url,
+          status: 429,
+          ok: false,
+          durationMs,
+          bytesReceived,
+          rawBody: rawText,
+          error: 'Rate limit exceeded (HTTP 429)',
+          note: requestNote,
+        });
+        debugLogger.log(
+          'warn',
+          'API',
+          `Rate limit HTTP 429 on /${endpoint} (${base}) — waiting 2500ms before retry...`
+        );
         // Rate limit hit - wait 2.5 seconds and retry once
         await new Promise((r) => setTimeout(r, 2500));
         if (!retried) {
-          return this.apiGet(endpoint, params, true);
+          return this.apiGet(endpoint, params, true, requestNote);
         }
         throw new Error(
           'Netatmo API rate limit reached. Please wait a moment before syncing again.'
         );
       }
 
-      if (res.ok) {
-        const json = await res.json();
+      if (res.ok && parsedJson) {
+        debugLogger.recordApiRequest({
+          method: 'GET',
+          endpoint,
+          baseHost: base,
+          url,
+          status: res.status,
+          ok: true,
+          durationMs,
+          bytesReceived,
+          rawBody: rawText,
+          note: requestNote,
+        });
         if (base !== session.apiBase && (base === 'app.netatmo.net' || base === 'api.netatmo.com')) {
           this.store.updateSession({ apiBase: base });
         }
-        return json;
+        return parsedJson;
       }
 
       // Other non-ok response
-      try {
-        const errJson = await res.json();
-        lastHttpErrMsg = errJson?.error?.message || `HTTP ${res.status}`;
-      } catch {
-        lastHttpErrMsg = `HTTP ${res.status}`;
-      }
+      lastHttpErrMsg = parsedJson?.error?.message || `HTTP ${res.status}`;
+      debugLogger.recordApiRequest({
+        method: 'GET',
+        endpoint,
+        baseHost: base,
+        url,
+        status: res.status,
+        ok: false,
+        durationMs,
+        bytesReceived,
+        rawBody: rawText,
+        error: lastHttpErrMsg,
+        note: requestNote,
+      });
+      debugLogger.log(
+        'error',
+        'API',
+        `HTTP ${res.status} on /${endpoint} (${base}): ${lastHttpErrMsg}`
+      );
     }
 
     if (lastHttpStatus) {
@@ -902,9 +1028,18 @@ export class NetatmoClient {
     }
 
     this.isSyncing = true;
+    const syncStartedAt = performance.now();
     const settings = this.store.getSettings();
     const scale: NetatmoScale = options?.scale || settings.defaultScale || '30min';
     const now = Math.floor(Date.now() / 1000);
+
+    debugLogger.log(
+      'info',
+      'Sync',
+      `Starting historical sync (scale=${scale}, mode=${
+        settings.historyMaxMode ? 'MaxHistory' : `${options?.customDays || settings.historyDays}d`
+      }, forceFull=${Boolean(options?.forceFull)})`
+    );
 
     try {
       this.emitProgress({
@@ -1005,6 +1140,30 @@ export class NetatmoClient {
           }
         }
 
+        if (windowsToFetch.length === 0) {
+          debugLogger.log(
+            'debug',
+            'Sync',
+            `[${i + 1}/${allModules.length}] ${module.moduleName}: already cached cleanly in SQLite`
+          );
+        } else {
+          const desc = windowsToFetch
+            .map(
+              (w) =>
+                `${new Date(w.begin * 1000).toISOString().slice(0, 16)}..${new Date(
+                  w.end * 1000
+                )
+                  .toISOString()
+                  .slice(0, 16)}`
+            )
+            .join(', ');
+          debugLogger.log(
+            'info',
+            'Sync',
+            `[${i + 1}/${allModules.length}] ${module.moduleName}: fetching ${windowsToFetch.length} window(s) [${desc}]`
+          );
+        }
+
         this.emitProgress({
           message: `Loading ${module.moduleName} (${station.homeName})...`,
           completedModules: i,
@@ -1016,7 +1175,22 @@ export class NetatmoClient {
             module,
             scale,
             win.begin,
-            win.end
+            win.end,
+            (page, storedSoFar) => {
+              const rateBps = debugLogger.getStats().lastTransferRateBps;
+              const rateText =
+                rateBps >= 1024
+                  ? `${(rateBps / 1024).toFixed(1)} KB/s`
+                  : rateBps > 0
+                    ? `${rateBps} B/s`
+                    : '';
+              this.emitProgress({
+                message: `Loading ${module.moduleName} (${station.homeName}) • page ${page}${
+                  rateText ? ` • ${rateText}` : ''
+                }`,
+                pointsStored: totalPointsStored + storedSoFar,
+              });
+            }
           );
           totalPointsStored += stored;
           this.emitProgress({
@@ -1029,17 +1203,30 @@ export class NetatmoClient {
         });
       }
 
+      const elapsedSec = ((performance.now() - syncStartedAt) / 1000).toFixed(2);
+      debugLogger.log(
+        'info',
+        'Sync',
+        `Sync completed in ${elapsedSec}s: ${allModules.length} modules, ${totalPointsStored.toLocaleString()} new data points`
+      );
+
       this.emitProgress({
         active: false,
         phase: 'done',
-        message: `Synced ${allModules.length} sensors (${totalPointsStored.toLocaleString()} new data points)`,
+        message: `Synced ${allModules.length} sensors in ${elapsedSec}s (${totalPointsStored.toLocaleString()} new points)`,
         completedModules: allModules.length,
         totalModules: allModules.length,
         pointsStored: totalPointsStored,
         lastSyncAt: Math.floor(Date.now() / 1000),
       });
     } catch (err: any) {
+      const elapsedSec = ((performance.now() - syncStartedAt) / 1000).toFixed(2);
       console.error('[NetatmoClient] Historical sync error:', err);
+      debugLogger.log(
+        'error',
+        'Sync',
+        `Sync failed after ${elapsedSec}s: ${err?.message || 'Unknown error'}`
+      );
       this.emitProgress({
         active: false,
         phase: 'error',
@@ -1061,7 +1248,8 @@ export class NetatmoClient {
     module: StationModule,
     scale: NetatmoScale,
     dateBegin: number,
-    dateEnd: number
+    dateEnd: number,
+    onChunkProgress?: (pageCount: number, storedInWindow: number) => void
   ): Promise<number> {
     if (module.availableMetrics.length === 0 || dateBegin >= dateEnd) {
       return 0;
@@ -1108,7 +1296,13 @@ export class NetatmoClient {
         real_time: true,
       };
 
-      const response = await this.apiGet('getmeasure', params);
+      const chunkNote = `${module.moduleName} (${scale}) • Chunk #${pageCount} (${new Date(
+        cursor * 1000
+      )
+        .toISOString()
+        .slice(0, 10)} → ${new Date(chunkEnd * 1000).toISOString().slice(0, 10)})`;
+
+      const response = await this.apiGet('getmeasure', params, false, chunkNote);
       const body = response?.body;
 
       const batchRows: BatchMeasurementRow[] = [];
@@ -1179,6 +1373,8 @@ export class NetatmoClient {
         totalStored += this.db.insertBatch(batchRows);
       }
 
+      onChunkProgress?.(pageCount, totalStored);
+
       // If we reached targetEnd, we are done
       if (maxTsInBatch >= targetEnd - stepSeconds) {
         break;
@@ -1205,14 +1401,27 @@ export class NetatmoClient {
       }
     }
 
+    if (pageCount >= maxPagesPerSync && cursor < targetEnd) {
+      debugLogger.log(
+        'warn',
+        'Sync',
+        `${module.moduleName} reached maxPagesPerSync (${maxPagesPerSync}); remaining window will continue on next sync`
+      );
+    }
+
     // Record coverage so subsequent queries know this time window was synced
     if (lowestFetchedTs < Infinity && highestFetchedTs > 0) {
       const reachedEnd = cursor >= targetEnd || highestFetchedTs >= targetEnd - stepSeconds * 2;
       const covMin = Math.min(dateBegin, lowestFetchedTs);
       const covMax = reachedEnd ? Math.max(dateEnd, highestFetchedTs) : highestFetchedTs;
       this.db.updateSyncCoverage(module.id, scale, covMin, covMax);
-    } else if (pageCount > 0 && cursor >= targetEnd) {
-      this.db.updateSyncCoverage(module.id, scale, dateBegin, dateEnd);
+    } else if (pageCount > 0 && cursor > dateBegin) {
+      this.db.updateSyncCoverage(
+        module.id,
+        scale,
+        dateBegin,
+        Math.min(dateEnd, cursor)
+      );
     }
 
     return totalStored;

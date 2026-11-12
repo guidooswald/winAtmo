@@ -314,3 +314,58 @@ export interface SessionData {
   cookies: StoredCookie[];
   apiBase?: 'app.netatmo.net' | 'api.netatmo.com';
 }
+
+export type DebugLogLevel = 'info' | 'warn' | 'error' | 'debug';
+
+export interface DebugLogEntry {
+  id: string;
+  timestamp: number;
+  level: DebugLogLevel;
+  category: string;
+  message: string;
+  details?: string;
+}
+
+export interface ApiRequestLogEntry {
+  id: string;
+  timestamp: number;
+  method: string;
+  endpoint: string;
+  baseHost: string;
+  url: string;
+  status: number | null;
+  ok: boolean;
+  durationMs: number;
+  bytesReceived: number;
+  transferRateBytesPerSec: number;
+  error?: string;
+  rawBodyPreview?: string;
+  rawBodyTruncated?: boolean;
+  note?: string;
+}
+
+export interface DebugTelemetryStats {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  totalBytesReceived: number;
+  totalDurationMs: number;
+  averageLatencyMs: number;
+  averageTransferRateBps: number;
+  lastTransferRateBps: number;
+  rateLimitHits: number;
+  startedAt: number;
+}
+
+export interface DebugTelemetrySnapshot {
+  logs: DebugLogEntry[];
+  apiRequests: ApiRequestLogEntry[];
+  stats: DebugTelemetryStats;
+}
+
+export interface DebugStreamEvent {
+  type: 'log' | 'api' | 'clear';
+  logEntry?: DebugLogEntry;
+  apiEntry?: ApiRequestLogEntry;
+  stats: DebugTelemetryStats;
+}

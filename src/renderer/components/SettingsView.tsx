@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Sliders,
   Sun,
+  Terminal,
   Trash2,
   Unlock,
 } from 'lucide-react';
@@ -725,6 +726,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
           <div className="storage-actions-row">
+            <button
+              className="action-btn subtle"
+              onClick={() => window.winatmo.openDebugWindow()}
+              title="Open API & Sync Debug Console (raw API output, transfer rates, logs)"
+            >
+              <Terminal size={14} />
+              Debug Console
+            </button>
             <button
               className="action-btn subtle"
               onClick={() => onSyncNow(false)}
@@ -1547,6 +1556,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Connect with Token
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 7. API & Sync Debug Console */}
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div className="settings-title-group">
+            <Terminal size={18} className="accent-icon" />
+            <div>
+              <h3>API &amp; Sync Debug Console</h3>
+              <p>
+                Inspect live Netatmo HTTP requests, raw JSON API responses, payload transfer rates (KB/s), request latency, rate limits (429), and internal log messages in real time.
+              </p>
+            </div>
+          </div>
+          <div className="storage-actions-row">
+            <button
+              type="button"
+              className="action-btn primary"
+              onClick={() => window.winatmo.openDebugWindow()}
+            >
+              <Terminal size={14} />
+              Open Debug Window
+            </button>
           </div>
         </div>
       </div>

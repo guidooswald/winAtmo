@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { RefreshCw, CheckCircle2, AlertCircle, X, Terminal } from 'lucide-react';
 import { SyncProgress } from '../types';
 
 interface SyncOverlayWindowProps {
@@ -156,11 +156,22 @@ export const SyncOverlayWindow: React.FC<SyncOverlayWindowProps> = ({
             'Preparing request...'
           )}
         </span>
-        {progress.pointsStored > 0 && (
-          <span className="sync-footer-item points">
-            +{progress.pointsStored.toLocaleString()} points
-          </span>
-        )}
+        <div className="sync-footer-right">
+          {progress.pointsStored > 0 && (
+            <span className="sync-footer-item points">
+              +{progress.pointsStored.toLocaleString()} points
+            </span>
+          )}
+          <button
+            type="button"
+            className="sync-debug-link-btn"
+            onClick={() => window.winatmo.openDebugWindow()}
+            title="Open API & Sync Debug Console (raw API output, transfer rates, logs)"
+          >
+            <Terminal size={11} />
+            <span>Debug Log</span>
+          </button>
+        </div>
       </div>
     </aside>
   );
