@@ -143,7 +143,12 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [selectedHomeId, setSelectedHomeId] = useState<string>('all');
   const [selectedCameraId, setSelectedCameraId] = useState<string>('all');
+  const [selectedPersonId, setSelectedPersonId] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+
+  useEffect(() => {
+    setSelectedPersonId('all');
+  }, [selectedHomeId]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [lightboxEvent, setLightboxEvent] = useState<SecurityEvent | null>(null);
@@ -238,10 +243,21 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
 
   const filteredEvents = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    const selectedPerson =
+      selectedPersonId !== 'all'
+        ? allPersons.find((p) => p.id === selectedPersonId)
+        : undefined;
     return (data?.events || []).filter((ev) => {
       if (selectedHomeId !== 'all' && ev.homeId !== selectedHomeId) return false;
       if (selectedCameraId !== 'all' && ev.cameraId !== selectedCameraId) {
         return false;
+      }
+      if (selectedPersonId !== 'all') {
+        const matchesId = ev.personId === selectedPersonId;
+        const matchesName =
+          Boolean(selectedPerson?.pseudo) &&
+          ev.personName === selectedPerson?.pseudo;
+        if (!matchesId && !matchesName) return false;
       }
       if (typeFilter !== 'all' && classifyEventFilter(ev) !== typeFilter) {
         return false;
@@ -262,7 +278,15 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
       }
       return true;
     });
-  }, [data?.events, selectedHomeId, selectedCameraId, typeFilter, searchQuery]);
+  }, [
+    data?.events,
+    selectedHomeId,
+    selectedCameraId,
+    selectedPersonId,
+    allPersons,
+    typeFilter,
+    searchQuery,
+  ]);
 
   const onlineCameraCount = allCameras.filter(
     (c) => (c.monitoring || c.status) === 'on'
@@ -350,12 +374,14 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
         </div>
       )}
 
-      {/* Camera Hardware Status Cards */}
-      <section className="security-section">
-        <div className="security-section-header">
-          <h3>
-            <Video size={16} /> Camera Status ({allCameras.length})
-          </h3>
+      {/* Two-Column Main Layout: Events (left) + Camera Status & Known Persons (right) */}
+      <div className="security-main-columns">
+        {/* Camera Hardware Status Cards (Right Column) */}
+        <section className="security-section security-cameras-col">
+          <div className="security-section-header">
+            <h3>
+              <Video size={16} /> Camera Status ({allCameras.length})
+            </h3>
           {selectedCameraId !== 'all' && (
             <button
               type="button"
@@ -497,47 +523,84 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
           </div>
         )}
 
-        {/* Known Persons (Home / Away presence) */}
-        {allPersons.length > 0 && (
-          <div className="security-persons-bar">
-            <span className="persons-bar-label">
-              <Users size={13} /> Known Persons:
-            </span>
-            <div className="persons-pills-row">
-              {allPersons.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={`person-status-pill ${
-                    p.outOfSight ? 'away' : 'home'
-                  }`}
-                  onClick={() =>
-                    setSearchQuery((prev) =>
-                      prev === (p.pseudo || '') ? '' : p.pseudo || ''
-                    )
-                  }
-                  title={
-                    p.lastSeen
-                      ? `Last seen: ${formatDate(p.lastSeen * 1000)} ${formatTime(
-                          p.lastSeen * 1000
-                        )}`
-                      : undefined
-                  }
+        {/* Known Persons (Home / Away presence dropdown) */}
+        {allPersons.length > 0 && (() => {
+          const homeCount = allPersons.filter((p) => !p.outOfSight).length;
+          const activePerson =
+            selectedPersonId !== 'all'
+              ? allPersons.find((p) => p.id === selectedPersonId)
+              : undefined;
+          return (
+            <div className="security-persons-dropdown-card">
+              <div className="persons-dropdown-header">
+                <label
+                  htmlFor="security-persons-select"
+                  className="persons-bar-label"
                 >
+                  <Users size={13} /> Known Persons ({allPersons.length})
+                </label>
+                <span className="persons-presence-summary">
+                  {homeCount} at home • {allPersons.length - homeCount} away
+                </span>
+              </div>
+              <select
+                id="security-persons-select"
+                className="select-input security-persons-select"
+                value={selectedPersonId}
+                onChange={(e) => setSelectedPersonId(e.target.value)}
+              >
+                <option value="all">
+                  All Known Persons ({allPersons.length})
+                </option>
+                {allPersons.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.pseudo || 'Unknown'} —{' '}
+                    {p.outOfSight ? 'Away' : 'At Home'}
+                  </option>
+                ))}
+              </select>
+              {activePerson && (
+                <div className="persons-selected-meta">
                   <span
-                    className={`presence-dot ${p.outOfSight ? 'away' : 'home'}`}
+                    className={`presence-dot ${
+                      activePerson.outOfSight ? 'away' : 'home'
+                    }`}
                   />
-                  <span>{p.pseudo || 'Unknown'}</span>
-                  <small>{p.outOfSight ? 'Away' : 'At Home'}</small>
-                </button>
-              ))}
+                  <span>
+                    {activePerson.pseudo || 'Unknown'} is{' '}
+                    <strong>
+                      {activePerson.outOfSight ? 'Away' : 'At Home'}
+                    </strong>
+                    {activePerson.lastSeen
+                      ? ` • Last seen ${formatDate(
+                          activePerson.lastSeen * 1000
+                        )} ${formatTime(activePerson.lastSeen * 1000)}`
+                      : ''}
+                  </span>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
       </section>
 
-      {/* Event List Section */}
-      <section className="security-section">
+      {/* Event List Section (Left Column) */}
+      <section className="security-section security-events-col">
+        <div className="security-section-header">
+          <h3>
+            <Shield size={16} /> Events ({filteredEvents.length})
+          </h3>
+          {selectedPersonId !== 'all' && (
+            <button
+              type="button"
+              className="pill-btn active"
+              onClick={() => setSelectedPersonId('all')}
+            >
+              Person filter active • Clear ×
+            </button>
+          )}
+        </div>
+
         <div className="security-events-toolbar">
           <div className="pill-group">
             {(
@@ -729,6 +792,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
           </div>
         )}
       </section>
+      </div>
 
       {/* Snapshot Lightbox Modal */}
       {lightboxEvent && (

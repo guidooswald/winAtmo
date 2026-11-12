@@ -3928,6 +3928,24 @@ body {
   color: var(--text-secondary);
 }
 
+.security-main-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  grid-template-areas: 'events cameras';
+  gap: var(--space-card-gap, 16px);
+  align-items: start;
+}
+
+.security-events-col {
+  grid-area: events;
+  min-width: 0;
+}
+
+.security-cameras-col {
+  grid-area: cameras;
+  min-width: 0;
+}
+
 .security-section {
   display: flex;
   flex-direction: column;
@@ -3969,8 +3987,21 @@ body {
 
 .security-cameras-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: var(--space-card-gap, 14px);
+  grid-template-columns: 1fr;
+  gap: var(--space-card-gap, 12px);
+}
+
+@media (max-width: 960px) {
+  .security-main-columns {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'events'
+      'cameras';
+  }
+
+  .security-cameras-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
 }
 
 .security-camera-card {
@@ -4100,15 +4131,22 @@ body {
   color: var(--text-muted);
 }
 
-.security-persons-bar {
+.security-persons-dropdown-card {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 9px 14px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
   background: var(--bg-card);
   border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+}
+
+.persons-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .persons-bar-label {
@@ -4120,39 +4158,29 @@ body {
   color: var(--text-secondary);
 }
 
-.persons-pills-row {
+.persons-presence-summary {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.security-persons-select {
+  width: 100%;
+}
+
+.persons-selected-meta {
   display: flex;
   align-items: center;
   gap: 7px;
-  flex-wrap: wrap;
-}
-
-.person-status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill, 999px);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.person-status-pill:hover {
-  border-color: var(--border-strong);
-}
-
-.person-status-pill small {
-  color: var(--text-muted);
-  font-size: 10.5px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  padding: 2px 2px 0;
 }
 
 .presence-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .presence-dot.home {
