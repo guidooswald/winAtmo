@@ -57,6 +57,90 @@ function tryPrettyJson(raw?: string): string {
   }
 }
 
+const JSON_TOKEN_REGEX =
+  /("(?:\\u[0-9a-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?|[{}\[\],:])/g;
+
+function renderColorizedJson(raw?: string): React.ReactNode {
+  if (!raw) return '(no response body)';
+
+  let pretty: string;
+  try {
+    pretty = JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+
+  const nodes: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+  JSON_TOKEN_REGEX.lastIndex = 0;
+  let tokenKey = 0;
+
+  while ((match = JSON_TOKEN_REGEX.exec(pretty)) !== null) {
+    if (match.index > lastIdx) {
+      nodes.push(pretty.slice(lastIdx, match.index));
+    }
+
+    const token = match[0];
+    let cls = 'json-punct';
+
+    if (token.startsWith('"')) {
+      if (match[2] !== undefined) {
+        // Split key string from trailing whitespace + colon so only the key gets key color
+        const colonIdx = token.lastIndexOf(':');
+        const keyPart = token.slice(0, colonIdx);
+        const punctPart = token.slice(colonIdx);
+        nodes.push(
+          <span key={`k-${tokenKey++}`} className="json-key">
+            {keyPart}
+          </span>
+        );
+        nodes.push(
+          <span key={`p-${tokenKey++}`} className="json-punct">
+            {punctPart}
+          </span>
+        );
+        lastIdx = match.index + token.length;
+        continue;
+      }
+      cls = 'json-string';
+    } else if (token === 'true' || token === 'false') {
+      cls = 'json-boolean';
+    } else if (token === 'null') {
+      cls = 'json-null';
+    } else if (/^-?\d/.test(token)) {
+      cls = 'json-number';
+    }
+
+    nodes.push(
+      <span key={`t-${tokenKey++}`} className={cls}>
+        {token}
+      </span>
+    );
+    lastIdx = match.index + token.length;
+  }
+
+  if (lastIdx < pretty.length) {
+    nodes.push(pretty.slice(lastIdx));
+  }
+
+  return nodes;
+}
+
+const ColorizedJsonBody: React.FC<{
+  rawBody?: string;
+  prettyPrint: boolean;
+}> = React.memo(({ rawBody, prettyPrint }) => {
+  const rendered = useMemo(() => {
+    if (!prettyPrint) {
+      return rawBody || '(no response body)';
+    }
+    return renderColorizedJson(rawBody);
+  }, [rawBody, prettyPrint]);
+
+  return <pre className="debug-raw-pre">{rendered}</pre>;
+});
+
 export const DebugConsoleWindow: React.FC = () => {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [syncProgress, setSyncProgress] = useState<SyncProgress>({
@@ -91,6 +175,18 @@ export const DebugConsoleWindow: React.FC = () => {
   const [levelFilter, setLevelFilter] = useState<'all' | DebugLogLevel>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const splitPaneRef = useRef<HTMLDivElement | null>(null);
+  const [isResizingSplit, setIsResizingSplit] = useState<boolean>(false);
+  const [splitLeftPct, setSplitLeftPct] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('winatmo_debug_split_pct'));
+      if (Number.isFinite(saved) && saved >= 20 && saved <= 78) {
+        return saved;
+      }
+    } catch {}
+    return 42;
+  });
 
   useEffect(() => {
     const init = async () => {
@@ -374,9 +470,15 @@ export const DebugConsoleWindow: React.FC = () => {
 
         {/* Main Content */}
         {activeTab === 'api' ? (
-          <div className="debug-split-pane">
+          <div
+            ref={splitPaneRef}
+            className={`debug-split-pane ${isResizingSplit ? 'resizing' : ''}`}
+          >
             {/* Left: API Request List */}
-            <div className="debug-api-list">
+            <div
+              className="debug-api-list"
+              style={{ flex: `0 0 calc(${splitLeftPct}% - 6px)` }}
+            >
               {orderedApiRequests.length === 0 ? (
                 <div className="debug-empty-state">
                   <FileJson size={28} />
@@ -431,6 +533,66 @@ export const DebugConsoleWindow: React.FC = () => {
                   );
                 })
               )}
+            </div>
+
+            {/* Draggable Vertical Divider */}
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize API events and raw output panes"
+              tabIndex={0}
+              className={`debug-split-divider ${isResizingSplit ? 'active' : ''}`}
+              title="Drag to resize • Double-click to reset width"
+              onDoubleClick={() => {
+                setSplitLeftPct(42);
+                try {
+                  localStorage.setItem('winatmo_debug_split_pct', '42');
+                } catch {}
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                  e.preventDefault();
+                  const delta = e.key === 'ArrowLeft' ? -2 : 2;
+                  setSplitLeftPct((prev) => {
+                    const next = Math.max(20, Math.min(78, prev + delta));
+                    try {
+                      localStorage.setItem('winatmo_debug_split_pct', String(next));
+                    } catch {}
+                    return next;
+                  });
+                }
+              }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const container = splitPaneRef.current;
+                if (!container) return;
+                setIsResizingSplit(true);
+                let latestPct = splitLeftPct;
+
+                const onMove = (ev: MouseEvent) => {
+                  const rect = container.getBoundingClientRect();
+                  if (rect.width <= 0) return;
+                  const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+                  latestPct = Math.max(20, Math.min(78, Number(pct.toFixed(2))));
+                  setSplitLeftPct(latestPct);
+                };
+
+                const onUp = () => {
+                  setIsResizingSplit(false);
+                  window.removeEventListener('mousemove', onMove);
+                  window.removeEventListener('mouseup', onUp);
+                  document.body.style.cursor = '';
+                  try {
+                    localStorage.setItem('winatmo_debug_split_pct', String(latestPct));
+                  } catch {}
+                };
+
+                document.body.style.cursor = 'col-resize';
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+              }}
+            >
+              <span className="debug-split-handle" />
             </div>
 
             {/* Right: Selected API Inspector */}
@@ -521,11 +683,10 @@ export const DebugConsoleWindow: React.FC = () => {
                     </div>
                   )}
 
-                  <pre className="debug-raw-pre">
-                    {prettyPrint
-                      ? tryPrettyJson(selectedApi.rawBodyPreview)
-                      : selectedApi.rawBodyPreview || '(no response body)'}
-                  </pre>
+                  <ColorizedJsonBody
+                    rawBody={selectedApi.rawBodyPreview}
+                    prettyPrint={prettyPrint}
+                  />
                 </>
               ) : (
                 <div className="debug-empty-state">
