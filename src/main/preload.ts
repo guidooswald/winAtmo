@@ -8,6 +8,9 @@ import {
   MeasureSeries,
   NetatmoScale,
   SecurityDataPayload,
+  SecurityEventImageRefreshResult,
+  SecurityEventVideoResult,
+  SecurityMediaFetchResult,
   StorageStats,
   StoredApiKeysInfo,
   SyncProgress,
@@ -117,6 +120,26 @@ export interface WinAtmoAPI {
     size?: number;
     offsetEventId?: string;
   }) => Promise<SecurityDataPayload>;
+  refreshSecurityEventImage: (options: {
+    homeId: string;
+    eventId: string;
+    cameraId?: string;
+    videoId?: string;
+    candidateUrls?: string[];
+  }) => Promise<SecurityEventImageRefreshResult>;
+  getSecurityEventVideo: (options: {
+    homeId: string;
+    cameraId?: string;
+    eventId?: string;
+    videoId?: string;
+  }) => Promise<SecurityEventVideoResult>;
+  fetchSecurityMedia: (req: {
+    url: string;
+    responseType?: 'text' | 'arraybuffer';
+    headers?: Record<string, string>;
+    rangeStart?: number;
+    rangeEnd?: number;
+  }) => Promise<SecurityMediaFetchResult>;
 
   // Debug Console & Telemetry
   openDebugWindow: () => void;
@@ -215,6 +238,11 @@ const api: WinAtmoAPI = {
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
 
   getSecurityData: (options) => ipcRenderer.invoke('security:get-data', options),
+  refreshSecurityEventImage: (options) =>
+    ipcRenderer.invoke('security:refresh-event-image', options),
+  getSecurityEventVideo: (options) =>
+    ipcRenderer.invoke('security:get-event-video', options),
+  fetchSecurityMedia: (req) => ipcRenderer.invoke('security:fetch-media', req),
 
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),

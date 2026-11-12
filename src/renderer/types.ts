@@ -392,6 +392,8 @@ export interface SecurityCamera {
   floodlight?: string; // 'on' | 'off' | 'auto'
   sirenStatus?: string;
   lastSetup?: number;
+  vpnUrl?: string;
+  localUrl?: string;
 }
 
 export interface SecurityPerson {
@@ -449,4 +451,36 @@ export interface SecurityDataPayload {
   events: SecurityEvent[];
   fetchedAt: number;
   scopeError?: string;
+}
+
+export interface SecurityEventImageRefreshResult {
+  ok: boolean;
+  imageUrl?: string;
+  vignetteUrl?: string;
+  snapshotExpiresAt?: number;
+  event?: SecurityEvent;
+  error?: string;
+}
+
+export interface SecurityEventVideoResult {
+  ok: boolean;
+  hlsUrl?: string;
+  localHlsUrl?: string;
+  fallbackHlsUrls?: string[];
+  vpnUrl?: string;
+  localUrl?: string;
+  isDemo?: boolean;
+  needsAccessScope?: boolean;
+  error?: string;
+}
+
+export interface SecurityMediaFetchResult {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  finalUrl: string;
+  contentType?: string;
+  dataText?: string;
+  dataBuffer?: Uint8Array;
+  error?: string;
 }

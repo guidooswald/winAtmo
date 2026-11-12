@@ -1784,6 +1784,53 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle(
+    'security:refresh-event-image',
+    async (
+      _e,
+      options: {
+        homeId: string;
+        eventId: string;
+        cameraId?: string;
+        videoId?: string;
+        candidateUrls?: string[];
+      }
+    ) => {
+      return client.refreshSecurityEventImage(options);
+    }
+  );
+
+  ipcMain.handle(
+    'security:get-event-video',
+    async (
+      _e,
+      options: {
+        homeId: string;
+        cameraId?: string;
+        eventId?: string;
+        videoId?: string;
+      }
+    ) => {
+      return client.getSecurityEventVideo(options);
+    }
+  );
+
+  ipcMain.handle(
+    'security:fetch-media',
+    async (
+      _e,
+      req: {
+        url: string;
+        responseType?: 'text' | 'arraybuffer';
+        headers?: Record<string, string>;
+        rangeStart?: number;
+        rangeEnd?: number;
+      }
+    ) => {
+      return client.fetchSecurityMedia(req);
+    }
+  );
+
   // Debug Console Window & Telemetry IPC
   ipcMain.on('debug:open-window', () => {
     createOrShowDebugWindow();

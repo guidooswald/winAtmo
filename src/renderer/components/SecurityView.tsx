@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   Lightbulb,
   PawPrint,
+  Play,
   PlugZap,
   RefreshCw,
   Search,
@@ -30,9 +31,11 @@ import {
   SecurityCamera,
   SecurityDataPayload,
   SecurityEvent,
+  SecurityEventVideoResult,
   SecurityPerson,
 } from '../types';
 import { useI18n } from '../utils/i18n';
+import { HlsVideoPlayer } from './HlsVideoPlayer';
 
 interface SecurityViewProps {
   account: AccountInfo;
@@ -151,7 +154,130 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   }, [selectedHomeId]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [reloadingImages, setReloadingImages] = useState<Record<string, boolean>>({});
+  const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
   const [lightboxEvent, setLightboxEvent] = useState<SecurityEvent | null>(null);
+  const [videoEvent, setVideoEvent] = useState<SecurityEvent | null>(null);
+  const [videoLoading, setVideoLoading] = useState<boolean>(false);
+  const [videoState, setVideoState] = useState<SecurityEventVideoResult | null>(null);
+
+  const handleRefreshEventImage = useCallback(async (ev: SecurityEvent) => {
+    if (typeof window.winatmo?.refreshSecurityEventImage !== 'function') {
+      setImageErrors((prev) => ({
+        ...prev,
+        [ev.id]: 'Restart app (npm run dev) to enable image refresh.',
+      }));
+      return;
+    }
+
+    setReloadingImages((prev) => ({ ...prev, [ev.id]: true }));
+    setImageErrors((prev) => {
+      const next = { ...prev };
+      delete next[ev.id];
+      return next;
+    });
+
+    try {
+      const candidateUrls = [
+        ev.snapshotUrl,
+        ev.vignetteUrl,
+        ...(ev.subEvents?.flatMap((se) => [se.snapshotUrl, se.vignetteUrl]) || []),
+      ].filter((u): u is string => Boolean(u));
+
+      const res = await window.winatmo.refreshSecurityEventImage({
+        homeId: ev.homeId,
+        eventId: ev.id,
+        cameraId: ev.cameraId,
+        videoId: ev.videoId,
+        candidateUrls,
+      });
+
+      if (res.ok && (res.imageUrl || res.vignetteUrl)) {
+        const nextSnap = res.imageUrl || res.vignetteUrl;
+        const nextVig = res.vignetteUrl || res.imageUrl;
+        const applyUpdate = (target: SecurityEvent): SecurityEvent => ({
+          ...(res.event ? { ...target, ...res.event } : target),
+          snapshotUrl: nextSnap,
+          vignetteUrl: nextVig,
+          snapshotExpiresAt: res.snapshotExpiresAt ?? target.snapshotExpiresAt,
+        });
+
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                events: prev.events.map((item) =>
+                  item.id === ev.id ? applyUpdate(item) : item
+                ),
+              }
+            : prev
+        );
+        setLightboxEvent((prev) => (prev?.id === ev.id ? applyUpdate(prev) : prev));
+        setVideoEvent((prev) => (prev?.id === ev.id ? applyUpdate(prev) : prev));
+        setFailedImages((prev) => {
+          const next = { ...prev };
+          delete next[ev.id];
+          return next;
+        });
+      } else {
+        if (res.event) {
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  events: prev.events.map((item) =>
+                    item.id === ev.id ? { ...item, ...res.event } : item
+                  ),
+                }
+              : prev
+          );
+        }
+        setImageErrors((prev) => ({
+          ...prev,
+          [ev.id]: res.error || 'No image available for this event.',
+        }));
+      }
+    } catch (err: any) {
+      setImageErrors((prev) => ({
+        ...prev,
+        [ev.id]: err?.message || 'Failed to reload image.',
+      }));
+    } finally {
+      setReloadingImages((prev) => ({ ...prev, [ev.id]: false }));
+    }
+  }, []);
+
+  const handleOpenVideo = useCallback(async (ev: SecurityEvent) => {
+    setVideoEvent(ev);
+    setVideoLoading(true);
+    setVideoState(null);
+
+    if (typeof window.winatmo?.getSecurityEventVideo !== 'function') {
+      setVideoState({
+        ok: false,
+        error: 'Restart Electron (npm run dev) to load video streaming IPC.',
+      });
+      setVideoLoading(false);
+      return;
+    }
+
+    try {
+      const res = await window.winatmo.getSecurityEventVideo({
+        homeId: ev.homeId,
+        cameraId: ev.cameraId,
+        eventId: ev.id,
+        videoId: ev.videoId,
+      });
+      setVideoState(res);
+    } catch (err: any) {
+      setVideoState({
+        ok: false,
+        error: err?.message || 'Failed to load video stream.',
+      });
+    } finally {
+      setVideoLoading(false);
+    }
+  }, []);
 
   const loadSecurity = useCallback(async () => {
     if (typeof window.winatmo?.getSecurityData !== 'function') {
@@ -672,24 +798,31 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
             filteredEvents.map((ev) => {
               const imgUrl = ev.snapshotUrl || ev.vignetteUrl;
               const imgFailed = failedImages[ev.id];
+              const isReloadingImg = Boolean(reloadingImages[ev.id]);
+              const imgErrorMsg = imageErrors[ev.id];
+              const hasVideo =
+                Boolean(ev.videoId || ev.videoStatus === 'available') &&
+                ev.videoStatus !== 'deleted';
               const filterKind = classifyEventFilter(ev);
               const subTypes = ev.subEvents?.map((s) => s.type) || [];
 
               return (
                 <div key={ev.id} className="security-event-row">
                   <div
-                    className={`event-thumb-box ${
-                      imgUrl && !imgFailed ? 'clickable' : ''
+                    className={`event-thumb-box clickable ${
+                      !imgUrl || imgFailed ? 'missing' : ''
                     }`}
                     onClick={() => {
                       if (imgUrl && !imgFailed) {
                         setLightboxEvent(ev);
+                      } else if (!isReloadingImg) {
+                        handleRefreshEventImage(ev);
                       }
                     }}
                     title={
                       imgUrl && !imgFailed
                         ? 'Click to enlarge snapshot'
-                        : 'No snapshot preview available'
+                        : 'Click to reload or fetch snapshot from Netatmo'
                     }
                   >
                     {imgUrl && !imgFailed ? (
@@ -706,7 +839,11 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                       />
                     ) : (
                       <div className={`event-thumb-fallback kind-${filterKind}`}>
-                        {renderEventTypeIcon(ev.category || ev.type, 22)}
+                        {isReloadingImg ? (
+                          <RefreshCw size={20} className="spin" />
+                        ) : (
+                          renderEventTypeIcon(ev.category || ev.type, 22)
+                        )}
                       </div>
                     )}
                   </div>
@@ -733,7 +870,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                         </span>
                       )}
 
-                      {ev.videoStatus === 'available' && (
+                      {hasVideo && (
                         <span className="event-video-pill">
                           <Film size={11} /> Clip recorded
                         </span>
@@ -760,7 +897,44 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                           <ImageIcon size={12} /> View Snapshot
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className={`event-media-btn ${
+                          !imgUrl || imgFailed ? 'reload' : 'subtle'
+                        }`}
+                        onClick={() => handleRefreshEventImage(ev)}
+                        disabled={isReloadingImg}
+                        title={
+                          imgUrl && !imgFailed
+                            ? 'Refresh / update snapshot from Netatmo'
+                            : 'Try to load snapshot from Netatmo'
+                        }
+                      >
+                        <RefreshCw
+                          size={11}
+                          className={isReloadingImg ? 'spin' : ''}
+                        />
+                        {isReloadingImg
+                          ? 'Loading...'
+                          : imgUrl && !imgFailed
+                            ? 'Update Image'
+                            : imgFailed
+                              ? 'Retry Image'
+                              : 'Load Image'}
+                      </button>
+                      {hasVideo && (
+                        <button
+                          type="button"
+                          className="event-media-btn video"
+                          onClick={() => handleOpenVideo(ev)}
+                        >
+                          <Play size={11} /> View Video
+                        </button>
+                      )}
                     </div>
+                    {imgErrorMsg && (
+                      <div className="event-media-note">{imgErrorMsg}</div>
+                    )}
                   </div>
 
                   <div className="event-time-col">
@@ -813,13 +987,44 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                   {formatTime(lightboxEvent.time * 1000)}
                 </span>
               </div>
-              <button
-                type="button"
-                className="sync-overlay-close-btn"
-                onClick={() => setLightboxEvent(null)}
-              >
-                <X size={16} />
-              </button>
+              <div className="security-lightbox-actions">
+                <button
+                  type="button"
+                  className="action-btn subtle"
+                  disabled={Boolean(reloadingImages[lightboxEvent.id])}
+                  onClick={() => handleRefreshEventImage(lightboxEvent)}
+                >
+                  <RefreshCw
+                    size={13}
+                    className={reloadingImages[lightboxEvent.id] ? 'spin' : ''}
+                  />
+                  {reloadingImages[lightboxEvent.id]
+                    ? 'Updating...'
+                    : 'Update Image'}
+                </button>
+                {(lightboxEvent.videoId ||
+                  lightboxEvent.videoStatus === 'available') &&
+                  lightboxEvent.videoStatus !== 'deleted' && (
+                    <button
+                      type="button"
+                      className="action-btn primary"
+                      onClick={() => {
+                        const target = lightboxEvent;
+                        setLightboxEvent(null);
+                        handleOpenVideo(target);
+                      }}
+                    >
+                      <Play size={13} /> View Video
+                    </button>
+                  )}
+                <button
+                  type="button"
+                  className="sync-overlay-close-btn"
+                  onClick={() => setLightboxEvent(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
             <div className="security-lightbox-img-wrap">
               <img
@@ -830,6 +1035,117 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
             {lightboxEvent.subEvents && lightboxEvent.subEvents.length > 0 && (
               <div className="security-lightbox-subevents">
                 {lightboxEvent.subEvents.map((se, i) => (
+                  <div key={i} className="lightbox-sub-item">
+                    <strong>{se.type}</strong>
+                    <span>{se.message || formatTime(se.time * 1000)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Recorded Event Video Player Modal */}
+      {videoEvent && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setVideoEvent(null)}
+        >
+          <div
+            className="security-lightbox-card security-video-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="security-lightbox-header">
+              <div>
+                <h4>{videoEvent.message}</h4>
+                <span>
+                  {videoEvent.cameraName} •{' '}
+                  {formatDate(videoEvent.time * 1000)}{' '}
+                  {formatTime(videoEvent.time * 1000)}
+                  {videoState?.ok && (
+                    <>
+                      {' • '}
+                      {videoState.isDemo
+                        ? 'Demo Preview'
+                        : videoState.hlsUrl &&
+                            videoState.localHlsUrl === videoState.hlsUrl
+                          ? 'Local Camera Stream'
+                          : 'Netatmo Cloud VPN Stream'}
+                    </>
+                  )}
+                </span>
+              </div>
+              <div className="security-lightbox-actions">
+                <button
+                  type="button"
+                  className="action-btn subtle"
+                  disabled={videoLoading}
+                  onClick={() => handleOpenVideo(videoEvent)}
+                >
+                  <RefreshCw
+                    size={13}
+                    className={videoLoading ? 'spin' : ''}
+                  />
+                  Reload Stream
+                </button>
+                {(videoEvent.snapshotUrl || videoEvent.vignetteUrl) &&
+                  !failedImages[videoEvent.id] && (
+                    <button
+                      type="button"
+                      className="action-btn subtle"
+                      onClick={() => {
+                        const target = videoEvent;
+                        setVideoEvent(null);
+                        setLightboxEvent(target);
+                      }}
+                    >
+                      <ImageIcon size={13} /> View Snapshot
+                    </button>
+                  )}
+                <button
+                  type="button"
+                  className="sync-overlay-close-btn"
+                  onClick={() => setVideoEvent(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {videoLoading ? (
+              <div className="security-video-status-card">
+                <RefreshCw size={22} className="spin" />
+                <span>Resolving camera stream from Netatmo...</span>
+              </div>
+            ) : !videoState?.ok ? (
+              <div className="security-video-status-card error">
+                <AlertTriangle size={22} />
+                <div>
+                  <strong>Video Unavailable</strong>
+                  <p>{videoState?.error || 'Could not load video clip.'}</p>
+                </div>
+                <button
+                  type="button"
+                  className="action-btn subtle"
+                  onClick={() => handleOpenVideo(videoEvent)}
+                >
+                  <RefreshCw size={13} /> Retry
+                </button>
+              </div>
+            ) : (
+              <HlsVideoPlayer
+                hlsUrl={videoState.hlsUrl}
+                fallbackUrls={videoState.fallbackHlsUrls}
+                posterUrl={videoEvent.snapshotUrl || videoEvent.vignetteUrl}
+                isDemo={videoState.isDemo}
+                onRetryResolve={() => handleOpenVideo(videoEvent)}
+              />
+            )}
+
+            {videoEvent.subEvents && videoEvent.subEvents.length > 0 && (
+              <div className="security-lightbox-subevents">
+                {videoEvent.subEvents.map((se, i) => (
                   <div key={i} className="lightbox-sub-item">
                     <strong>{se.type}</strong>
                     <span>{se.message || formatTime(se.time * 1000)}</span>

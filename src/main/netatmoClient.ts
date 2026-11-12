@@ -13,7 +13,10 @@ import {
   SecurityCamera,
   SecurityDataPayload,
   SecurityEvent,
+  SecurityEventImageRefreshResult,
+  SecurityEventVideoResult,
   SecurityHome,
+  SecurityMediaFetchResult,
   SecurityPerson,
   SecuritySubEvent,
   StationModule,
@@ -1969,6 +1972,23 @@ export class NetatmoClient {
     );
   }
 
+  /**
+   * Resolves a Netatmo picture object (snapshot or vignette), supporting direct
+   * signed `.url` links as well as `{ id, key }` pairs via `/api/getcamerapicture`.
+   */
+  private resolvePictureUrl(pic: any): string | undefined {
+    if (!pic || typeof pic !== 'object') return undefined;
+    if (typeof pic.url === 'string' && pic.url.trim()) {
+      return pic.url.trim();
+    }
+    if (pic.id && pic.key) {
+      return `https://api.netatmo.com/api/getcamerapicture?image_id=${encodeURIComponent(
+        String(pic.id)
+      )}&key=${encodeURIComponent(String(pic.key))}`;
+    }
+    return undefined;
+  }
+
   private normalizeSecurityEvent(
     raw: any,
     homeId: string,
@@ -1983,17 +2003,18 @@ export class NetatmoClient {
       time: Number(se.time || raw.time || 0),
       offset: se.offset !== undefined ? Number(se.offset) : undefined,
       message: this.cleanEventMessage(se.message),
-      snapshotUrl: se.snapshot?.url,
+      snapshotUrl: this.resolvePictureUrl(se.snapshot),
       snapshotExpiresAt: se.snapshot?.expires_at || se.snapshot?.expire_at,
-      vignetteUrl: se.vignette?.url,
+      vignetteUrl: this.resolvePictureUrl(se.vignette),
       personId: se.person_id ? String(se.person_id) : undefined,
     }));
 
-    const firstSubWithSnapshot = subEvents.find((se) => se.snapshotUrl || se.vignetteUrl);
+    const firstSubWithSnapshot = subEvents.find((se) => se.snapshotUrl);
+    const firstSubWithVignette = subEvents.find((se) => se.vignetteUrl);
     const snapshotUrl =
-      raw.snapshot?.url || firstSubWithSnapshot?.snapshotUrl;
+      this.resolvePictureUrl(raw.snapshot) || firstSubWithSnapshot?.snapshotUrl;
     const vignetteUrl =
-      raw.vignette?.url || firstSubWithSnapshot?.vignetteUrl;
+      this.resolvePictureUrl(raw.vignette) || firstSubWithVignette?.vignetteUrl;
     const snapshotExpiresAt =
       raw.snapshot?.expires_at ||
       raw.snapshot?.expire_at ||
@@ -2146,6 +2167,9 @@ export class NetatmoClient {
                 cam.isLocal = sm.is_local;
                 cam.floodlight = sm.floodlight;
                 cam.sirenStatus = sm.siren_status;
+                if (sm.vpn_url) {
+                  cam.vpnUrl = String(sm.vpn_url);
+                }
               }
             }
           } catch (statusErr: any) {
@@ -2262,6 +2286,7 @@ export class NetatmoClient {
                   sdStatus: c.sd_status,
                   alimStatus: c.alim_status,
                   isLocal: c.is_local,
+                  vpnUrl: c.vpn_url ? String(c.vpn_url) : undefined,
                 };
               }
             );
@@ -2320,6 +2345,468 @@ export class NetatmoClient {
       }
       throw err;
     }
+  }
+
+  /**
+   * Fetches binary or text media (images, HLS playlists, TS segments) through Node so
+   * Netatmo CDN URLs and local camera LAN URLs work without renderer CORS or mixed-content blocks.
+   */
+  public async fetchSecurityMedia(req: {
+    url: string;
+    responseType?: 'text' | 'arraybuffer';
+    headers?: Record<string, string>;
+    rangeStart?: number;
+    rangeEnd?: number;
+  }): Promise<SecurityMediaFetchResult> {
+    let parsed: URL;
+    try {
+      parsed = new URL(req.url);
+    } catch {
+      return {
+        ok: false,
+        status: 400,
+        statusText: 'Invalid URL',
+        finalUrl: req.url,
+        error: 'Invalid media URL.',
+      };
+    }
+
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return {
+        ok: false,
+        status: 400,
+        statusText: 'Unsupported protocol',
+        finalUrl: req.url,
+        error: 'Only http/https media URLs are supported.',
+      };
+    }
+
+    const headers: Record<string, string> = { ...(req.headers || {}) };
+    if (req.rangeStart !== undefined) {
+      headers['Range'] = `bytes=${req.rangeStart}-${
+        req.rangeEnd !== undefined ? req.rangeEnd : ''
+      }`;
+    }
+
+    if (
+      parsed.hostname === 'api.netatmo.com' ||
+      parsed.hostname === 'api.netatmo.net'
+    ) {
+      try {
+        const token = await this.ensureAccessToken();
+        if (token && token !== 'demo-token') {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+      } catch {}
+    }
+
+    try {
+      const res = await fetch(parsed.toString(), {
+        method: 'GET',
+        headers,
+        redirect: 'follow',
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const finalUrl = res.url || parsed.toString();
+      const contentType = res.headers.get('content-type') || undefined;
+
+      if (!res.ok) {
+        return {
+          ok: false,
+          status: res.status,
+          statusText: res.statusText || `HTTP ${res.status}`,
+          finalUrl,
+          contentType,
+          error: `HTTP ${res.status} ${res.statusText || ''}`.trim(),
+        };
+      }
+
+      if (req.responseType === 'text') {
+        const dataText = await res.text();
+        return {
+          ok: true,
+          status: res.status,
+          statusText: res.statusText || 'OK',
+          finalUrl,
+          contentType,
+          dataText,
+        };
+      }
+
+      const buf = await res.arrayBuffer();
+      return {
+        ok: true,
+        status: res.status,
+        statusText: res.statusText || 'OK',
+        finalUrl,
+        contentType,
+        dataBuffer: new Uint8Array(buf),
+      };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      debugLogger.log('warn', 'Security', `Media fetch failed (${parsed.host}): ${msg}`);
+      return {
+        ok: false,
+        status: 0,
+        statusText: 'Network Error',
+        finalUrl: parsed.toString(),
+        error: msg,
+      };
+    }
+  }
+
+  /**
+   * Resolves the freshest cloud `vpn_url` (and optional LAN `local_url`) for a camera.
+   */
+  private async resolveCameraUrls(
+    homeId: string,
+    cameraId: string
+  ): Promise<{ vpnUrl?: string; localUrl?: string; isLocal?: boolean }> {
+    let vpnUrl: string | undefined;
+    let isLocal = false;
+
+    try {
+      const statusResp = await this.apiGet(
+        'homestatus',
+        { home_id: homeId },
+        false,
+        `Security camera stream lookup: ${cameraId}`
+      );
+      const modules: any[] = Array.isArray(statusResp?.body?.home?.modules)
+        ? statusResp.body.home.modules
+        : [];
+      const cam = modules.find((m) => String(m.id) === cameraId);
+      if (cam?.vpn_url) vpnUrl = String(cam.vpn_url).replace(/\/+$/, '');
+      if (cam?.is_local !== undefined) isLocal = Boolean(cam.is_local);
+    } catch (err: any) {
+      debugLogger.log(
+        'warn',
+        'Security',
+        `homestatus camera lookup failed: ${err?.message || err}`
+      );
+    }
+
+    if (!vpnUrl) {
+      try {
+        const legacyResp = await this.apiGet(
+          'gethomedata',
+          { home_id: homeId },
+          false,
+          `Security camera legacy lookup: ${cameraId}`
+        );
+        const homesList: any[] = Array.isArray(legacyResp?.body?.homes)
+          ? legacyResp.body.homes
+          : [];
+        for (const h of homesList) {
+          const cams: any[] = Array.isArray(h.cameras) ? h.cameras : [];
+          const match = cams.find((c) => String(c.id) === cameraId);
+          if (match?.vpn_url) {
+            vpnUrl = String(match.vpn_url).replace(/\/+$/, '');
+            isLocal = Boolean(match.is_local);
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    let localUrl: string | undefined;
+    if (vpnUrl && isLocal) {
+      try {
+        const pingRes = await fetch(`${vpnUrl}/command/ping`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(2200),
+        });
+        if (pingRes.ok) {
+          const pingJson: any = await pingRes.json();
+          if (typeof pingJson?.local_url === 'string' && pingJson.local_url.startsWith('http')) {
+            localUrl = pingJson.local_url.replace(/\/+$/, '');
+          }
+        }
+      } catch {
+        // LAN ping is best-effort; fallback to cloud vpnUrl cleanly
+      }
+    }
+
+    return { vpnUrl, localUrl, isLocal };
+  }
+
+  /**
+   * Attempts to reload or discover an event image by re-querying Netatmo `/getevents`
+   * (refreshing expired URLs) and fetching candidate images through the main process.
+   */
+  public async refreshSecurityEventImage(options: {
+    homeId: string;
+    eventId: string;
+    cameraId?: string;
+    videoId?: string;
+    candidateUrls?: string[];
+  }): Promise<SecurityEventImageRefreshResult> {
+    const session = this.store.getSession();
+    if (!session.loggedIn) {
+      return { ok: false, error: 'Not signed in to Netatmo.' };
+    }
+
+    if (session.authMethod === 'demo') {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><circle cx="320" cy="155" r="44" fill="#38bdf8" fill-opacity="0.18" stroke="#38bdf8" stroke-width="2"/><path d="M304 147h22l10-6v28l-10-6h-22z" fill="#38bdf8"/><text x="320" y="232" text-anchor="middle" fill="#f8fafc" font-family="Segoe UI,sans-serif" font-size="18" font-weight="600">Demo Camera Snapshot</text><text x="320" y="258" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI,sans-serif" font-size="13">Event ${options.eventId} • Refreshed preview</text></svg>`;
+      const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`;
+      return { ok: true, imageUrl: dataUrl, vignetteUrl: dataUrl };
+    }
+
+    let refreshedEvent: SecurityEvent | undefined;
+    try {
+      const homeData = await this.apiGet(
+        'homesdata',
+        {},
+        false,
+        `Security image refresh home lookup`
+      );
+      const rawHomes: any[] = Array.isArray(homeData?.body?.homes)
+        ? homeData.body.homes
+        : [];
+      const h = rawHomes.find((hm) => String(hm.id) === options.homeId);
+      const homeName = String(h?.name || 'Home');
+      const cameraNamesById = new Map<string, string>();
+      const personsById = new Map<string, string>();
+      for (const m of Array.isArray(h?.modules) ? h.modules : []) {
+        cameraNamesById.set(String(m.id), String(m.name || m.type || m.id));
+      }
+      for (const p of Array.isArray(h?.persons) ? h.persons : []) {
+        if (p.pseudo) personsById.set(String(p.id), String(p.pseudo));
+      }
+
+      const eventsResp = await this.apiGet(
+        'getevents',
+        { home_id: options.homeId, size: 100 },
+        false,
+        `Security refresh image: ${options.eventId}`
+      );
+      let rawEvents: any[] =
+        eventsResp?.body?.home?.events || eventsResp?.body?.events || [];
+      let found = rawEvents.find((ev) => String(ev.id) === options.eventId);
+
+      if (!found) {
+        try {
+          const untilResp = await this.apiGet(
+            'geteventsuntil',
+            { home_id: options.homeId, event_id: options.eventId },
+            false,
+            `Security refresh older image: ${options.eventId}`
+          );
+          rawEvents =
+            untilResp?.body?.home?.events || untilResp?.body?.events || [];
+          found = rawEvents.find((ev) => String(ev.id) === options.eventId);
+        } catch {}
+      }
+
+      if (found) {
+        refreshedEvent = this.normalizeSecurityEvent(
+          found,
+          options.homeId,
+          homeName,
+          cameraNamesById,
+          personsById
+        );
+      }
+    } catch (err: any) {
+      debugLogger.log(
+        'warn',
+        'Security',
+        `Could not refresh event metadata for ${options.eventId}: ${err?.message || err}`
+      );
+    }
+
+    const candidates: string[] = [];
+    const pushUrl = (u?: string) => {
+      if (u && u.trim() && !candidates.includes(u.trim())) {
+        candidates.push(u.trim());
+      }
+    };
+
+    if (refreshedEvent) {
+      pushUrl(refreshedEvent.snapshotUrl);
+      pushUrl(refreshedEvent.vignetteUrl);
+      for (const se of refreshedEvent.subEvents || []) {
+        pushUrl(se.snapshotUrl);
+        pushUrl(se.vignetteUrl);
+      }
+    }
+    for (const u of options.candidateUrls || []) {
+      pushUrl(u);
+    }
+
+    // If still no cloud image URL and event has a videoId, try camera VOD thumbnail endpoints
+    const effectiveVideoId = refreshedEvent?.videoId || options.videoId;
+    const effectiveCameraId = refreshedEvent?.cameraId || options.cameraId;
+    if (candidates.length === 0 && effectiveVideoId && effectiveCameraId) {
+      const { vpnUrl, localUrl } = await this.resolveCameraUrls(
+        options.homeId,
+        effectiveCameraId
+      );
+      for (const base of [localUrl, vpnUrl].filter(Boolean) as string[]) {
+        pushUrl(`${base}/vod/${effectiveVideoId}/vignette.jpg`);
+        pushUrl(`${base}/vod/${effectiveVideoId}/snapshot.jpg`);
+      }
+    }
+
+    for (const url of candidates) {
+      const fetched = await this.fetchSecurityMedia({
+        url,
+        responseType: 'arraybuffer',
+      });
+      if (
+        fetched.ok &&
+        fetched.dataBuffer &&
+        fetched.dataBuffer.byteLength > 0 &&
+        (!fetched.contentType ||
+          fetched.contentType.toLowerCase().startsWith('image/'))
+      ) {
+        const mime =
+          fetched.contentType?.split(';')[0]?.trim() || 'image/jpeg';
+        const dataUrl = `data:${mime};base64,${Buffer.from(
+          fetched.dataBuffer
+        ).toString('base64')}`;
+        return {
+          ok: true,
+          imageUrl: dataUrl,
+          vignetteUrl: dataUrl,
+          snapshotExpiresAt: refreshedEvent?.snapshotExpiresAt,
+          event: refreshedEvent
+            ? {
+                ...refreshedEvent,
+                snapshotUrl: dataUrl,
+              }
+            : undefined,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      event: refreshedEvent,
+      error:
+        candidates.length === 0
+          ? 'Netatmo did not return a snapshot or vignette URL for this event.'
+          : 'Snapshot could not be loaded (link expired or unavailable on Netatmo).',
+    };
+  }
+
+  /**
+   * Resolves the playable HLS stream URL (`{vpn_url}/vod/{video_id}/index.m3u8`) for an event video.
+   */
+  public async getSecurityEventVideo(options: {
+    homeId: string;
+    cameraId?: string;
+    eventId?: string;
+    videoId?: string;
+  }): Promise<SecurityEventVideoResult> {
+    const session = this.store.getSession();
+    if (!session.loggedIn) {
+      return { ok: false, error: 'Not signed in to Netatmo.' };
+    }
+
+    if (session.authMethod === 'demo') {
+      return { ok: true, isDemo: true };
+    }
+
+    let videoId = options.videoId;
+    if (!videoId && options.eventId) {
+      try {
+        const eventsResp = await this.apiGet(
+          'getevents',
+          { home_id: options.homeId, size: 100 },
+          false,
+          `Security video ID lookup: ${options.eventId}`
+        );
+        const rawEvents: any[] =
+          eventsResp?.body?.home?.events || eventsResp?.body?.events || [];
+        const match = rawEvents.find((ev) => String(ev.id) === options.eventId);
+        if (match?.video_id) {
+          videoId = String(match.video_id);
+        }
+      } catch {}
+    }
+
+    if (!videoId) {
+      return {
+        ok: false,
+        error: 'No recorded video ID is associated with this event.',
+      };
+    }
+
+    if (!options.cameraId) {
+      return {
+        ok: false,
+        error: 'Camera ID is missing for this event.',
+      };
+    }
+
+    const { vpnUrl, localUrl } = await this.resolveCameraUrls(
+      options.homeId,
+      options.cameraId
+    );
+
+    if (!vpnUrl && !localUrl) {
+      return {
+        ok: false,
+        needsAccessScope: true,
+        error:
+          'Netatmo did not expose a camera stream URL (vpn_url). Video playback requires Netatmo Web Sign-In or OAuth access_camera / access_presence scopes.',
+      };
+    }
+
+    const candidates: string[] = [];
+    if (localUrl) {
+      candidates.push(`${localUrl}/vod/${encodeURIComponent(videoId)}/index_local.m3u8`);
+      candidates.push(
+        `${localUrl}/vod/${encodeURIComponent(videoId)}/files/high/index_local.m3u8`
+      );
+    }
+    if (vpnUrl) {
+      candidates.push(`${vpnUrl}/vod/${encodeURIComponent(videoId)}/index.m3u8`);
+      candidates.push(
+        `${vpnUrl}/vod/${encodeURIComponent(videoId)}/files/high/index.m3u8`
+      );
+    }
+
+    let workingUrl: string | undefined;
+    let lastError: string | undefined;
+    for (const candidate of candidates) {
+      const probe = await this.fetchSecurityMedia({
+        url: candidate,
+        responseType: 'text',
+      });
+      if (probe.ok && probe.dataText && probe.dataText.includes('#EXTM3U')) {
+        workingUrl = candidate;
+        break;
+      }
+      lastError = probe.error || `HTTP ${probe.status}`;
+    }
+
+    const fallbackHlsUrls = candidates.filter((u) => u !== workingUrl);
+
+    if (!workingUrl) {
+      return {
+        ok: false,
+        vpnUrl,
+        localUrl,
+        fallbackHlsUrls: candidates,
+        error: `Recorded video clip could not be opened (${
+          lastError || 'unavailable on camera SD card or expired'
+        }).`,
+      };
+    }
+
+    return {
+      ok: true,
+      hlsUrl: workingUrl,
+      localHlsUrl: localUrl
+        ? `${localUrl}/vod/${encodeURIComponent(videoId)}/index_local.m3u8`
+        : undefined,
+      fallbackHlsUrls,
+      vpnUrl,
+      localUrl,
+    };
   }
 
   private getDemoSecurityData(): SecurityDataPayload {

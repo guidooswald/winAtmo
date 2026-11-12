@@ -75,6 +75,7 @@
   "author": "Guido Oswald",
   "license": "MIT",
   "dependencies": {
+    "hls.js": "^1.7.4",
     "lucide-react": "^1.16.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
