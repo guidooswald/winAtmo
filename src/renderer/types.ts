@@ -473,6 +473,7 @@ export interface SecurityEventVideoResult {
   fallbackHlsUrls?: string[];
   vpnUrl?: string;
   localUrl?: string;
+  isLocalStream?: boolean;
   isDemo?: boolean;
   needsAccessScope?: boolean;
   error?: string;

@@ -18,6 +18,7 @@ import { TimeSeriesDatabase } from './database';
 import { NetatmoClient } from './netatmoClient';
 import { WebAuthManager } from './webAuth';
 import { debugLogger } from './debugLogger';
+import { securityMediaProxy } from './securityMediaProxy';
 import {
   initTaskbarIconRenderer,
   resolveTaskbarReading,
@@ -2001,6 +2002,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  securityMediaProxy.stop();
   saveMainWindowBounds();
   saveWidgetSize();
   store?.flushSync();

@@ -1100,8 +1100,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                       {' • '}
                       {videoState.isDemo
                         ? 'Demo Preview'
-                        : videoState.hlsUrl &&
-                            videoState.localHlsUrl === videoState.hlsUrl
+                        : videoState.isLocalStream
                           ? 'Local Camera Stream'
                           : 'Netatmo Cloud VPN Stream'}
                     </>

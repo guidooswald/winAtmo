@@ -1,6 +1,8 @@
+import { session, net } from 'electron';
 import { AppStore } from './store';
 import { TimeSeriesDatabase, BatchMeasurementRow } from './database';
 import { debugLogger } from './debugLogger';
+import { securityMediaProxy } from './securityMediaProxy';
 import {
   AccountInfo,
   DashboardReadings,
@@ -2447,7 +2449,7 @@ export class NetatmoClient {
     const headers: Record<string, string> = { ...(req.headers || {}) };
     if (req.rangeStart !== undefined) {
       headers['Range'] = `bytes=${req.rangeStart}-${
-        req.rangeEnd !== undefined ? req.rangeEnd : ''
+        req.rangeEnd !== undefined ? Math.max(0, req.rangeEnd - 1) : ''
       }`;
     }
 
@@ -2464,11 +2466,17 @@ export class NetatmoClient {
     }
 
     try {
-      const res = await fetch(parsed.toString(), {
+      const netatmoSes = session.fromPartition('persist:netatmo');
+      const fetcher =
+        netatmoSes && typeof netatmoSes.fetch === 'function'
+          ? (input: string, init: any) => netatmoSes.fetch(input, init)
+          : (input: string, init: any) => net.fetch(input, init);
+
+      const res = await fetcher(parsed.toString(), {
         method: 'GET',
         headers,
         redirect: 'follow',
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(30000),
       });
 
       const finalUrl = res.url || parsed.toString();
@@ -2829,21 +2837,25 @@ export class NetatmoClient {
       };
     }
 
+    const encodedVid = encodeURIComponent(videoId);
     const candidates: string[] = [];
     if (localUrl) {
-      candidates.push(`${localUrl}/vod/${encodeURIComponent(videoId)}/index_local.m3u8`);
+      securityMediaProxy.allowUrlOrigin(localUrl);
+      candidates.push(`${localUrl}/vod/${encodedVid}/index_local.m3u8`);
+      candidates.push(`${localUrl}/vod/${encodedVid}/index.m3u8`);
       candidates.push(
-        `${localUrl}/vod/${encodeURIComponent(videoId)}/files/high/index_local.m3u8`
+        `${localUrl}/vod/${encodedVid}/files/high/index_local.m3u8`
       );
+      candidates.push(`${localUrl}/vod/${encodedVid}/files/high/index.m3u8`);
     }
     if (vpnUrl) {
-      candidates.push(`${vpnUrl}/vod/${encodeURIComponent(videoId)}/index.m3u8`);
-      candidates.push(
-        `${vpnUrl}/vod/${encodeURIComponent(videoId)}/files/high/index.m3u8`
-      );
+      securityMediaProxy.allowUrlOrigin(vpnUrl);
+      candidates.push(`${vpnUrl}/vod/${encodedVid}/index.m3u8`);
+      candidates.push(`${vpnUrl}/vod/${encodedVid}/files/high/index.m3u8`);
+      candidates.push(`${vpnUrl}/vod/${encodedVid}/files/medium/index.m3u8`);
     }
 
-    let workingUrl: string | undefined;
+    const workingCandidates: string[] = [];
     let lastError: string | undefined;
     for (const candidate of candidates) {
       const probe = await this.fetchSecurityMedia({
@@ -2851,15 +2863,18 @@ export class NetatmoClient {
         responseType: 'text',
       });
       if (probe.ok && probe.dataText && probe.dataText.includes('#EXTM3U')) {
-        workingUrl = candidate;
+        workingCandidates.push(candidate);
+        // Keep checking at least one cloud candidate when local succeeded just in case
+        // LAN segments fail mid-stream and player needs a verified cloud fallback.
+        if (localUrl && candidate.startsWith(localUrl)) {
+          continue;
+        }
         break;
       }
       lastError = probe.error || `HTTP ${probe.status}`;
     }
 
-    const fallbackHlsUrls = candidates.filter((u) => u !== workingUrl);
-
-    if (!workingUrl) {
+    if (workingCandidates.length === 0) {
       return {
         ok: false,
         vpnUrl,
@@ -2871,15 +2886,23 @@ export class NetatmoClient {
       };
     }
 
+    const primaryRaw = workingCandidates[0];
+    const remainingRaw = candidates.filter((u) => u !== primaryRaw);
+    const orderedRaw = [primaryRaw, ...remainingRaw];
+    const proxied = await Promise.all(
+      orderedRaw.map((u) => securityMediaProxy.toProxyUrl(u))
+    );
+
     return {
       ok: true,
-      hlsUrl: workingUrl,
+      hlsUrl: proxied[0],
       localHlsUrl: localUrl
-        ? `${localUrl}/vod/${encodeURIComponent(videoId)}/index_local.m3u8`
+        ? `${localUrl}/vod/${encodedVid}/index_local.m3u8`
         : undefined,
-      fallbackHlsUrls,
+      fallbackHlsUrls: proxied.slice(1),
       vpnUrl,
       localUrl,
+      isLocalStream: Boolean(localUrl && primaryRaw.startsWith(localUrl)),
     };
   }
 

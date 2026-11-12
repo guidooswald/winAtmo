@@ -1,11 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import Hls, {
-  Loader,
-  LoaderCallbacks,
-  LoaderConfiguration,
-  LoaderContext,
-  LoaderStats,
-} from 'hls.js';
+import Hls from 'hls.js';
 import { AlertTriangle, Film, RefreshCw } from 'lucide-react';
 
 interface HlsVideoPlayerProps {
@@ -14,145 +8,6 @@ interface HlsVideoPlayerProps {
   posterUrl?: string;
   isDemo?: boolean;
   onRetryResolve?: () => void;
-}
-
-function createEmptyStats(): LoaderStats {
-  return {
-    aborted: false,
-    loaded: 0,
-    retry: 0,
-    total: 0,
-    chunkCount: 0,
-    bwEstimate: 0,
-    loading: { start: 0, first: 0, end: 0 },
-    parsing: { start: 0, end: 0 },
-    buffering: { start: 0, first: 0, end: 0 },
-  };
-}
-
-/**
- * Custom hls.js loader that fetches manifests and media segments through Electron main IPC
- * so Netatmo VPN / LAN camera streams avoid browser CORS and mixed-content restrictions.
- */
-class IpcHlsLoader implements Loader<LoaderContext> {
-  public context: LoaderContext | null = null;
-  public stats: LoaderStats = createEmptyStats();
-  private aborted = false;
-  private lastContentType: string | null = null;
-
-  public abort(): void {
-    this.aborted = true;
-    this.stats.aborted = true;
-  }
-
-  public destroy(): void {
-    this.abort();
-    this.context = null;
-  }
-
-  public getCacheAge(): number | null {
-    return null;
-  }
-
-  public getResponseHeader(name: string): string | null {
-    if (name.toLowerCase() === 'content-type') {
-      return this.lastContentType;
-    }
-    return null;
-  }
-
-  public load(
-    context: LoaderContext,
-    _config: LoaderConfiguration,
-    callbacks: LoaderCallbacks<LoaderContext>
-  ): void {
-    this.context = context;
-    this.aborted = false;
-    const now = performance.now();
-    this.stats = createEmptyStats();
-    this.stats.loading.start = now;
-
-    const wantBinary = context.responseType === 'arraybuffer';
-
-    window.winatmo
-      .fetchSecurityMedia({
-        url: context.url,
-        responseType: wantBinary ? 'arraybuffer' : 'text',
-        headers: context.headers,
-        rangeStart: context.rangeStart,
-        rangeEnd: context.rangeEnd,
-      })
-      .then((res) => {
-        if (this.aborted) {
-          callbacks.onAbort?.(this.stats, context, null);
-          return;
-        }
-
-        const doneAt = performance.now();
-        this.stats.loading.first = doneAt;
-        this.stats.loading.end = doneAt;
-        this.lastContentType = res.contentType || null;
-
-        if (!res.ok) {
-          callbacks.onError(
-            {
-              code: res.status || 500,
-              text: res.error || res.statusText || 'Failed to load stream',
-            },
-            context,
-            null,
-            this.stats
-          );
-          return;
-        }
-
-        let payload: string | ArrayBuffer;
-        let byteLen = 0;
-
-        if (wantBinary) {
-          const view = res.dataBuffer
-            ? new Uint8Array(res.dataBuffer)
-            : new Uint8Array(0);
-          byteLen = view.byteLength;
-          payload = view.buffer.slice(
-            view.byteOffset,
-            view.byteOffset + view.byteLength
-          );
-        } else {
-          const text = res.dataText ?? '';
-          byteLen = text.length;
-          payload = text;
-        }
-
-        this.stats.loaded = byteLen;
-        this.stats.total = byteLen;
-        this.stats.chunkCount = 1;
-
-        callbacks.onSuccess(
-          {
-            url: res.finalUrl || context.url,
-            data: payload,
-            code: res.status,
-            text: res.statusText,
-          },
-          this.stats,
-          context,
-          null
-        );
-      })
-      .catch((err: any) => {
-        if (this.aborted) return;
-        callbacks.onError(
-          {
-            code: 0,
-            text: err?.message || String(err),
-          },
-          context,
-          null,
-          this.stats
-        );
-      });
-  }
 }
 
 export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
@@ -192,12 +47,20 @@ export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
 
     let hls: Hls | null = null;
     let cancelled = false;
+    let networkRecoveries = 0;
+    let mediaRecoveries = 0;
 
     if (Hls.isSupported()) {
       hls = new Hls({
-        loader: IpcHlsLoader as unknown as typeof Hls.DefaultConfig.loader,
         enableWorker: false,
         startLevel: -1,
+        fragLoadingTimeOut: 30000,
+        manifestLoadingTimeOut: 25000,
+        levelLoadingTimeOut: 25000,
+        fragLoadingMaxRetry: 3,
+        fragLoadingRetryDelay: 1000,
+        levelLoadingMaxRetry: 3,
+        manifestLoadingMaxRetry: 2,
       });
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -208,19 +71,44 @@ export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
         });
       });
 
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        if (!cancelled) {
+          setBuffering(false);
+        }
+      });
+
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (cancelled || !data.fatal) return;
+
+        if (
+          data.type === Hls.ErrorTypes.NETWORK_ERROR &&
+          networkRecoveries < 1
+        ) {
+          networkRecoveries++;
+          hls?.startLoad();
+          return;
+        }
+
+        if (
+          data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+          mediaRecoveries < 1
+        ) {
+          mediaRecoveries++;
+          hls?.recoverMediaError();
+          return;
+        }
+
         if (candidateIndex + 1 < candidateList.length) {
           hls?.destroy();
           setCandidateIndex((prev) => prev + 1);
           return;
         }
+
         setBuffering(false);
-        setPlayerError(
-          data.details
-            ? `Stream error (${data.details})`
-            : 'Unable to decode or stream this Netatmo video clip.'
-        );
+        const parts: string[] = [String(data.details || 'playbackError')];
+        if (data.response?.code) parts.push(`HTTP ${data.response.code}`);
+        if (data.reason) parts.push(data.reason);
+        setPlayerError(`Stream error (${parts.join(' • ')})`);
       });
 
       hls.loadSource(activeUrl);
@@ -234,6 +122,10 @@ export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
       };
       videoEl.onerror = () => {
         if (cancelled) return;
+        if (candidateIndex + 1 < candidateList.length) {
+          setCandidateIndex((prev) => prev + 1);
+          return;
+        }
         setBuffering(false);
         setPlayerError('Video stream could not be played in this runtime.');
       };
