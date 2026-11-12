@@ -4045,10 +4045,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-card-gap, 16px);
-  padding: var(--space-view-padding, 20px 24px 32px);
-  max-width: 1480px;
-  margin: 0 auto;
   width: 100%;
+  max-width: none;
 }
 
 .security-topbar {
@@ -4115,20 +4113,23 @@ body {
 
 .security-main-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, clamp(320px, 24vw, 400px));
   grid-template-areas: 'events cameras';
   gap: var(--space-card-gap, 16px);
   align-items: start;
+  width: 100%;
 }
 
 .security-events-col {
   grid-area: events;
   min-width: 0;
+  width: 100%;
 }
 
 .security-cameras-col {
   grid-area: cameras;
   min-width: 0;
+  width: 100%;
 }
 
 .security-section {
@@ -4428,14 +4429,16 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100%;
 }
 
 .security-event-row {
   display: grid;
-  grid-template-columns: 112px 1fr auto;
+  grid-template-columns: clamp(112px, 8.5vw, 156px) minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
   padding: 10px 14px;
+  width: 100%;
   background: var(--bg-card);
   border: var(--border-width) solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -4447,8 +4450,8 @@ body {
 }
 
 .event-thumb-box {
-  width: 112px;
-  height: 68px;
+  width: clamp(112px, 8.5vw, 156px);
+  aspect-ratio: 16 / 10;
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--bg-surface);
