@@ -2145,14 +2145,15 @@ body {
 
 /* Settings View Styles */
 .settings-container {
-  max-width: 1080px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
   display: flex;
   flex-direction: column;
   gap: var(--space-card-gap);
 }
 
 .settings-card {
+  width: 100%;
   padding: 20px 22px;
   border-radius: var(--radius-md);
   background: var(--bg-card);
@@ -2167,6 +2168,7 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 16px;
   padding-bottom: 12px;
@@ -2224,20 +2226,20 @@ body {
 
 .settings-grid-2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 18px;
 }
 
 .settings-grid-3 {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
   margin-bottom: 14px;
 }
 
 .settings-grid-4 {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 14px;
 }
 
@@ -2292,12 +2294,13 @@ body {
 .storage-actions-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .storage-metrics-bar {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
 }
 
@@ -2595,7 +2598,7 @@ body {
 
 .auth-methods-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
 }
 
@@ -2637,8 +2640,8 @@ body {
 
 /* Theme Swatch Selector Grid & Families */
 .theme-families-container {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
   gap: 12px;
 }
 
