@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { session, net } from 'electron';
 import { AppStore } from './store';
 import { TimeSeriesDatabase, BatchMeasurementRow } from './database';
@@ -3097,21 +3098,41 @@ export class NetatmoClient {
   }
 
   /**
-   * Resolves the playable HLS stream URL (`{vpn_url}/vod/{video_id}/index.m3u8`) for an event video.
+   * Discovers ordered candidate VOD `.m3u8` URLs (`localUrl` + `vpnUrl`) for an event.
    */
-  public async getSecurityEventVideo(options: {
+  private async discoverVideoCandidates(options: {
     homeId: string;
     cameraId?: string;
     eventId?: string;
     videoId?: string;
-  }): Promise<SecurityEventVideoResult> {
-    const session = this.store.getSession();
-    if (!session.loggedIn) {
-      return { ok: false, error: 'Not signed in to Netatmo.' };
+  }): Promise<{
+    ok: boolean;
+    videoId?: string;
+    vpnUrl?: string;
+    localUrl?: string;
+    candidates: string[];
+    workingCandidates: string[];
+    error?: string;
+    needsAccessScope?: boolean;
+    isDemo?: boolean;
+  }> {
+    const sessionData = this.store.getSession();
+    if (!sessionData.loggedIn) {
+      return {
+        ok: false,
+        candidates: [],
+        workingCandidates: [],
+        error: 'Not signed in to Netatmo.',
+      };
     }
 
-    if (session.authMethod === 'demo') {
-      return { ok: true, isDemo: true };
+    if (sessionData.authMethod === 'demo') {
+      return {
+        ok: true,
+        isDemo: true,
+        candidates: [],
+        workingCandidates: [],
+      };
     }
 
     let videoId = options.videoId;
@@ -3135,6 +3156,8 @@ export class NetatmoClient {
     if (!videoId) {
       return {
         ok: false,
+        candidates: [],
+        workingCandidates: [],
         error: 'No recorded video ID is associated with this event.',
       };
     }
@@ -3142,6 +3165,9 @@ export class NetatmoClient {
     if (!options.cameraId) {
       return {
         ok: false,
+        videoId,
+        candidates: [],
+        workingCandidates: [],
         error: 'Camera ID is missing for this event.',
       };
     }
@@ -3154,6 +3180,9 @@ export class NetatmoClient {
     if (!vpnUrl && !localUrl) {
       return {
         ok: false,
+        videoId,
+        candidates: [],
+        workingCandidates: [],
         needsAccessScope: true,
         error:
           'Netatmo did not expose a camera stream URL (vpn_url). Video playback requires Netatmo Web Sign-In or OAuth access_camera / access_presence scopes.',
@@ -3187,8 +3216,6 @@ export class NetatmoClient {
       });
       if (probe.ok && probe.dataText && probe.dataText.includes('#EXTM3U')) {
         workingCandidates.push(candidate);
-        // Keep checking at least one cloud candidate when local succeeded just in case
-        // LAN segments fail mid-stream and player needs a verified cloud fallback.
         if (localUrl && candidate.startsWith(localUrl)) {
           continue;
         }
@@ -3200,17 +3227,53 @@ export class NetatmoClient {
     if (workingCandidates.length === 0) {
       return {
         ok: false,
+        videoId,
         vpnUrl,
         localUrl,
-        fallbackHlsUrls: candidates,
+        candidates,
+        workingCandidates: [],
         error: `Recorded video clip could not be opened (${
           lastError || 'unavailable on camera SD card or expired'
         }).`,
       };
     }
 
-    const primaryRaw = workingCandidates[0];
-    const remainingRaw = candidates.filter((u) => u !== primaryRaw);
+    return {
+      ok: true,
+      videoId,
+      vpnUrl,
+      localUrl,
+      candidates,
+      workingCandidates,
+    };
+  }
+
+  /**
+   * Resolves the playable HLS stream URL (`{vpn_url}/vod/{video_id}/index.m3u8`) for an event video.
+   */
+  public async getSecurityEventVideo(options: {
+    homeId: string;
+    cameraId?: string;
+    eventId?: string;
+    videoId?: string;
+  }): Promise<SecurityEventVideoResult> {
+    const discovered = await this.discoverVideoCandidates(options);
+    if (discovered.isDemo) {
+      return { ok: true, isDemo: true };
+    }
+    if (!discovered.ok || discovered.workingCandidates.length === 0) {
+      return {
+        ok: false,
+        vpnUrl: discovered.vpnUrl,
+        localUrl: discovered.localUrl,
+        fallbackHlsUrls: discovered.candidates,
+        needsAccessScope: discovered.needsAccessScope,
+        error: discovered.error || 'Video stream unavailable.',
+      };
+    }
+
+    const primaryRaw = discovered.workingCandidates[0];
+    const remainingRaw = discovered.candidates.filter((u) => u !== primaryRaw);
     const orderedRaw = [primaryRaw, ...remainingRaw];
     const proxied = await Promise.all(
       orderedRaw.map((u) => securityMediaProxy.toProxyUrl(u))
@@ -3219,13 +3282,398 @@ export class NetatmoClient {
     return {
       ok: true,
       hlsUrl: proxied[0],
-      localHlsUrl: localUrl
-        ? `${localUrl}/vod/${encodedVid}/index_local.m3u8`
+      localHlsUrl: discovered.localUrl
+        ? `${discovered.localUrl}/vod/${encodeURIComponent(
+            discovered.videoId || ''
+          )}/index_local.m3u8`
         : undefined,
       fallbackHlsUrls: proxied.slice(1),
-      vpnUrl,
-      localUrl,
-      isLocalStream: Boolean(localUrl && primaryRaw.startsWith(localUrl)),
+      vpnUrl: discovered.vpnUrl,
+      localUrl: discovered.localUrl,
+      isLocalStream: Boolean(
+        discovered.localUrl && primaryRaw.startsWith(discovered.localUrl)
+      ),
+    };
+  }
+
+  /**
+   * Resolves a snapshot image as a Buffer ready to save to disk.
+   */
+  public async resolveEventSnapshotBuffer(options: {
+    homeId: string;
+    eventId: string;
+    cameraId?: string;
+    videoId?: string;
+    imageUrl?: string;
+    candidateUrls?: string[];
+  }): Promise<{ ok: boolean; buffer?: Buffer; ext?: string; error?: string }> {
+    const decodeDataUri = (dataUri: string) => {
+      const m = /^data:([^;]+);base64,(.+)$/i.exec(dataUri);
+      if (!m) return null;
+      const mime = m[1].toLowerCase();
+      let ext = 'jpg';
+      if (mime.includes('png')) ext = 'png';
+      else if (mime.includes('webp')) ext = 'webp';
+      else if (mime.includes('svg')) ext = 'svg';
+      return {
+        buffer: Buffer.from(m[2], 'base64'),
+        ext,
+      };
+    };
+
+    if (options.imageUrl?.startsWith('data:')) {
+      const decoded = decodeDataUri(options.imageUrl);
+      if (decoded) return { ok: true, ...decoded };
+    }
+
+    const refreshed = await this.refreshSecurityEventImage({
+      homeId: options.homeId,
+      eventId: options.eventId,
+      cameraId: options.cameraId,
+      videoId: options.videoId,
+      candidateUrls: [
+        ...(options.imageUrl ? [options.imageUrl] : []),
+        ...(options.candidateUrls || []),
+      ],
+    });
+
+    if (!refreshed.ok || !refreshed.imageUrl) {
+      return {
+        ok: false,
+        error: refreshed.error || 'No snapshot image available to download.',
+      };
+    }
+
+    if (refreshed.imageUrl.startsWith('data:')) {
+      const decoded = decodeDataUri(refreshed.imageUrl);
+      if (decoded) return { ok: true, ...decoded };
+    }
+
+    return { ok: false, error: 'Snapshot image could not be decoded.' };
+  }
+
+  /**
+   * Downloads an HLS VOD video (resolving master playlist, optional AES-128 key,
+   * and media segments) cleanly into a single playable `.ts` or `.mp4` buffer.
+   */
+  public async downloadSecurityEventVideo(
+    options: {
+      homeId: string;
+      cameraId?: string;
+      eventId?: string;
+      videoId?: string;
+    },
+    chooseSavePath: (suggestedExt: 'ts' | 'mp4') => Promise<string | null>,
+    writeTargetFile: (filePath: string, data: Buffer) => Promise<void>
+  ): Promise<{
+    success: boolean;
+    canceled?: boolean;
+    filePath?: string;
+    bytesWritten?: number;
+    segmentCount?: number;
+    error?: string;
+  }> {
+    const discovered = await this.discoverVideoCandidates(options);
+    if (discovered.isDemo) {
+      return {
+        success: false,
+        error: 'Demo events do not contain a downloadable live video stream.',
+      };
+    }
+    if (!discovered.ok || discovered.workingCandidates.length === 0) {
+      return {
+        success: false,
+        error: discovered.error || 'Video clip is unavailable.',
+      };
+    }
+
+    const mediaPlaylistRes = await this.resolveMediaPlaylist(
+      discovered.workingCandidates[0]
+    );
+    if (!mediaPlaylistRes.ok || !mediaPlaylistRes.text || !mediaPlaylistRes.baseUrl) {
+      return {
+        success: false,
+        error: mediaPlaylistRes.error || 'Failed to read HLS media playlist.',
+      };
+    }
+
+    const parsedPlaylist = this.parseMediaPlaylist(
+      mediaPlaylistRes.text,
+      mediaPlaylistRes.baseUrl
+    );
+    if (parsedPlaylist.segments.length === 0) {
+      return {
+        success: false,
+        error: 'No video segments found in HLS playlist.',
+      };
+    }
+
+    const savePath = await chooseSavePath(parsedPlaylist.ext);
+    if (!savePath) {
+      return { success: false, canceled: true };
+    }
+
+    const chunks: Buffer[] = [];
+
+    if (parsedPlaylist.initMapUrl) {
+      const initRes = await this.fetchSecurityMedia({
+        url: parsedPlaylist.initMapUrl,
+        responseType: 'arraybuffer',
+      });
+      if (initRes.ok && initRes.dataBuffer) {
+        chunks.push(Buffer.from(initRes.dataBuffer));
+      }
+    }
+
+    const keyCache = new Map<string, Buffer>();
+    let segIndex = 0;
+
+    for (const seg of parsedPlaylist.segments) {
+      const res = await this.fetchSecurityMedia({
+        url: seg.url,
+        responseType: 'arraybuffer',
+        rangeStart: seg.rangeStart,
+        rangeEnd: seg.rangeEnd,
+      });
+
+      if (!res.ok || !res.dataBuffer) {
+        return {
+          success: false,
+          error: `Failed while downloading segment ${segIndex + 1}/${
+            parsedPlaylist.segments.length
+          }: ${res.error || `HTTP ${res.status}`}`,
+        };
+      }
+
+      let segBuf: Buffer = Buffer.from(res.dataBuffer);
+      if (seg.keyUrl) {
+        let keyBuf = keyCache.get(seg.keyUrl);
+        if (!keyBuf) {
+          const keyRes = await this.fetchSecurityMedia({
+            url: seg.keyUrl,
+            responseType: 'arraybuffer',
+          });
+          if (!keyRes.ok || !keyRes.dataBuffer || keyRes.dataBuffer.byteLength !== 16) {
+            return {
+              success: false,
+              error: 'Failed to fetch HLS decryption key.',
+            };
+          }
+          keyBuf = Buffer.from(keyRes.dataBuffer);
+          keyCache.set(seg.keyUrl, keyBuf);
+        }
+
+        const ivBuf = seg.ivHex
+          ? Buffer.from(seg.ivHex.replace(/^0x/i, '').padStart(32, '0'), 'hex')
+          : (() => {
+              const b = Buffer.alloc(16, 0);
+              b.writeUInt32BE(parsedPlaylist.mediaSequence + segIndex, 12);
+              return b;
+            })();
+
+        const decipher = crypto.createDecipheriv('aes-128-cbc', keyBuf, ivBuf);
+        segBuf = Buffer.concat([decipher.update(segBuf), decipher.final()]);
+      }
+
+      chunks.push(segBuf);
+      segIndex++;
+    }
+
+    const finalBuffer = Buffer.concat(chunks);
+    await writeTargetFile(savePath, finalBuffer);
+
+    debugLogger.log(
+      'info',
+      'SecurityVideo',
+      `Downloaded security video (${parsedPlaylist.segments.length} segments, ${finalBuffer.byteLength} bytes) to ${savePath}`,
+      undefined,
+      'security'
+    );
+
+    return {
+      success: true,
+      filePath: savePath,
+      bytesWritten: finalBuffer.byteLength,
+      segmentCount: parsedPlaylist.segments.length,
+    };
+  }
+
+  private async resolveMediaPlaylist(playlistUrl: string): Promise<{
+    ok: boolean;
+    text?: string;
+    baseUrl?: string;
+    error?: string;
+  }> {
+    const res = await this.fetchSecurityMedia({
+      url: playlistUrl,
+      responseType: 'text',
+    });
+    if (!res.ok || !res.dataText) {
+      return { ok: false, error: res.error || `HTTP ${res.status}` };
+    }
+
+    const baseUrl = res.finalUrl || playlistUrl;
+    const text = res.dataText;
+
+    if (!text.includes('#EXT-X-STREAM-INF')) {
+      return { ok: true, text, baseUrl };
+    }
+
+    // Master playlist: select highest-bandwidth variant URL
+    const lines = text.split(/\r?\n/);
+    let bestUrl: string | null = null;
+    let bestBw = -1;
+    let pendingBw = 0;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      if (line.startsWith('#EXT-X-STREAM-INF')) {
+        const bwMatch = /BANDWIDTH=(\d+)/i.exec(line);
+        pendingBw = bwMatch ? Number(bwMatch[1]) : 0;
+      } else if (!line.startsWith('#')) {
+        try {
+          const abs = new URL(line, baseUrl).toString();
+          if (pendingBw > bestBw || !bestUrl) {
+            bestBw = pendingBw;
+            bestUrl = abs;
+          }
+        } catch {}
+      }
+    }
+
+    if (!bestUrl) {
+      return { ok: false, error: 'Master HLS playlist has no variant streams.' };
+    }
+
+    const levelRes = await this.fetchSecurityMedia({
+      url: bestUrl,
+      responseType: 'text',
+    });
+    if (!levelRes.ok || !levelRes.dataText) {
+      return { ok: false, error: levelRes.error || `HTTP ${levelRes.status}` };
+    }
+
+    return {
+      ok: true,
+      text: levelRes.dataText,
+      baseUrl: levelRes.finalUrl || bestUrl,
+    };
+  }
+
+  private parseMediaPlaylist(
+    text: string,
+    baseUrl: string
+  ): {
+    ext: 'ts' | 'mp4';
+    mediaSequence: number;
+    initMapUrl?: string;
+    segments: Array<{
+      url: string;
+      keyUrl?: string;
+      ivHex?: string;
+      rangeStart?: number;
+      rangeEnd?: number;
+    }>;
+  } {
+    const lines = text.split(/\r?\n/);
+    let mediaSequence = 0;
+    let initMapUrl: string | undefined;
+    let currentKeyUrl: string | undefined;
+    let currentIvHex: string | undefined;
+    let pendingByteRange: { start: number; end: number } | undefined;
+    let lastByteEnd = 0;
+    let usesMp4 = false;
+
+    const segments: Array<{
+      url: string;
+      keyUrl?: string;
+      ivHex?: string;
+      rangeStart?: number;
+      rangeEnd?: number;
+    }> = [];
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
+        const val = Number(line.split(':')[1]);
+        if (Number.isFinite(val)) mediaSequence = val;
+        continue;
+      }
+
+      if (line.startsWith('#EXT-X-MAP:')) {
+        const uriMatch = /URI="([^"]+)"/i.exec(line);
+        if (uriMatch) {
+          try {
+            initMapUrl = new URL(uriMatch[1], baseUrl).toString();
+            usesMp4 = true;
+          } catch {}
+        }
+        continue;
+      }
+
+      if (line.startsWith('#EXT-X-KEY:')) {
+        const methodMatch = /METHOD=([A-Z0-9-]+)/i.exec(line);
+        const method = methodMatch?.[1]?.toUpperCase();
+        if (method === 'NONE') {
+          currentKeyUrl = undefined;
+          currentIvHex = undefined;
+        } else if (method === 'AES-128') {
+          const uriMatch = /URI="([^"]+)"/i.exec(line);
+          const ivMatch = /IV=([^,\s]+)/i.exec(line);
+          if (uriMatch) {
+            try {
+              currentKeyUrl = new URL(uriMatch[1], baseUrl).toString();
+            } catch {}
+          }
+          currentIvHex = ivMatch?.[1];
+        }
+        continue;
+      }
+
+      if (line.startsWith('#EXT-X-BYTERANGE:')) {
+        const spec = line.slice('#EXT-X-BYTERANGE:'.length).trim();
+        const [lenStr, offStr] = spec.split('@');
+        const len = Number(lenStr);
+        if (Number.isFinite(len) && len > 0) {
+          const start =
+            offStr !== undefined && Number.isFinite(Number(offStr))
+              ? Number(offStr)
+              : lastByteEnd;
+          const end = start + len; // exclusive to match fetchSecurityMedia
+          lastByteEnd = end;
+          pendingByteRange = { start, end };
+        }
+        continue;
+      }
+
+      if (line.startsWith('#')) {
+        continue;
+      }
+
+      try {
+        const absUrl = new URL(line, baseUrl).toString();
+        if (/\.(m4s|mp4)(\?|$)/i.test(absUrl)) {
+          usesMp4 = true;
+        }
+        segments.push({
+          url: absUrl,
+          keyUrl: currentKeyUrl,
+          ivHex: currentIvHex,
+          rangeStart: pendingByteRange?.start,
+          rangeEnd: pendingByteRange?.end,
+        });
+        pendingByteRange = undefined;
+      } catch {}
+    }
+
+    return {
+      ext: usesMp4 ? 'mp4' : 'ts',
+      mediaSequence,
+      initMapUrl,
+      segments,
     };
   }
 

@@ -498,3 +498,12 @@ export interface SetPersonsAwayResult {
   error?: string;
   needsWriteScope?: boolean;
 }
+
+export interface SecurityDownloadResult {
+  success: boolean;
+  canceled?: boolean;
+  filePath?: string;
+  bytesWritten?: number;
+  segmentCount?: number;
+  error?: string;
+}

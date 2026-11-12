@@ -8,6 +8,7 @@ import {
   MeasureSeries,
   NetatmoScale,
   SecurityDataPayload,
+  SecurityDownloadResult,
   SecurityEventImageRefreshResult,
   SecurityEventVideoResult,
   SecurityMediaFetchResult,
@@ -144,6 +145,22 @@ export interface WinAtmoAPI {
     rangeEnd?: number;
   }) => Promise<SecurityMediaFetchResult>;
   setHomeEmpty: (options: { homeIds: string[] }) => Promise<SetPersonsAwayResult>;
+  downloadSecuritySnapshot: (options: {
+    homeId: string;
+    eventId: string;
+    cameraId?: string;
+    videoId?: string;
+    imageUrl?: string;
+    candidateUrls?: string[];
+    defaultFileName?: string;
+  }) => Promise<SecurityDownloadResult>;
+  downloadSecurityVideo: (options: {
+    homeId: string;
+    cameraId?: string;
+    eventId?: string;
+    videoId?: string;
+    defaultFileName?: string;
+  }) => Promise<SecurityDownloadResult>;
 
   // Debug Console & Telemetry
   openDebugWindow: () => void;
@@ -253,6 +270,10 @@ const api: WinAtmoAPI = {
   fetchSecurityMedia: (req) => ipcRenderer.invoke('security:fetch-media', req),
   setHomeEmpty: (options) =>
     ipcRenderer.invoke('security:set-home-empty', options),
+  downloadSecuritySnapshot: (options) =>
+    ipcRenderer.invoke('security:download-snapshot', options),
+  downloadSecurityVideo: (options) =>
+    ipcRenderer.invoke('security:download-video', options),
 
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),

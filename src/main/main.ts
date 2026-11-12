@@ -1856,6 +1856,112 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle(
+    'security:download-snapshot',
+    async (
+      _e,
+      options: {
+        homeId: string;
+        eventId: string;
+        cameraId?: string;
+        videoId?: string;
+        imageUrl?: string;
+        candidateUrls?: string[];
+        defaultFileName?: string;
+      }
+    ) => {
+      const resolved = await client.resolveEventSnapshotBuffer(options);
+      if (!resolved.ok || !resolved.buffer) {
+        return {
+          success: false,
+          error: resolved.error || 'Snapshot could not be downloaded.',
+        };
+      }
+
+      const ext = resolved.ext || 'jpg';
+      const safeBase = (options.defaultFileName || `netatmo-snapshot-${options.eventId}`)
+        .replace(/[<>:"/\\|?*]+/g, '-')
+        .replace(/\.[a-z0-9]+$/i, '');
+
+      const { canceled, filePath } = await dialog.showSaveDialog(
+        mainWindow || undefined!,
+        {
+          title: 'Save Camera Snapshot',
+          defaultPath: `${safeBase}.${ext}`,
+          filters: [
+            {
+              name: 'Image Files',
+              extensions: ext === 'jpg' ? ['jpg', 'jpeg', 'png'] : [ext, 'jpg', 'png'],
+            },
+          ],
+        }
+      );
+
+      if (canceled || !filePath) {
+        return { success: false, canceled: true };
+      }
+
+      try {
+        await fs.promises.writeFile(filePath, resolved.buffer);
+        return {
+          success: true,
+          filePath,
+          bytesWritten: resolved.buffer.byteLength,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          error: err?.message || 'Failed to save snapshot file.',
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'security:download-video',
+    async (
+      _e,
+      options: {
+        homeId: string;
+        cameraId?: string;
+        eventId?: string;
+        videoId?: string;
+        defaultFileName?: string;
+      }
+    ) => {
+      return client.downloadSecurityEventVideo(
+        options,
+        async (suggestedExt) => {
+          const safeBase = (
+            options.defaultFileName ||
+            `netatmo-video-${options.eventId || options.videoId || 'clip'}`
+          )
+            .replace(/[<>:"/\\|?*]+/g, '-')
+            .replace(/\.[a-z0-9]+$/i, '');
+
+          const { canceled, filePath } = await dialog.showSaveDialog(
+            mainWindow || undefined!,
+            {
+              title: 'Save Camera Video Clip',
+              defaultPath: `${safeBase}.${suggestedExt}`,
+              filters: [
+                {
+                  name: 'Video Files',
+                  extensions: suggestedExt === 'mp4' ? ['mp4', 'ts'] : ['ts', 'mp4'],
+                },
+              ],
+            }
+          );
+          if (canceled || !filePath) return null;
+          return filePath;
+        },
+        async (filePath, data) => {
+          await fs.promises.writeFile(filePath, data);
+        }
+      );
+    }
+  );
+
   // Debug Console Window & Telemetry IPC
   ipcMain.on('debug:open-window', () => {
     createOrShowDebugWindow();

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   BellRing,
@@ -6,11 +6,14 @@ import {
   Car,
   CheckCircle2,
   Clock,
+  Download,
   Film,
   HardDrive,
   Home,
   Image as ImageIcon,
   Lightbulb,
+  Maximize2,
+  Minimize2,
   PawPrint,
   Play,
   PlugZap,
@@ -166,6 +169,172 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     tone: 'ok' | 'err';
     text: string;
   } | null>(null);
+  const [downloadingMedia, setDownloadingMedia] = useState<
+    Record<string, boolean>
+  >({});
+  const [downloadNotice, setDownloadNotice] = useState<{
+    eventId: string;
+    tone: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+  const videoModalRef = useRef<HTMLDivElement | null>(null);
+  const [isResizingVideoModal, setIsResizingVideoModal] = useState(false);
+  const [videoModalMaximized, setVideoModalMaximized] = useState(false);
+  const [videoModalSize, setVideoModalSize] = useState<{
+    width: number;
+    height: number;
+  }>(() => {
+    try {
+      const raw = localStorage.getItem('winatmo_video_modal_size');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          typeof parsed?.width === 'number' &&
+          typeof parsed?.height === 'number' &&
+          parsed.width >= 440 &&
+          parsed.height >= 360
+        ) {
+          return { width: parsed.width, height: parsed.height };
+        }
+      }
+    } catch {}
+    return { width: 920, height: 680 };
+  });
+
+  const buildDownloadBaseName = useCallback(
+    (ev: SecurityEvent, prefix: string) => {
+      const d = new Date(ev.time * 1000);
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}${String(d.getDate()).padStart(2, '0')}-${String(
+        d.getHours()
+      ).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(
+        d.getSeconds()
+      ).padStart(2, '0')}`;
+      const camPart = (ev.cameraName || 'netatmo')
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 32);
+      return `${camPart || prefix}-${stamp}`;
+    },
+    []
+  );
+
+  const handleDownloadSnapshot = useCallback(
+    async (ev: SecurityEvent) => {
+      if (typeof window.winatmo?.downloadSecuritySnapshot !== 'function') {
+        setDownloadNotice({
+          eventId: ev.id,
+          tone: 'err',
+          text: 'Restart Electron (npm run dev) to enable snapshot downloads.',
+        });
+        return;
+      }
+
+      const key = `snap:${ev.id}`;
+      setDownloadingMedia((prev) => ({ ...prev, [key]: true }));
+      setDownloadNotice(null);
+
+      try {
+        const candidateUrls = [
+          ev.snapshotUrl,
+          ev.vignetteUrl,
+          ...(ev.subEvents?.flatMap((se) => [se.snapshotUrl, se.vignetteUrl]) ||
+            []),
+        ].filter((u): u is string => Boolean(u));
+
+        const res = await window.winatmo.downloadSecuritySnapshot({
+          homeId: ev.homeId,
+          eventId: ev.id,
+          cameraId: ev.cameraId,
+          videoId: ev.videoId,
+          imageUrl: ev.snapshotUrl || ev.vignetteUrl,
+          candidateUrls,
+          defaultFileName: buildDownloadBaseName(ev, 'snapshot'),
+        });
+
+        if (res.canceled) return;
+
+        if (res.success && res.filePath) {
+          setDownloadNotice({
+            eventId: ev.id,
+            tone: 'ok',
+            text: `Snapshot saved to ${res.filePath}`,
+          });
+        } else {
+          setDownloadNotice({
+            eventId: ev.id,
+            tone: 'err',
+            text: res.error || 'Failed to save snapshot.',
+          });
+        }
+      } catch (err: any) {
+        setDownloadNotice({
+          eventId: ev.id,
+          tone: 'err',
+          text: err?.message || 'Failed to download snapshot.',
+        });
+      } finally {
+        setDownloadingMedia((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    [buildDownloadBaseName]
+  );
+
+  const handleDownloadVideo = useCallback(
+    async (ev: SecurityEvent) => {
+      if (typeof window.winatmo?.downloadSecurityVideo !== 'function') {
+        setDownloadNotice({
+          eventId: ev.id,
+          tone: 'err',
+          text: 'Restart Electron (npm run dev) to enable video downloads.',
+        });
+        return;
+      }
+
+      const key = `video:${ev.id}`;
+      setDownloadingMedia((prev) => ({ ...prev, [key]: true }));
+      setDownloadNotice(null);
+
+      try {
+        const res = await window.winatmo.downloadSecurityVideo({
+          homeId: ev.homeId,
+          cameraId: ev.cameraId,
+          eventId: ev.id,
+          videoId: ev.videoId,
+          defaultFileName: buildDownloadBaseName(ev, 'video'),
+        });
+
+        if (res.canceled) return;
+
+        if (res.success && res.filePath) {
+          setDownloadNotice({
+            eventId: ev.id,
+            tone: 'ok',
+            text: `Video saved (${res.segmentCount ?? 0} segments) to ${
+              res.filePath
+            }`,
+          });
+        } else {
+          setDownloadNotice({
+            eventId: ev.id,
+            tone: 'err',
+            text: res.error || 'Failed to download video.',
+          });
+        }
+      } catch (err: any) {
+        setDownloadNotice({
+          eventId: ev.id,
+          tone: 'err',
+          text: err?.message || 'Failed to download video.',
+        });
+      } finally {
+        setDownloadingMedia((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    [buildDownloadBaseName]
+  );
 
   const handleRefreshEventImage = useCallback(async (ev: SecurityEvent) => {
     if (typeof window.winatmo?.refreshSecurityEventImage !== 'function') {
@@ -1076,9 +1245,44 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                           <Play size={11} /> View Video
                         </button>
                       )}
+                      {imgUrl && !imgFailed && (
+                        <button
+                          type="button"
+                          className="event-media-btn subtle"
+                          disabled={Boolean(downloadingMedia[`snap:${ev.id}`])}
+                          onClick={() => handleDownloadSnapshot(ev)}
+                          title="Download snapshot image"
+                        >
+                          <Download size={11} />
+                          {downloadingMedia[`snap:${ev.id}`]
+                            ? 'Saving...'
+                            : 'Save Snapshot'}
+                        </button>
+                      )}
+                      {hasVideo && (
+                        <button
+                          type="button"
+                          className="event-media-btn subtle"
+                          disabled={Boolean(downloadingMedia[`video:${ev.id}`])}
+                          onClick={() => handleDownloadVideo(ev)}
+                          title="Download recorded event video"
+                        >
+                          <Download size={11} />
+                          {downloadingMedia[`video:${ev.id}`]
+                            ? 'Downloading...'
+                            : 'Save Video'}
+                        </button>
+                      )}
                     </div>
                     {imgErrorMsg && (
                       <div className="event-media-note">{imgErrorMsg}</div>
+                    )}
+                    {downloadNotice?.eventId === ev.id && (
+                      <div
+                        className={`event-download-note ${downloadNotice.tone}`}
+                      >
+                        {downloadNotice.text}
+                      </div>
                     )}
                   </div>
 
@@ -1147,6 +1351,19 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                     ? 'Updating...'
                     : 'Update Image'}
                 </button>
+                <button
+                  type="button"
+                  className="action-btn subtle"
+                  disabled={Boolean(
+                    downloadingMedia[`snap:${lightboxEvent.id}`]
+                  )}
+                  onClick={() => handleDownloadSnapshot(lightboxEvent)}
+                >
+                  <Download size={13} />
+                  {downloadingMedia[`snap:${lightboxEvent.id}`]
+                    ? 'Saving...'
+                    : 'Download Snapshot'}
+                </button>
                 {(lightboxEvent.videoId ||
                   lightboxEvent.videoStatus === 'available') &&
                   lightboxEvent.videoStatus !== 'deleted' && (
@@ -1177,6 +1394,11 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                 alt={lightboxEvent.message}
               />
             </div>
+            {downloadNotice?.eventId === lightboxEvent.id && (
+              <div className={`event-download-note ${downloadNotice.tone}`}>
+                {downloadNotice.text}
+              </div>
+            )}
             {lightboxEvent.subEvents && lightboxEvent.subEvents.length > 0 && (
               <div className="security-lightbox-subevents">
                 {lightboxEvent.subEvents.map((se, i) => (
@@ -1191,14 +1413,40 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
         </div>
       )}
 
-      {/* Recorded Event Video Player Modal */}
+      {/* Recorded Event Video Player Modal (Resizable) */}
       {videoEvent && (
         <div
           className="modal-backdrop"
           onClick={() => setVideoEvent(null)}
         >
           <div
-            className="security-lightbox-card security-video-modal"
+            ref={videoModalRef}
+            className={`security-lightbox-card security-video-modal ${
+              isResizingVideoModal ? 'resizing' : ''
+            }`}
+            style={
+              videoModalMaximized
+                ? {
+                    width: 'calc(100vw - 32px)',
+                    height: 'calc(100vh - 32px)',
+                    maxHeight: 'calc(100vh - 32px)',
+                  }
+                : {
+                    width: `${Math.min(
+                      videoModalSize.width,
+                      typeof window !== 'undefined'
+                        ? window.innerWidth - 32
+                        : 920
+                    )}px`,
+                    height: `${Math.min(
+                      videoModalSize.height,
+                      typeof window !== 'undefined'
+                        ? window.innerHeight - 32
+                        : 680
+                    )}px`,
+                    maxHeight: 'calc(100vh - 32px)',
+                  }
+            }
             onClick={(e) => e.stopPropagation()}
           >
             <div className="security-lightbox-header">
@@ -1233,20 +1481,63 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                   />
                   Reload Stream
                 </button>
+                <button
+                  type="button"
+                  className="action-btn primary"
+                  disabled={Boolean(
+                    downloadingMedia[`video:${videoEvent.id}`]
+                  )}
+                  onClick={() => handleDownloadVideo(videoEvent)}
+                  title="Download video clip to computer"
+                >
+                  {downloadingMedia[`video:${videoEvent.id}`] ? (
+                    <RefreshCw size={13} className="spin" />
+                  ) : (
+                    <Download size={13} />
+                  )}
+                  {downloadingMedia[`video:${videoEvent.id}`]
+                    ? 'Downloading...'
+                    : 'Download Video'}
+                </button>
                 {(videoEvent.snapshotUrl || videoEvent.vignetteUrl) &&
                   !failedImages[videoEvent.id] && (
-                    <button
-                      type="button"
-                      className="action-btn subtle"
-                      onClick={() => {
-                        const target = videoEvent;
-                        setVideoEvent(null);
-                        setLightboxEvent(target);
-                      }}
-                    >
-                      <ImageIcon size={13} /> View Snapshot
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="action-btn subtle"
+                        disabled={Boolean(
+                          downloadingMedia[`snap:${videoEvent.id}`]
+                        )}
+                        onClick={() => handleDownloadSnapshot(videoEvent)}
+                        title="Download event snapshot image"
+                      >
+                        <Download size={13} /> Snapshot
+                      </button>
+                      <button
+                        type="button"
+                        className="action-btn subtle"
+                        onClick={() => {
+                          const target = videoEvent;
+                          setVideoEvent(null);
+                          setLightboxEvent(target);
+                        }}
+                      >
+                        <ImageIcon size={13} /> View Snapshot
+                      </button>
+                    </>
                   )}
+                <button
+                  type="button"
+                  className="sync-overlay-close-btn"
+                  title={videoModalMaximized ? 'Restore size' : 'Maximize'}
+                  onClick={() => setVideoModalMaximized((m) => !m)}
+                >
+                  {videoModalMaximized ? (
+                    <Minimize2 size={15} />
+                  ) : (
+                    <Maximize2 size={15} />
+                  )}
+                </button>
                 <button
                   type="button"
                   className="sync-overlay-close-btn"
@@ -1256,6 +1547,12 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                 </button>
               </div>
             </div>
+
+            {downloadNotice?.eventId === videoEvent.id && (
+              <div className={`event-download-note ${downloadNotice.tone}`}>
+                {downloadNotice.text}
+              </div>
+            )}
 
             {videoLoading ? (
               <div className="security-video-status-card">
@@ -1296,6 +1593,68 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                   </div>
                 ))}
               </div>
+            )}
+
+            {!videoModalMaximized && (
+              <div
+                className="security-modal-resize-handle"
+                title="Drag to resize video window"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const el = videoModalRef.current;
+                  if (!el) return;
+                  const startRect = el.getBoundingClientRect();
+                  const startX = e.clientX;
+                  const startY = e.clientY;
+                  let latest = {
+                    width: Math.round(startRect.width),
+                    height: Math.round(startRect.height),
+                  };
+                  setIsResizingVideoModal(true);
+
+                  const onMove = (ev: MouseEvent) => {
+                    // Multiply delta by 2 because centered flex modal grows symmetrically
+                    const nextW = Math.round(
+                      Math.max(
+                        440,
+                        Math.min(
+                          window.innerWidth - 32,
+                          startRect.width + (ev.clientX - startX) * 2
+                        )
+                      )
+                    );
+                    const nextH = Math.round(
+                      Math.max(
+                        360,
+                        Math.min(
+                          window.innerHeight - 32,
+                          startRect.height + (ev.clientY - startY) * 2
+                        )
+                      )
+                    );
+                    latest = { width: nextW, height: nextH };
+                    setVideoModalSize(latest);
+                  };
+
+                  const onUp = () => {
+                    setIsResizingVideoModal(false);
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                    document.body.style.cursor = '';
+                    try {
+                      localStorage.setItem(
+                        'winatmo_video_modal_size',
+                        JSON.stringify(latest)
+                      );
+                    } catch {}
+                  };
+
+                  document.body.style.cursor = 'nwse-resize';
+                  window.addEventListener('mousemove', onMove);
+                  window.addEventListener('mouseup', onUp);
+                }}
+              />
             )}
           </div>
         </div>
