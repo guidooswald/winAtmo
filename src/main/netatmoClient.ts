@@ -2060,7 +2060,22 @@ export class NetatmoClient {
   }
 
   /**
+   * Returns locally cached Netatmo Security data from SQLite (if security storage is enabled).
+   */
+  public getCachedSecurityData(homeId?: string): SecurityDataPayload {
+    const session = this.store.getSession();
+    if (!session.loggedIn || session.authMethod === 'demo') {
+      return { homes: [], events: [], fetchedAt: 0 };
+    }
+    if (this.store.getSettings().storeSecurityData === false) {
+      return { homes: [], events: [], fetchedAt: 0 };
+    }
+    return this.db.getSecurityData(homeId);
+  }
+
+  /**
    * Fetches Netatmo Security homes, live camera hardware status, and event timeline.
+   * When local security storage is enabled, only new/unseen events are downloaded and persisted.
    */
   public async fetchSecurityData(options?: {
     homeId?: string;
@@ -2076,6 +2091,7 @@ export class NetatmoClient {
       return this.getDemoSecurityData();
     }
 
+    const shouldStore = this.store.getSettings().storeSecurityData !== false;
     const size = options?.size ?? 40;
     const homes: SecurityHome[] = [];
     const allEvents: SecurityEvent[] = [];
@@ -2180,31 +2196,73 @@ export class NetatmoClient {
             );
           }
 
-          // Fetch event list via /api/getevents
+          // Fetch event list via /api/getevents (incremental unseen-only when SQLite storage is enabled)
           try {
-            const eventsResp = await this.apiGet(
-              'getevents',
-              {
-                home_id: homeId,
-                size,
-                event_id: options?.offsetEventId,
-              },
-              false,
-              `Security events: ${homeName} (size=${size})`
-            );
-            const rawEvents: any[] =
-              eventsResp?.body?.home?.events ||
-              eventsResp?.body?.events ||
-              [];
-            for (const ev of rawEvents) {
-              allEvents.push(
-                this.normalizeSecurityEvent(
-                  ev,
-                  homeId,
-                  homeName,
-                  cameraNamesById,
-                  personsById
-                )
+            const knownIds = shouldStore
+              ? this.db.getKnownSecurityEventIds(homeId)
+              : new Set<string>();
+            let cursorEventId: string | undefined = options?.offsetEventId;
+            const maxPages = shouldStore && !options?.offsetEventId && knownIds.size > 0 ? 5 : 1;
+            let newForHome = 0;
+
+            for (let page = 0; page < maxPages; page++) {
+              const eventsResp = await this.apiGet(
+                'getevents',
+                {
+                  home_id: homeId,
+                  size,
+                  event_id: cursorEventId,
+                },
+                false,
+                `Security events: ${homeName} (size=${size}${cursorEventId ? `, until=${cursorEventId}` : ''})`
+              );
+              const rawEvents: any[] =
+                eventsResp?.body?.home?.events ||
+                eventsResp?.body?.events ||
+                [];
+
+              let hitKnownEvent = false;
+              let addedInPage = 0;
+
+              for (const ev of rawEvents) {
+                const evId = ev.id ? String(ev.id) : '';
+                if (shouldStore && evId && knownIds.has(evId)) {
+                  hitKnownEvent = true;
+                  continue;
+                }
+                if (evId) knownIds.add(evId);
+                allEvents.push(
+                  this.normalizeSecurityEvent(
+                    ev,
+                    homeId,
+                    homeName,
+                    cameraNamesById,
+                    personsById
+                  )
+                );
+                addedInPage++;
+                newForHome++;
+              }
+
+              if (
+                rawEvents.length === 0 ||
+                rawEvents.length < size ||
+                hitKnownEvent ||
+                addedInPage === 0
+              ) {
+                break;
+              }
+
+              const lastRaw = rawEvents[rawEvents.length - 1];
+              if (!lastRaw?.id) break;
+              cursorEventId = String(lastRaw.id);
+            }
+
+            if (shouldStore && !options?.offsetEventId) {
+              debugLogger.log(
+                'info',
+                'Security',
+                `Security sync (${homeName}): ${newForHome} new unseen event(s)`
               );
             }
           } catch (evErr: any) {
@@ -2318,6 +2376,11 @@ export class NetatmoClient {
             `Fallback /gethomedata note: ${legacyErr?.message || legacyErr}`
           );
         }
+      }
+
+      if (shouldStore) {
+        this.db.upsertSecurityData({ homes, events: allEvents });
+        return this.db.getSecurityData(options?.homeId);
       }
 
       allEvents.sort((a, b) => b.time - a.time);
@@ -2666,6 +2729,17 @@ export class NetatmoClient {
         const dataUrl = `data:${mime};base64,${Buffer.from(
           fetched.dataBuffer
         ).toString('base64')}`;
+        if (this.store.getSettings().storeSecurityData !== false) {
+          try {
+            this.db.updateSecurityEventImage(
+              options.eventId,
+              dataUrl,
+              dataUrl,
+              refreshedEvent?.snapshotExpiresAt,
+              refreshedEvent
+            );
+          } catch {}
+        }
         return {
           ok: true,
           imageUrl: dataUrl,

@@ -773,6 +773,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             >
               <Trash2 size={14} /> Clear Cache
             </button>
+            <button
+              className="action-btn danger"
+              onClick={async () => {
+                if (typeof window.winatmo?.clearSecurityData === 'function') {
+                  const st = await window.winatmo.clearSecurityData();
+                  setStorageStats(st);
+                }
+              }}
+              title="Delete all stored camera status, known persons, and security events from SQLite"
+            >
+              <Trash2 size={14} /> Delete Security Data
+            </button>
           </div>
         </div>
 
@@ -796,6 +808,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="storage-metric-box">
               <span>Indexed Sensors</span>
               <strong>{storageStats.moduleCount}</strong>
+            </div>
+            <div className="storage-metric-box">
+              <span>Security Events</span>
+              <strong>
+                {(storageStats.securityEventsCount ?? 0).toLocaleString()}
+                {(storageStats.securityCamerasCount ?? 0) > 0
+                  ? ` (${storageStats.securityCamerasCount} cam)`
+                  : ''}
+              </strong>
             </div>
             <div className="storage-metric-box">
               <span>Earliest Point</span>
@@ -824,6 +845,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
         )}
+
+        <div className="settings-switch-row">
+          <div className="settings-switch-text">
+            <strong>Store Security Data in SQLite</strong>
+            <span>
+              Save cameras, known persons, and events locally so refreshes only
+              fetch new, unseen events. Turn off to avoid storing any security
+              data locally.
+            </span>
+          </div>
+          <label
+            className="toggle-switch"
+            title="Toggle saving Netatmo Security data in local SQLite database"
+          >
+            <input
+              type="checkbox"
+              checked={settings.storeSecurityData !== false}
+              onChange={(e) =>
+                onUpdateSettings({ storeSecurityData: e.target.checked })
+              }
+            />
+            <span className="toggle-slider" />
+          </label>
+        </div>
       </div>
 
       {/* 3. Windows Taskbar Widget Settings */}

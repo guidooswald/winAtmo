@@ -167,6 +167,9 @@ export interface StorageStats {
   moduleCount: number;
   oldestTimestamp: number | null;
   newestTimestamp: number | null;
+  securityEventsCount: number;
+  securityCamerasCount: number;
+  securityPersonsCount: number;
   byScale: Array<{
     scale: string;
     count: number;
@@ -290,6 +293,7 @@ export interface UserSettings {
   oauthClientSecret?: string;
   storeApiKeysLocally: boolean; // When true, stores API keys locally in an encrypted file
   autoUpdateTokens: boolean; // When true, automatically refreshes OAuth and personal tokens before expiry
+  storeSecurityData: boolean; // When true (default), stores cameras, persons, and events in SQLite
   minimizeToTray: boolean;
   launchOnStartup: boolean;
 }

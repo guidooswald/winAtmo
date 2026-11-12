@@ -89,6 +89,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   taskbarSensorTarget: 'outdoor_temp',
   storeApiKeysLocally: false,
   autoUpdateTokens: true,
+  storeSecurityData: true,
   minimizeToTray: true,
   launchOnStartup: false,
 };

@@ -103,6 +103,7 @@ export interface WinAtmoAPI {
   // Storage & Export
   getStorageStats: () => Promise<StorageStats>;
   clearHistory: () => Promise<StorageStats>;
+  clearSecurityData: () => Promise<StorageStats>;
   optimizeStorage: () => Promise<StorageStats>;
   exportCsv: (
     series: MeasureSeries[],
@@ -115,6 +116,7 @@ export interface WinAtmoAPI {
   openExternal: (url: string) => Promise<void>;
 
   // Netatmo Security (Cameras & Events)
+  getCachedSecurityData: (homeId?: string) => Promise<SecurityDataPayload>;
   getSecurityData: (options?: {
     homeId?: string;
     size?: number;
@@ -157,6 +159,7 @@ export interface WinAtmoAPI {
     cb: (payload: { moduleId: string; metric?: string }) => void
   ) => () => void;
   onDebugStream: (cb: (event: DebugStreamEvent) => void) => () => void;
+  onSecurityCleared: (cb: () => void) => () => void;
 }
 
 const api: WinAtmoAPI = {
@@ -228,6 +231,7 @@ const api: WinAtmoAPI = {
 
   getStorageStats: () => ipcRenderer.invoke('storage:stats'),
   clearHistory: () => ipcRenderer.invoke('storage:clear'),
+  clearSecurityData: () => ipcRenderer.invoke('storage:clear-security'),
   optimizeStorage: () => ipcRenderer.invoke('storage:optimize'),
   exportCsv: (series: MeasureSeries[], defaultFileName?: string) =>
     ipcRenderer.invoke('storage:export-csv', { series, defaultFileName }),
@@ -237,6 +241,8 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('settings:update', partial),
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
 
+  getCachedSecurityData: (homeId?: string) =>
+    ipcRenderer.invoke('security:get-cached', homeId),
   getSecurityData: (options) => ipcRenderer.invoke('security:get-data', options),
   refreshSecurityEventImage: (options) =>
     ipcRenderer.invoke('security:refresh-event-image', options),
@@ -291,6 +297,11 @@ const api: WinAtmoAPI = {
     const handler = (_e: any, event: DebugStreamEvent) => cb(event);
     ipcRenderer.on('debug:stream', handler);
     return () => ipcRenderer.removeListener('debug:stream', handler);
+  },
+  onSecurityCleared: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('security:cleared', handler);
+    return () => ipcRenderer.removeListener('security:cleared', handler);
   },
 };
 

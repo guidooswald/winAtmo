@@ -1556,6 +1556,7 @@ function registerIpcHandlers(): void {
       );
       if (payload?.eraseDatabase) {
         db.clearAllHistory();
+        db.clearSecurityData();
       } else if (wasDemo) {
         db.clearDemoHistory();
       }
@@ -1621,6 +1622,9 @@ function registerIpcHandlers(): void {
             moduleCount: 0,
             oldestTimestamp: null,
             newestTimestamp: null,
+            securityEventsCount: 0,
+            securityCamerasCount: 0,
+            securityPersonsCount: 0,
             byScale: [],
           });
         }
@@ -1630,6 +1634,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('storage:clear', () => {
     return db.clearAllHistory();
+  });
+
+  ipcMain.handle('storage:clear-security', () => {
+    const stats = db.clearSecurityData();
+    broadcastToAllWindows('security:cleared', true);
+    return stats;
   });
 
   ipcMain.handle('storage:optimize', () => {
@@ -1774,6 +1784,13 @@ function registerIpcHandlers(): void {
   });
 
   // Netatmo Security (Cameras & Event List) IPC
+  ipcMain.handle(
+    'security:get-cached',
+    (_e, homeId?: string) => {
+      return client.getCachedSecurityData(homeId);
+    }
+  );
+
   ipcMain.handle(
     'security:get-data',
     async (

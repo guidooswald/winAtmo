@@ -300,9 +300,41 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   }, []);
 
   useEffect(() => {
-    if (account.loggedIn) {
-      loadSecurity();
-    }
+    if (!account.loggedIn) return;
+    let cancelled = false;
+
+    const loadInitial = async () => {
+      if (typeof window.winatmo?.getCachedSecurityData === 'function') {
+        try {
+          const cached = await window.winatmo.getCachedSecurityData();
+          if (
+            !cancelled &&
+            (cached.homes.length > 0 || cached.events.length > 0)
+          ) {
+            setData(cached);
+          }
+        } catch {}
+      }
+      if (!cancelled) {
+        await loadSecurity();
+      }
+    };
+
+    loadInitial();
+
+    const unsubCleared =
+      typeof window.winatmo?.onSecurityCleared === 'function'
+        ? window.winatmo.onSecurityCleared(() => {
+            setData({ homes: [], events: [], fetchedAt: 0 });
+            setFailedImages({});
+            setImageErrors({});
+          })
+        : undefined;
+
+    return () => {
+      cancelled = true;
+      unsubCleared?.();
+    };
   }, [account.loggedIn, account.authMethod, loadSecurity]);
 
   const handleLoadOlder = async () => {

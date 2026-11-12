@@ -6,6 +6,12 @@ import {
   MeasurePoint,
   MetricType,
   NetatmoScale,
+  SecurityCamera,
+  SecurityDataPayload,
+  SecurityEvent,
+  SecurityHome,
+  SecurityPerson,
+  SecuritySubEvent,
   SeriesStats,
   StorageStats,
 } from '../renderer/types';
@@ -60,6 +66,71 @@ export class TimeSeriesDatabase {
       ) WITHOUT ROWID;
 
       CREATE INDEX IF NOT EXISTS idx_measurements_scale ON measurements (scale);
+
+      CREATE TABLE IF NOT EXISTS security_homes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        timezone TEXT,
+        updated_at INTEGER NOT NULL
+      ) WITHOUT ROWID;
+
+      CREATE TABLE IF NOT EXISTS security_cameras (
+        id TEXT PRIMARY KEY,
+        home_id TEXT NOT NULL,
+        home_name TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        room_name TEXT,
+        monitoring TEXT,
+        status TEXT,
+        sd_status TEXT,
+        alim_status TEXT,
+        wifi_strength INTEGER,
+        wifi_state TEXT,
+        firmware_revision TEXT,
+        is_local INTEGER,
+        floodlight TEXT,
+        siren_status TEXT,
+        last_setup INTEGER,
+        vpn_url TEXT,
+        local_url TEXT,
+        updated_at INTEGER NOT NULL
+      ) WITHOUT ROWID;
+
+      CREATE TABLE IF NOT EXISTS security_persons (
+        id TEXT PRIMARY KEY,
+        home_id TEXT NOT NULL,
+        pseudo TEXT,
+        out_of_sight INTEGER,
+        last_seen INTEGER,
+        face_url TEXT,
+        updated_at INTEGER NOT NULL
+      ) WITHOUT ROWID;
+
+      CREATE TABLE IF NOT EXISTS security_events (
+        id TEXT PRIMARY KEY,
+        home_id TEXT NOT NULL,
+        home_name TEXT NOT NULL,
+        camera_id TEXT,
+        camera_name TEXT,
+        type TEXT NOT NULL,
+        sub_type INTEGER,
+        time INTEGER NOT NULL,
+        category TEXT,
+        message TEXT NOT NULL,
+        person_id TEXT,
+        person_name TEXT,
+        snapshot_url TEXT,
+        snapshot_expires_at INTEGER,
+        vignette_url TEXT,
+        video_id TEXT,
+        video_status TEXT,
+        sub_events_json TEXT,
+        updated_at INTEGER NOT NULL
+      ) WITHOUT ROWID;
+
+      CREATE INDEX IF NOT EXISTS idx_security_events_home_time ON security_events (home_id, time DESC);
+      CREATE INDEX IF NOT EXISTS idx_security_events_time ON security_events (time DESC);
     `);
   }
 
@@ -340,6 +411,16 @@ export class TimeSeriesDatabase {
       });
     }
 
+    const secEventsRow = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM security_events')
+      .get() as { cnt: number } | undefined;
+    const secCamsRow = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM security_cameras')
+      .get() as { cnt: number } | undefined;
+    const secPersonsRow = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM security_persons')
+      .get() as { cnt: number } | undefined;
+
     return {
       dbPath: this.dbPath,
       fileSizeBytes,
@@ -351,6 +432,9 @@ export class TimeSeriesDatabase {
       newestTimestamp: syncSummary?.newest_ts
         ? Number(syncSummary.newest_ts)
         : null,
+      securityEventsCount: Number(secEventsRow?.cnt || 0),
+      securityCamerasCount: Number(secCamsRow?.cnt || 0),
+      securityPersonsCount: Number(secPersonsRow?.cnt || 0),
       byScale: byScaleRows.map((r) => {
         const rng = rangeMap.get(r.scale);
         return {
@@ -361,6 +445,382 @@ export class TimeSeriesDatabase {
         };
       }),
     };
+  }
+
+  public getKnownSecurityEventIds(homeId?: string): Set<string> {
+    const rows = homeId
+      ? (this.db
+          .prepare('SELECT id FROM security_events WHERE home_id = ?')
+          .all(homeId) as Array<{ id: string }>)
+      : (this.db.prepare('SELECT id FROM security_events').all() as Array<{
+          id: string;
+        }>);
+    return new Set(rows.map((r) => String(r.id)));
+  }
+
+  public upsertSecurityData(payload: {
+    homes: SecurityHome[];
+    events: SecurityEvent[];
+  }): number {
+    const now = Math.floor(Date.now() / 1000);
+
+    const upsertHomeStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO security_homes (id, name, timezone, updated_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    const deleteCamsForHomeStmt = this.db.prepare(
+      'DELETE FROM security_cameras WHERE home_id = ?'
+    );
+    const deletePersonsForHomeStmt = this.db.prepare(
+      'DELETE FROM security_persons WHERE home_id = ?'
+    );
+    const upsertCamStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO security_cameras (
+        id, home_id, home_name, name, type, room_name, monitoring, status,
+        sd_status, alim_status, wifi_strength, wifi_state, firmware_revision,
+        is_local, floodlight, siren_status, last_setup, vpn_url, local_url, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const upsertPersonStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO security_persons (
+        id, home_id, pseudo, out_of_sight, last_seen, face_url, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const selectExistingImagesStmt = this.db.prepare(`
+      SELECT snapshot_url, vignette_url, snapshot_expires_at
+      FROM security_events
+      WHERE id = ?
+    `);
+    const upsertEventStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO security_events (
+        id, home_id, home_name, camera_id, camera_name, type, sub_type, time,
+        category, message, person_id, person_name, snapshot_url, snapshot_expires_at,
+        vignette_url, video_id, video_status, sub_events_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    let upsertedEvents = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const home of payload.homes) {
+        upsertHomeStmt.run(home.id, home.name, home.timezone ?? null, now);
+
+        deleteCamsForHomeStmt.run(home.id);
+        for (const cam of home.cameras) {
+          upsertCamStmt.run(
+            cam.id,
+            cam.homeId,
+            cam.homeName,
+            cam.name,
+            cam.type,
+            cam.roomName ?? null,
+            cam.monitoring ?? null,
+            cam.status ?? null,
+            cam.sdStatus !== undefined ? String(cam.sdStatus) : null,
+            cam.alimStatus !== undefined ? String(cam.alimStatus) : null,
+            cam.wifiStrength !== undefined ? Number(cam.wifiStrength) : null,
+            cam.wifiState ?? null,
+            cam.firmwareRevision !== undefined
+              ? String(cam.firmwareRevision)
+              : null,
+            cam.isLocal !== undefined ? (cam.isLocal ? 1 : 0) : null,
+            cam.floodlight ?? null,
+            cam.sirenStatus ?? null,
+            cam.lastSetup !== undefined ? Number(cam.lastSetup) : null,
+            cam.vpnUrl ?? null,
+            cam.localUrl ?? null,
+            now
+          );
+        }
+
+        deletePersonsForHomeStmt.run(home.id);
+        for (const p of home.persons) {
+          upsertPersonStmt.run(
+            p.id,
+            p.homeId,
+            p.pseudo ?? null,
+            p.outOfSight !== undefined ? (p.outOfSight ? 1 : 0) : null,
+            p.lastSeen !== undefined ? Number(p.lastSeen) : null,
+            p.faceUrl ?? null,
+            now
+          );
+        }
+      }
+
+      for (const ev of payload.events) {
+        const existing = selectExistingImagesStmt.get(ev.id) as
+          | {
+              snapshot_url: string | null;
+              vignette_url: string | null;
+              snapshot_expires_at: number | null;
+            }
+          | undefined;
+
+        const hasIncomingDataUri = Boolean(
+          ev.snapshotUrl?.startsWith('data:') || ev.vignetteUrl?.startsWith('data:')
+        );
+        const hasExistingDataUri = Boolean(
+          existing?.snapshot_url?.startsWith('data:') ||
+            existing?.vignette_url?.startsWith('data:')
+        );
+
+        const finalSnapshotUrl =
+          hasExistingDataUri && !hasIncomingDataUri
+            ? existing?.snapshot_url ?? null
+            : ev.snapshotUrl ?? existing?.snapshot_url ?? null;
+        const finalVignetteUrl =
+          hasExistingDataUri && !hasIncomingDataUri
+            ? existing?.vignette_url ?? null
+            : ev.vignetteUrl ?? existing?.vignette_url ?? null;
+        const finalExpiresAt =
+          ev.snapshotExpiresAt !== undefined
+            ? Number(ev.snapshotExpiresAt)
+            : existing?.snapshot_expires_at ?? null;
+
+        upsertEventStmt.run(
+          ev.id,
+          ev.homeId,
+          ev.homeName,
+          ev.cameraId ?? null,
+          ev.cameraName ?? null,
+          ev.type,
+          ev.subType !== undefined ? Number(ev.subType) : null,
+          Math.floor(ev.time),
+          ev.category ?? null,
+          ev.message,
+          ev.personId ?? null,
+          ev.personName ?? null,
+          finalSnapshotUrl,
+          finalExpiresAt,
+          finalVignetteUrl,
+          ev.videoId ?? null,
+          ev.videoStatus ?? null,
+          ev.subEvents && ev.subEvents.length > 0
+            ? JSON.stringify(ev.subEvents)
+            : null,
+          now
+        );
+        upsertedEvents++;
+      }
+
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+
+    return upsertedEvents;
+  }
+
+  public updateSecurityEventImage(
+    eventId: string,
+    snapshotUrl: string,
+    vignetteUrl?: string,
+    snapshotExpiresAt?: number,
+    refreshedEvent?: SecurityEvent
+  ): void {
+    const now = Math.floor(Date.now() / 1000);
+    if (refreshedEvent) {
+      this.upsertSecurityData({
+        homes: [],
+        events: [
+          {
+            ...refreshedEvent,
+            snapshotUrl,
+            vignetteUrl: vignetteUrl ?? refreshedEvent.vignetteUrl ?? snapshotUrl,
+            snapshotExpiresAt:
+              snapshotExpiresAt ?? refreshedEvent.snapshotExpiresAt,
+          },
+        ],
+      });
+      return;
+    }
+
+    this.db
+      .prepare(
+        `UPDATE security_events
+         SET snapshot_url = ?,
+             vignette_url = COALESCE(?, vignette_url),
+             snapshot_expires_at = COALESCE(?, snapshot_expires_at),
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        snapshotUrl,
+        vignetteUrl ?? null,
+        snapshotExpiresAt !== undefined ? Number(snapshotExpiresAt) : null,
+        now,
+        eventId
+      );
+  }
+
+  public getSecurityData(homeId?: string): SecurityDataPayload {
+    const homeRows = (
+      homeId
+        ? this.db
+            .prepare(
+              'SELECT id, name, timezone, updated_at FROM security_homes WHERE id = ?'
+            )
+            .all(homeId)
+        : this.db
+            .prepare('SELECT id, name, timezone, updated_at FROM security_homes')
+            .all()
+    ) as Array<{
+      id: string;
+      name: string;
+      timezone: string | null;
+      updated_at: number;
+    }>;
+
+    const camRows = (
+      homeId
+        ? this.db
+            .prepare('SELECT * FROM security_cameras WHERE home_id = ?')
+            .all(homeId)
+        : this.db.prepare('SELECT * FROM security_cameras').all()
+    ) as Array<any>;
+
+    const personRows = (
+      homeId
+        ? this.db
+            .prepare('SELECT * FROM security_persons WHERE home_id = ?')
+            .all(homeId)
+        : this.db.prepare('SELECT * FROM security_persons').all()
+    ) as Array<any>;
+
+    const eventRows = (
+      homeId
+        ? this.db
+            .prepare(
+              'SELECT * FROM security_events WHERE home_id = ? ORDER BY time DESC'
+            )
+            .all(homeId)
+        : this.db
+            .prepare('SELECT * FROM security_events ORDER BY time DESC')
+            .all()
+    ) as Array<any>;
+
+    let maxUpdatedAt = 0;
+
+    const camerasByHome = new Map<string, SecurityCamera[]>();
+    for (const r of camRows) {
+      maxUpdatedAt = Math.max(maxUpdatedAt, Number(r.updated_at || 0));
+      const list = camerasByHome.get(String(r.home_id)) || [];
+      const parsedSd =
+        r.sd_status !== null && !Number.isNaN(Number(r.sd_status))
+          ? Number(r.sd_status)
+          : r.sd_status ?? undefined;
+      const parsedAlim =
+        r.alim_status !== null && !Number.isNaN(Number(r.alim_status))
+          ? Number(r.alim_status)
+          : r.alim_status ?? undefined;
+      const parsedFw =
+        r.firmware_revision !== null &&
+        !Number.isNaN(Number(r.firmware_revision))
+          ? Number(r.firmware_revision)
+          : r.firmware_revision ?? undefined;
+
+      list.push({
+        id: String(r.id),
+        homeId: String(r.home_id),
+        homeName: String(r.home_name),
+        name: String(r.name),
+        type: String(r.type),
+        roomName: r.room_name ?? undefined,
+        monitoring: r.monitoring ?? undefined,
+        status: r.status ?? undefined,
+        sdStatus: parsedSd,
+        alimStatus: parsedAlim,
+        wifiStrength:
+          r.wifi_strength !== null ? Number(r.wifi_strength) : undefined,
+        wifiState: r.wifi_state ?? undefined,
+        firmwareRevision: parsedFw,
+        isLocal: r.is_local !== null ? Boolean(r.is_local) : undefined,
+        floodlight: r.floodlight ?? undefined,
+        sirenStatus: r.siren_status ?? undefined,
+        lastSetup: r.last_setup !== null ? Number(r.last_setup) : undefined,
+        vpnUrl: r.vpn_url ?? undefined,
+        localUrl: r.local_url ?? undefined,
+      });
+      camerasByHome.set(String(r.home_id), list);
+    }
+
+    const personsByHome = new Map<string, SecurityPerson[]>();
+    for (const r of personRows) {
+      maxUpdatedAt = Math.max(maxUpdatedAt, Number(r.updated_at || 0));
+      const list = personsByHome.get(String(r.home_id)) || [];
+      list.push({
+        id: String(r.id),
+        homeId: String(r.home_id),
+        pseudo: r.pseudo ?? undefined,
+        outOfSight: r.out_of_sight !== null ? Boolean(r.out_of_sight) : undefined,
+        lastSeen: r.last_seen !== null ? Number(r.last_seen) : undefined,
+        faceUrl: r.face_url ?? undefined,
+      });
+      personsByHome.set(String(r.home_id), list);
+    }
+
+    const homes: SecurityHome[] = homeRows.map((h) => {
+      maxUpdatedAt = Math.max(maxUpdatedAt, Number(h.updated_at || 0));
+      return {
+        id: String(h.id),
+        name: String(h.name),
+        timezone: h.timezone ?? undefined,
+        cameras: camerasByHome.get(String(h.id)) || [],
+        persons: personsByHome.get(String(h.id)) || [],
+      };
+    });
+
+    const events: SecurityEvent[] = eventRows.map((r) => {
+      maxUpdatedAt = Math.max(maxUpdatedAt, Number(r.updated_at || 0));
+      let subEvents: SecuritySubEvent[] | undefined;
+      if (r.sub_events_json) {
+        try {
+          subEvents = JSON.parse(r.sub_events_json);
+        } catch {}
+      }
+      return {
+        id: String(r.id),
+        homeId: String(r.home_id),
+        homeName: String(r.home_name),
+        cameraId: r.camera_id ?? undefined,
+        cameraName: r.camera_name ?? undefined,
+        type: String(r.type),
+        subType: r.sub_type !== null ? Number(r.sub_type) : undefined,
+        time: Number(r.time),
+        category: r.category ?? undefined,
+        message: String(r.message),
+        personId: r.person_id ?? undefined,
+        personName: r.person_name ?? undefined,
+        snapshotUrl: r.snapshot_url ?? undefined,
+        snapshotExpiresAt:
+          r.snapshot_expires_at !== null
+            ? Number(r.snapshot_expires_at)
+            : undefined,
+        vignetteUrl: r.vignette_url ?? undefined,
+        videoId: r.video_id ?? undefined,
+        videoStatus: r.video_status ?? undefined,
+        subEvents,
+      };
+    });
+
+    return {
+      homes,
+      events,
+      fetchedAt: maxUpdatedAt > 0 ? maxUpdatedAt * 1000 : 0,
+    };
+  }
+
+  public clearSecurityData(): StorageStats {
+    this.db.exec(`
+      DELETE FROM security_events;
+      DELETE FROM security_cameras;
+      DELETE FROM security_persons;
+      DELETE FROM security_homes;
+      PRAGMA wal_checkpoint(TRUNCATE);
+      VACUUM;
+    `);
+    return this.getStorageStats();
   }
 
   public clearAllHistory(): StorageStats {
@@ -377,6 +837,10 @@ export class TimeSeriesDatabase {
     this.db.exec(`
       DELETE FROM measurements WHERE station_id LIKE '70:ee:50:de:m0:%';
       DELETE FROM sync_log WHERE module_id LIKE '70:ee:50:de:m0:%' OR module_id LIKE '02:00:00:de:m0:%' OR module_id LIKE '03:00:00:de:m0:%' OR module_id LIKE '05:00:00:de:m0:%' OR module_id LIKE '06:00:00:de:m0:%';
+      DELETE FROM security_events WHERE home_id LIKE 'demo-%' OR id LIKE 'demo-%';
+      DELETE FROM security_cameras WHERE home_id LIKE 'demo-%';
+      DELETE FROM security_persons WHERE home_id LIKE 'demo-%';
+      DELETE FROM security_homes WHERE id LIKE 'demo-%';
     `);
   }
 
