@@ -1579,20 +1579,6 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                           <Play size={11} /> View Video
                         </button>
                       )}
-                      {imgUrl && !imgFailed && (
-                        <button
-                          type="button"
-                          className="event-media-btn subtle"
-                          disabled={Boolean(downloadingMedia[`snap:${ev.id}`])}
-                          onClick={() => handleDownloadSnapshot(ev)}
-                          title="Download snapshot image"
-                        >
-                          <Download size={11} />
-                          {downloadingMedia[`snap:${ev.id}`]
-                            ? 'Saving...'
-                            : 'Save Snapshot'}
-                        </button>
-                      )}
                       {hasVideo && (
                         <button
                           type="button"
