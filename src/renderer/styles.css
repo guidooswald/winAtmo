@@ -4116,7 +4116,7 @@ body {
 
 .security-main-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, clamp(320px, 24vw, 400px));
+  grid-template-columns: minmax(0, 1fr) minmax(340px, clamp(370px, 28vw, 470px));
   grid-template-areas: 'events cameras';
   gap: var(--space-card-gap, 16px);
   align-items: start;
