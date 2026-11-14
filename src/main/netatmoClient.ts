@@ -15,6 +15,7 @@ import {
   NetatmoScale,
   SecurityCamera,
   SecurityDataPayload,
+  SecurityDownloadResult,
   SecurityEvent,
   SecurityEventImageRefreshResult,
   SecurityEventVideoResult,
@@ -3480,14 +3481,7 @@ export class NetatmoClient {
     chooseSavePath: (suggestedExt: 'ts' | 'mp4') => Promise<string | null>,
     writeTargetFile: (filePath: string, data: Buffer) => Promise<void>,
     onProgress?: (progress: SecurityVideoDownloadProgress) => void
-  ): Promise<{
-    success: boolean;
-    canceled?: boolean;
-    filePath?: string;
-    bytesWritten?: number;
-    segmentCount?: number;
-    error?: string;
-  }> {
+  ): Promise<SecurityDownloadResult> {
     const emitProg = (
       phase: SecurityVideoDownloadProgress['phase'],
       completedSegments: number,
@@ -3504,6 +3498,7 @@ export class NetatmoClient {
       onProgress?.({
         eventId: options.eventId,
         videoId: options.videoId,
+        cameraId: options.cameraId,
         phase,
         completedSegments,
         totalSegments,
@@ -3532,10 +3527,214 @@ export class NetatmoClient {
       };
     }
 
-    emitProg('resolving', 0, 0, 0, 'Reading HLS segment playlist...');
-    const mediaPlaylistRes = await this.resolveMediaPlaylist(
-      discovered.workingCandidates[0]
+    return this.downloadHlsSegmentsToFile(
+      discovered.workingCandidates[0],
+      chooseSavePath,
+      writeTargetFile,
+      emitProg,
+      `security video ${options.eventId || options.videoId || ''}`
     );
+  }
+
+  /**
+   * Discovers and downloads the 24-hour timelapse replay for a supported outdoor camera (Presence / NOC).
+   */
+  public async downloadCameraReplay(
+    options: {
+      homeId: string;
+      cameraId: string;
+      cameraName?: string;
+    },
+    chooseSavePath: (suggestedExt: 'mp4' | 'ts') => Promise<string | null>,
+    writeTargetFile: (filePath: string, data: Buffer) => Promise<void>,
+    onProgress?: (progress: SecurityVideoDownloadProgress) => void
+  ): Promise<SecurityDownloadResult> {
+    const emitProg = (
+      phase: SecurityVideoDownloadProgress['phase'],
+      completedSegments: number,
+      totalSegments: number,
+      bytesDownloaded: number,
+      message?: string
+    ) => {
+      const percent =
+        phase === 'writing' || phase === 'done'
+          ? 100
+          : totalSegments > 0
+            ? Math.min(99, Math.round((completedSegments / totalSegments) * 100))
+            : 0;
+      onProgress?.({
+        cameraId: options.cameraId,
+        phase,
+        completedSegments,
+        totalSegments,
+        bytesDownloaded,
+        percent,
+        message,
+      });
+    };
+
+    const sessionData = this.store.getSession();
+    if (sessionData.authMethod === 'demo') {
+      const msg =
+        'Demo mode does not contain recorded 24h camera footage. Sign in with your Netatmo account to download the 24h replay for outdoor cameras.';
+      emitProg('error', 0, 0, 0, msg);
+      return { success: false, error: msg };
+    }
+
+    emitProg('resolving', 0, 0, 0, 'Locating outdoor camera stream endpoints...');
+    const { vpnUrl, localUrl } = await this.resolveCameraUrls(
+      options.homeId,
+      options.cameraId
+    );
+
+    if (!vpnUrl && !localUrl) {
+      const msg =
+        'Netatmo did not expose a camera connection URL (vpn_url / local_url). Video playback requires Netatmo Web Sign-In or OAuth access_presence scopes.';
+      emitProg('error', 0, 0, 0, msg);
+      return { success: false, error: msg };
+    }
+
+    if (localUrl) securityMediaProxy.allowUrlOrigin(localUrl);
+    if (vpnUrl) securityMediaProxy.allowUrlOrigin(vpnUrl);
+
+    emitProg('resolving', 0, 0, 0, 'Checking 24h replay availability on camera...');
+
+    // Build ordered list of candidates to probe
+    const candidates: Array<{ url: string; kind: 'mp4' | 'hls' }> = [];
+    const pushCandidates = (base: string, isLocal: boolean) => {
+      // 1. Direct MP4 endpoints
+      candidates.push({ url: `${base}/timelapse.mp4`, kind: 'mp4' });
+      candidates.push({ url: `${base}/vod/timelapse.mp4`, kind: 'mp4' });
+      candidates.push({ url: `${base}/live/timelapse.mp4`, kind: 'mp4' });
+      candidates.push({ url: `${base}/replay.mp4`, kind: 'mp4' });
+      candidates.push({ url: `${base}/vod/replay.mp4`, kind: 'mp4' });
+      candidates.push({ url: `${base}/command/timelapse`, kind: 'mp4' });
+
+      // 2. HLS playlists
+      if (isLocal) {
+        candidates.push({ url: `${base}/timelapse/index_local.m3u8`, kind: 'hls' });
+        candidates.push({ url: `${base}/timelapse/files/high/index_local.m3u8`, kind: 'hls' });
+        candidates.push({ url: `${base}/vod/timelapse/index_local.m3u8`, kind: 'hls' });
+        candidates.push({ url: `${base}/replay/index_local.m3u8`, kind: 'hls' });
+      }
+      candidates.push({ url: `${base}/timelapse/index.m3u8`, kind: 'hls' });
+      candidates.push({ url: `${base}/timelapse/files/high/index.m3u8`, kind: 'hls' });
+      candidates.push({ url: `${base}/vod/timelapse/index.m3u8`, kind: 'hls' });
+      candidates.push({ url: `${base}/replay/index.m3u8`, kind: 'hls' });
+    };
+
+    if (localUrl) pushCandidates(localUrl, true);
+    if (vpnUrl) pushCandidates(vpnUrl, false);
+
+    let workingCandidate: { url: string; kind: 'mp4' | 'hls' } | null = null;
+    let lastError: string | undefined;
+
+    for (const cand of candidates) {
+      try {
+        const probe = await this.fetchSecurityMedia({
+          url: cand.url,
+          rangeStart: 0,
+          rangeEnd: 1024,
+        });
+        if (probe.ok) {
+          if (cand.kind === 'hls' && probe.dataText?.includes('#EXTM3U')) {
+            workingCandidate = cand;
+            break;
+          }
+          if (cand.kind === 'mp4') {
+            const isMp4 =
+              probe.contentType?.includes('video/mp4') ||
+              probe.contentType?.includes('video/') ||
+              probe.contentType?.includes('application/octet-stream') ||
+              (probe.dataBuffer && probe.dataBuffer.byteLength > 8);
+            if (isMp4) {
+              workingCandidate = cand;
+              break;
+            }
+          }
+        } else {
+          lastError = probe.error || `HTTP ${probe.status}`;
+        }
+      } catch (err: any) {
+        lastError = err?.message || String(err);
+      }
+    }
+
+    if (!workingCandidate) {
+      const msg = `24h replay is not available for this outdoor camera (${
+        lastError || 'camera requires 24 hours of continuous connection and monitoring'
+      }).`;
+      emitProg('error', 0, 0, 0, msg);
+      return { success: false, error: msg };
+    }
+
+    if (workingCandidate.kind === 'hls') {
+      return this.downloadHlsSegmentsToFile(
+        workingCandidate.url,
+        chooseSavePath,
+        writeTargetFile,
+        emitProg,
+        `24h replay for outdoor camera ${options.cameraName || options.cameraId}`
+      );
+    } else {
+      const savePath = await chooseSavePath('mp4');
+      if (!savePath) {
+        emitProg('canceled', 0, 1, 0);
+        return { success: false, canceled: true };
+      }
+
+      emitProg('downloading', 0, 1, 0, 'Downloading 24h replay video file...');
+      const fullRes = await this.fetchSecurityMedia({
+        url: workingCandidate.url,
+        responseType: 'arraybuffer',
+      });
+      if (!fullRes.ok || !fullRes.dataBuffer) {
+        const msg = `Failed to download 24h replay file: ${fullRes.error || `HTTP ${fullRes.status}`}`;
+        emitProg('error', 0, 1, 0, msg);
+        return { success: false, error: msg };
+      }
+
+      const buf = Buffer.from(fullRes.dataBuffer);
+      emitProg('writing', 1, 1, buf.byteLength, 'Saving video file to disk...');
+      await writeTargetFile(savePath, buf);
+      emitProg('done', 1, 1, buf.byteLength, 'Download complete.');
+
+      debugLogger.log(
+        'info',
+        'SecurityVideo',
+        `Downloaded 24h replay (${buf.byteLength} bytes) to ${savePath}`,
+        undefined,
+        'security'
+      );
+
+      return {
+        success: true,
+        filePath: savePath,
+        bytesWritten: buf.byteLength,
+        segmentCount: 1,
+      };
+    }
+  }
+
+  /**
+   * Downloads all segments from an HLS media playlist, decrypts AES-128 chunks if present,
+   * prompts the user for the save path, and saves the stitched video file to disk.
+   */
+  private async downloadHlsSegmentsToFile(
+    playlistUrl: string,
+    chooseSavePath: (suggestedExt: 'ts' | 'mp4') => Promise<string | null>,
+    writeTargetFile: (filePath: string, data: Buffer) => Promise<void>,
+    emitProg: (
+      phase: SecurityVideoDownloadProgress['phase'],
+      completedSegments: number,
+      totalSegments: number,
+      bytesDownloaded: number,
+      message?: string
+    ) => void,
+    logLabel = 'security video'
+  ): Promise<SecurityDownloadResult> {
+    emitProg('resolving', 0, 0, 0, 'Reading HLS segment playlist...');
+    const mediaPlaylistRes = await this.resolveMediaPlaylist(playlistUrl);
     if (!mediaPlaylistRes.ok || !mediaPlaylistRes.text || !mediaPlaylistRes.baseUrl) {
       const msg = mediaPlaylistRes.error || 'Failed to read HLS media playlist.';
       emitProg('error', 0, 0, 0, msg);
@@ -3662,7 +3861,7 @@ export class NetatmoClient {
     debugLogger.log(
       'info',
       'SecurityVideo',
-      `Downloaded security video (${totalSegments} segments, ${finalBuffer.byteLength} bytes) to ${savePath}`,
+      `Downloaded ${logLabel} (${totalSegments} segments, ${finalBuffer.byteLength} bytes) to ${savePath}`,
       undefined,
       'security'
     );

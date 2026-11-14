@@ -511,6 +511,7 @@ export interface SecurityDownloadResult {
 export interface SecurityVideoDownloadProgress {
   eventId?: string;
   videoId?: string;
+  cameraId?: string;
   phase: 'resolving' | 'downloading' | 'writing' | 'done' | 'error' | 'canceled';
   completedSegments: number;
   totalSegments: number;

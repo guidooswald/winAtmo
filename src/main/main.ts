@@ -1985,6 +1985,53 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle(
+    'security:download-replay',
+    async (
+      _e,
+      options: {
+        homeId: string;
+        cameraId: string;
+        cameraName?: string;
+        defaultFileName?: string;
+      }
+    ) => {
+      return client.downloadCameraReplay(
+        options,
+        async (suggestedExt) => {
+          const safeBase = (
+            options.defaultFileName ||
+            `${options.cameraName || 'outdoor-camera'}-24h-replay`
+          )
+            .replace(/[<>:"/\\|?*]+/g, '-')
+            .replace(/\.[a-z0-9]+$/i, '');
+
+          const { canceled, filePath } = await dialog.showSaveDialog(
+            mainWindow || undefined!,
+            {
+              title: 'Save 24h Camera Replay',
+              defaultPath: `${safeBase}.${suggestedExt}`,
+              filters: [
+                {
+                  name: 'Video Files',
+                  extensions: suggestedExt === 'mp4' ? ['mp4', 'ts'] : ['ts', 'mp4'],
+                },
+              ],
+            }
+          );
+          if (canceled || !filePath) return null;
+          return filePath;
+        },
+        async (filePath, data) => {
+          await fs.promises.writeFile(filePath, data);
+        },
+        (progress) => {
+          broadcastToAllWindows('security:video-download-progress', progress);
+        }
+      );
+    }
+  );
+
   // Debug Console Window & Telemetry IPC
   ipcMain.on('debug:open-window', () => {
     createOrShowDebugWindow();

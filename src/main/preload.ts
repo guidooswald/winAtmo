@@ -166,6 +166,12 @@ export interface WinAtmoAPI {
     videoId?: string;
     defaultFileName?: string;
   }) => Promise<SecurityDownloadResult>;
+  downloadCameraReplay: (options: {
+    homeId: string;
+    cameraId: string;
+    cameraName?: string;
+    defaultFileName?: string;
+  }) => Promise<SecurityDownloadResult>;
 
   // Debug Console & Telemetry
   openDebugWindow: () => void;
@@ -285,6 +291,8 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('security:download-snapshot', options),
   downloadSecurityVideo: (options) =>
     ipcRenderer.invoke('security:download-video', options),
+  downloadCameraReplay: (options) =>
+    ipcRenderer.invoke('security:download-replay', options),
 
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),

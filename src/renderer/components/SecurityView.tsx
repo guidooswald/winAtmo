@@ -63,6 +63,12 @@ function getCameraModelLabel(type: string): string {
   }
 }
 
+function isSupportedOutdoorCamera(type?: string): boolean {
+  if (!type) return false;
+  const t = type.toUpperCase();
+  return t === 'NOC' || t === 'NOC2' || t.includes('PRESENCE') || t.includes('OUTDOOR');
+}
+
 function formatSdStatus(sd: string | number | undefined): {
   label: string;
   tone: 'ok' | 'warn' | 'err';
@@ -206,6 +212,11 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     tone: 'ok' | 'err';
     text: string;
   } | null>(null);
+  const [cameraNotice, setCameraNotice] = useState<{
+    cameraId: string;
+    tone: 'ok' | 'err';
+    text: string;
+  } | null>(null);
   const [videoDownloadProgress, setVideoDownloadProgress] = useState<
     Record<string, SecurityVideoDownloadProgress>
   >({});
@@ -216,9 +227,13 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
-  const renderVideoDownloadProgress = (eventId: string) => {
-    if (!downloadingMedia[`video:${eventId}`]) return null;
-    const prog = videoDownloadProgress[eventId];
+  const renderVideoDownloadProgress = (keyOrId: string) => {
+    const lookupKey =
+      keyOrId.startsWith('video:') || keyOrId.startsWith('replay:')
+        ? keyOrId
+        : `video:${keyOrId}`;
+    if (!downloadingMedia[lookupKey]) return null;
+    const prog = videoDownloadProgress[lookupKey];
     const isIndeterminate = !prog || prog.totalSegments <= 0;
     const pct = prog ? Math.max(0, Math.min(100, prog.percent)) : 0;
 
@@ -415,12 +430,84 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
         setDownloadingMedia((prev) => ({ ...prev, [key]: false }));
         setVideoDownloadProgress((prev) => {
           const next = { ...prev };
+          delete next[key];
           delete next[ev.id];
           return next;
         });
       }
     },
     [buildDownloadBaseName]
+  );
+
+  const buildReplayBaseName = useCallback((cam: SecurityCamera) => {
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(
+      2,
+      '0'
+    )}${String(d.getDate()).padStart(2, '0')}`;
+    const cleanName = (cam.name || 'outdoor-camera')
+      .toLowerCase()
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 32);
+    return `${cleanName}-24h-replay-${stamp}`;
+  }, []);
+
+  const handleDownloadReplay = useCallback(
+    async (cam: SecurityCamera) => {
+      if (typeof window.winatmo?.downloadCameraReplay !== 'function') {
+        setCameraNotice({
+          cameraId: cam.id,
+          tone: 'err',
+          text: 'Restart Electron (npm run dev) to enable 24h replay downloads.',
+        });
+        return;
+      }
+
+      const key = `replay:${cam.id}`;
+      setDownloadingMedia((prev) => ({ ...prev, [key]: true }));
+      setCameraNotice(null);
+
+      try {
+        const res = await window.winatmo.downloadCameraReplay({
+          homeId: cam.homeId,
+          cameraId: cam.id,
+          cameraName: cam.name,
+          defaultFileName: buildReplayBaseName(cam),
+        });
+
+        if (res.canceled) return;
+
+        if (res.success && res.filePath) {
+          setCameraNotice({
+            cameraId: cam.id,
+            tone: 'ok',
+            text: `24h replay saved to ${res.filePath}`,
+          });
+        } else {
+          setCameraNotice({
+            cameraId: cam.id,
+            tone: 'err',
+            text: res.error || 'Failed to download 24h replay.',
+          });
+        }
+      } catch (err: any) {
+        setCameraNotice({
+          cameraId: cam.id,
+          tone: 'err',
+          text: err?.message || 'Failed to download 24h replay.',
+        });
+      } finally {
+        setDownloadingMedia((prev) => ({ ...prev, [key]: false }));
+        setVideoDownloadProgress((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          delete next[cam.id];
+          return next;
+        });
+      }
+    },
+    [buildReplayBaseName]
   );
 
   const handleRefreshEventImage = useCallback(async (ev: SecurityEvent) => {
@@ -679,11 +766,19 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     const unsubVideoProg =
       typeof window.winatmo?.onSecurityVideoDownloadProgress === 'function'
         ? window.winatmo.onSecurityVideoDownloadProgress((progress) => {
-            if (!cancelled && progress.eventId) {
-              setVideoDownloadProgress((prev) => ({
-                ...prev,
-                [progress.eventId!]: progress,
-              }));
+            if (!cancelled) {
+              const key = progress.eventId
+                ? `video:${progress.eventId}`
+                : progress.cameraId
+                  ? `replay:${progress.cameraId}`
+                  : null;
+              if (key) {
+                setVideoDownloadProgress((prev) => ({
+                  ...prev,
+                  [key]: progress,
+                  ...(progress.eventId ? { [progress.eventId]: progress } : {}),
+                }));
+              }
             }
           })
         : undefined;
@@ -1112,22 +1207,56 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                         <span>FW {cam.firmwareRevision}</span>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className="camera-live-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenLiveCamera(cam);
-                      }}
-                      title={
-                        isMonitoring
-                          ? 'Watch live camera feed'
-                          : 'Attempt to open live camera feed (monitoring is currently off)'
-                      }
-                    >
-                      <Video size={12} /> Live Feed
-                    </button>
+                    <div className="camera-card-actions">
+                      {isSupportedOutdoorCamera(cam.type) && (
+                        <button
+                          type="button"
+                          className="camera-replay-btn"
+                          disabled={Boolean(
+                            downloadingMedia[`replay:${cam.id}`]
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadReplay(cam);
+                          }}
+                          title="Download 24h timelapse replay for this outdoor camera"
+                        >
+                          {downloadingMedia[`replay:${cam.id}`] ? (
+                            <RefreshCw size={12} className="spin" />
+                          ) : (
+                            <Film size={12} />
+                          )}
+                          {downloadingMedia[`replay:${cam.id}`]
+                            ? 'Downloading...'
+                            : '24h Replay'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="camera-live-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenLiveCamera(cam);
+                        }}
+                        title={
+                          isMonitoring
+                            ? 'Watch live camera feed'
+                            : 'Attempt to open live camera feed (monitoring is currently off)'
+                        }
+                      >
+                        <Video size={12} /> Live Feed
+                      </button>
+                    </div>
                   </div>
+
+                  {downloadingMedia[`replay:${cam.id}`] &&
+                    renderVideoDownloadProgress(`replay:${cam.id}`)}
+
+                  {cameraNotice?.cameraId === cam.id && (
+                    <div className={`event-download-note ${cameraNotice.tone}`}>
+                      {cameraNotice.text}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1767,6 +1896,26 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                         )}
                     </>
                   )}
+                  {activeCamera && isSupportedOutdoorCamera(activeCamera.type) && (
+                    <button
+                      type="button"
+                      className="action-btn primary"
+                      disabled={Boolean(
+                        downloadingMedia[`replay:${activeCamera.id}`]
+                      )}
+                      onClick={() => handleDownloadReplay(activeCamera)}
+                      title="Download 24h timelapse replay for this outdoor camera"
+                    >
+                      {downloadingMedia[`replay:${activeCamera.id}`] ? (
+                        <RefreshCw size={13} className="spin" />
+                      ) : (
+                        <Film size={13} />
+                      )}
+                      {downloadingMedia[`replay:${activeCamera.id}`]
+                        ? 'Downloading Replay...'
+                        : 'Download 24h Replay'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="sync-overlay-close-btn"
@@ -1790,10 +1939,17 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
               </div>
 
               {activeEvent && renderVideoDownloadProgress(activeEvent.id)}
+              {activeCamera &&
+                renderVideoDownloadProgress(`replay:${activeCamera.id}`)}
 
               {activeEvent && downloadNotice?.eventId === activeEvent.id && (
                 <div className={`event-download-note ${downloadNotice.tone}`}>
                   {downloadNotice.text}
+                </div>
+              )}
+              {activeCamera && cameraNotice?.cameraId === activeCamera.id && (
+                <div className={`event-download-note ${cameraNotice.tone}`}>
+                  {cameraNotice.text}
                 </div>
               )}
 
