@@ -2463,6 +2463,8 @@ export class NetatmoClient {
     headers?: Record<string, string>;
     rangeStart?: number;
     rangeEnd?: number;
+    timeoutMs?: number;
+    onProgress?: (receivedBytes: number, totalBytes: number) => void;
   }): Promise<SecurityMediaFetchResult> {
     let parsed: URL;
     try {
@@ -2509,11 +2511,13 @@ export class NetatmoClient {
     const endpointLabel =
       parsed.pathname.replace(/^\/api\//, '').replace(/^\/+/, '').slice(0, 64) ||
       'media';
-    const mediaNote = parsed.pathname.includes('/vod/')
-      ? 'Security VOD probe'
-      : parsed.pathname.includes('getcamerapicture')
-        ? 'Security camera snapshot'
-        : 'Security media fetch';
+    const mediaNote = parsed.pathname.includes('/dl/timelapse')
+      ? 'Security 24h timelapse'
+      : parsed.pathname.includes('/vod/')
+        ? 'Security VOD probe'
+        : parsed.pathname.includes('getcamerapicture')
+          ? 'Security camera snapshot'
+          : 'Security media fetch';
     const reqStart = performance.now();
 
     try {
@@ -2523,11 +2527,15 @@ export class NetatmoClient {
           ? (input: string, init: any) => netatmoSes.fetch(input, init)
           : (input: string, init: any) => net.fetch(input, init);
 
+      const timeoutMs =
+        typeof req.timeoutMs === 'number' && req.timeoutMs > 0
+          ? req.timeoutMs
+          : 30000;
       const res = await fetcher(parsed.toString(), {
         method: 'GET',
         headers,
         redirect: 'follow',
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
       const finalUrl = res.url || parsed.toString();
@@ -2590,8 +2598,38 @@ export class NetatmoClient {
         };
       }
 
-      const buf = await res.arrayBuffer();
-      const u8 = new Uint8Array(buf);
+      let u8: Uint8Array;
+      const contentLenRaw = res.headers.get('content-length');
+      const totalBytes = contentLenRaw ? Number(contentLenRaw) || 0 : 0;
+
+      if (
+        req.onProgress &&
+        res.body &&
+        typeof res.body.getReader === 'function'
+      ) {
+        const reader = res.body.getReader();
+        const chunks: Buffer[] = [];
+        let receivedBytes = 0;
+        let lastEmit = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value && value.byteLength > 0) {
+            chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+            receivedBytes += value.byteLength;
+            const now = Date.now();
+            if (now - lastEmit >= 120) {
+              lastEmit = now;
+              req.onProgress(receivedBytes, totalBytes);
+            }
+          }
+        }
+        req.onProgress(receivedBytes, totalBytes);
+        u8 = Buffer.concat(chunks);
+      } else {
+        const buf = await res.arrayBuffer();
+        u8 = new Uint8Array(buf);
+      }
       const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
       debugLogger.recordApiRequest({
         method: 'GET',
@@ -3597,123 +3635,161 @@ export class NetatmoClient {
     if (localUrl) securityMediaProxy.allowUrlOrigin(localUrl);
     if (vpnUrl) securityMediaProxy.allowUrlOrigin(vpnUrl);
 
-    emitProg('resolving', 0, 0, 0, 'Checking 24h replay availability on camera...');
+    emitProg(
+      'resolving',
+      0,
+      0,
+      0,
+      'Requesting 24h timelapse from camera (this can take 1–2 minutes)...'
+    );
 
-    // Build ordered list of candidates to probe
-    const candidates: Array<{ url: string; kind: 'mp4' | 'hls' }> = [];
-    const pushCandidates = (base: string, isLocal: boolean) => {
-      // 1. Direct MP4 endpoints
-      candidates.push({ url: `${base}/timelapse.mp4`, kind: 'mp4' });
-      candidates.push({ url: `${base}/vod/timelapse.mp4`, kind: 'mp4' });
-      candidates.push({ url: `${base}/live/timelapse.mp4`, kind: 'mp4' });
-      candidates.push({ url: `${base}/replay.mp4`, kind: 'mp4' });
-      candidates.push({ url: `${base}/vod/replay.mp4`, kind: 'mp4' });
-      candidates.push({ url: `${base}/command/timelapse`, kind: 'mp4' });
+    const bases: Array<{ base: string; label: 'local' | 'vpn'; isLocal: boolean }> =
+      [];
+    if (localUrl) bases.push({ base: localUrl, label: 'local', isLocal: true });
+    if (vpnUrl) bases.push({ base: vpnUrl, label: 'vpn', isLocal: false });
 
-      // 2. HLS playlists
-      if (isLocal) {
-        candidates.push({ url: `${base}/timelapse/index_local.m3u8`, kind: 'hls' });
-        candidates.push({ url: `${base}/timelapse/files/high/index_local.m3u8`, kind: 'hls' });
-        candidates.push({ url: `${base}/vod/timelapse/index_local.m3u8`, kind: 'hls' });
-        candidates.push({ url: `${base}/replay/index_local.m3u8`, kind: 'hls' });
-      }
-      candidates.push({ url: `${base}/timelapse/index.m3u8`, kind: 'hls' });
-      candidates.push({ url: `${base}/timelapse/files/high/index.m3u8`, kind: 'hls' });
-      candidates.push({ url: `${base}/vod/timelapse/index.m3u8`, kind: 'hls' });
-      candidates.push({ url: `${base}/replay/index.m3u8`, kind: 'hls' });
-    };
+    const commandErrors: string[] = [];
 
-    if (localUrl) pushCandidates(localUrl, true);
-    if (vpnUrl) pushCandidates(vpnUrl, false);
-
-    let workingCandidate: { url: string; kind: 'mp4' | 'hls' } | null = null;
-    let lastError: string | undefined;
-
-    for (const cand of candidates) {
+    // 1. Primary Netatmo Presence/NOC timelapse endpoint: /command/dl/timelapse
+    // This endpoint compiles and streams the 24h MP4 directly (can take 1-2 minutes),
+    // and should be fetched in a single GET without a Range pre-probe.
+    for (const entry of bases) {
+      const timelapseUrl = `${entry.base}/command/dl/timelapse`;
       try {
-        const probe = await this.fetchSecurityMedia({
-          url: cand.url,
-          rangeStart: 0,
-          rangeEnd: 1024,
+        const res = await this.fetchSecurityMedia({
+          url: timelapseUrl,
+          responseType: 'arraybuffer',
+          timeoutMs: 180_000,
+          onProgress: (received, total) => {
+            emitProg(
+              'downloading',
+              received,
+              total,
+              received,
+              'Downloading 24h timelapse...'
+            );
+          },
         });
-        if (probe.ok) {
-          if (cand.kind === 'hls' && probe.dataText?.includes('#EXTM3U')) {
-            workingCandidate = cand;
-            break;
-          }
-          if (cand.kind === 'mp4') {
-            const isMp4 =
-              probe.contentType?.includes('video/mp4') ||
-              probe.contentType?.includes('video/') ||
-              probe.contentType?.includes('application/octet-stream') ||
-              (probe.dataBuffer && probe.dataBuffer.byteLength > 8);
-            if (isMp4) {
-              workingCandidate = cand;
-              break;
+
+        if (res.ok && res.dataBuffer) {
+          const buf = Buffer.from(res.dataBuffer);
+          const ct = (res.contentType || '').toLowerCase();
+          const hasFtyp =
+            buf.byteLength >= 12 &&
+            buf.subarray(4, 32).includes(Buffer.from('ftyp'));
+          const isExplicitNonVideo =
+            ct.includes('application/json') ||
+            ct.includes('text/html') ||
+            ct.includes('text/plain');
+
+          if (
+            !isExplicitNonVideo &&
+            buf.byteLength > 256 &&
+            (hasFtyp ||
+              ct.includes('video/') ||
+              ct.includes('application/octet-stream'))
+          ) {
+            const savePath = await chooseSavePath('mp4');
+            if (!savePath) {
+              emitProg('canceled', 0, 1, 0);
+              return { success: false, canceled: true };
             }
+
+            emitProg(
+              'writing',
+              1,
+              1,
+              buf.byteLength,
+              'Saving 24h timelapse to disk...'
+            );
+            await writeTargetFile(savePath, buf);
+            emitProg('done', 1, 1, buf.byteLength, 'Download complete.');
+
+            debugLogger.log(
+              'info',
+              'SecurityVideo',
+              `Downloaded 24h timelapse (${buf.byteLength} bytes, via ${entry.label}) to ${savePath}`,
+              undefined,
+              'security'
+            );
+
+            return {
+              success: true,
+              filePath: savePath,
+              bytesWritten: buf.byteLength,
+              segmentCount: 1,
+            };
           }
+
+          const snippet = buf
+            .subarray(0, 160)
+            .toString('utf8')
+            .replace(/\s+/g, ' ')
+            .trim();
+          commandErrors.push(
+            `${entry.label}: non-video response (${ct || 'unknown'}, ${buf.byteLength}B${snippet ? `: ${snippet}` : ''})`
+          );
         } else {
-          lastError = probe.error || `HTTP ${probe.status}`;
+          commandErrors.push(
+            `${entry.label}: ${res.error || `HTTP ${res.status}`}`
+          );
         }
       } catch (err: any) {
-        lastError = err?.message || String(err);
+        commandErrors.push(`${entry.label}: ${err?.message || String(err)}`);
       }
     }
 
-    if (!workingCandidate) {
-      const msg = `24h replay is not available for this outdoor camera (${
-        lastError || 'camera requires 24 hours of continuous connection and monitoring'
-      }).`;
-      emitProg('error', 0, 0, 0, msg);
-      return { success: false, error: msg };
+    // 2. Fallback HLS playlist probe in case firmware serves segmented timelapse
+    const hlsCandidates: string[] = [];
+    for (const entry of bases) {
+      if (entry.isLocal) {
+        hlsCandidates.push(
+          `${entry.base}/timelapse/index_local.m3u8`,
+          `${entry.base}/timelapse/files/high/index_local.m3u8`,
+          `${entry.base}/vod/timelapse/index_local.m3u8`
+        );
+      }
+      hlsCandidates.push(
+        `${entry.base}/timelapse/index.m3u8`,
+        `${entry.base}/timelapse/files/high/index.m3u8`,
+        `${entry.base}/vod/timelapse/index.m3u8`
+      );
     }
 
-    if (workingCandidate.kind === 'hls') {
+    let workingHlsUrl: string | null = null;
+    for (const hlsUrl of hlsCandidates) {
+      try {
+        const probe = await this.fetchSecurityMedia({
+          url: hlsUrl,
+          responseType: 'text',
+          timeoutMs: 10_000,
+        });
+        if (probe.ok && probe.dataText?.includes('#EXTM3U')) {
+          workingHlsUrl = hlsUrl;
+          break;
+        }
+      } catch {
+        // ignore fallback probe failure; keep primary command errors
+      }
+    }
+
+    if (workingHlsUrl) {
       return this.downloadHlsSegmentsToFile(
-        workingCandidate.url,
+        workingHlsUrl,
         chooseSavePath,
         writeTargetFile,
         emitProg,
         `24h replay for outdoor camera ${options.cameraName || options.cameraId}`
       );
-    } else {
-      const savePath = await chooseSavePath('mp4');
-      if (!savePath) {
-        emitProg('canceled', 0, 1, 0);
-        return { success: false, canceled: true };
-      }
-
-      emitProg('downloading', 0, 1, 0, 'Downloading 24h replay video file...');
-      const fullRes = await this.fetchSecurityMedia({
-        url: workingCandidate.url,
-        responseType: 'arraybuffer',
-      });
-      if (!fullRes.ok || !fullRes.dataBuffer) {
-        const msg = `Failed to download 24h replay file: ${fullRes.error || `HTTP ${fullRes.status}`}`;
-        emitProg('error', 0, 1, 0, msg);
-        return { success: false, error: msg };
-      }
-
-      const buf = Buffer.from(fullRes.dataBuffer);
-      emitProg('writing', 1, 1, buf.byteLength, 'Saving video file to disk...');
-      await writeTargetFile(savePath, buf);
-      emitProg('done', 1, 1, buf.byteLength, 'Download complete.');
-
-      debugLogger.log(
-        'info',
-        'SecurityVideo',
-        `Downloaded 24h replay (${buf.byteLength} bytes) to ${savePath}`,
-        undefined,
-        'security'
-      );
-
-      return {
-        success: true,
-        filePath: savePath,
-        bytesWritten: buf.byteLength,
-        segmentCount: 1,
-      };
     }
+
+    const detail =
+      commandErrors.length > 0
+        ? commandErrors.join('; ')
+        : 'no timelapse endpoint available';
+    const msg = `24h timelapse is not available (${detail}). Netatmo outdoor cameras require 24 hours of continuous power, connection, and active monitoring before a 24h replay is available.`;
+    emitProg('error', 0, 0, 0, msg);
+    return { success: false, error: msg };
   }
 
   /**
