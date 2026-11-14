@@ -24,8 +24,22 @@
       "buildResources": "build"
     },
     "files": [
-      "dist/**/*",
+      "dist/main/**/*",
+      "dist/renderer/**/*",
+      "!dist/msix/**/*",
+      "!**/node_modules/**/*",
       "package.json"
+    ],
+    "electronLanguages": [
+      "en-US",
+      "de-DE",
+      "fr-FR",
+      "es-ES",
+      "pt-PT",
+      "it-IT",
+      "pl-PL",
+      "cs-CZ",
+      "el-GR"
     ],
     "win": {
       "target": [
