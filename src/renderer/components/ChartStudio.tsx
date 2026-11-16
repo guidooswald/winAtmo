@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Sliders,
   Sparkles,
+  Terminal,
   TrendingUp,
   X,
   ZoomOut,
@@ -1473,6 +1474,16 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                       <span className="c-bar b4" />
                       <span className="c-bar b5" />
                     </div>
+
+                    <button
+                      type="button"
+                      className="sync-debug-link-btn chart-loading-debug-btn"
+                      onClick={() => window.winatmo?.openDebugWindow?.()}
+                      title="Open API & Sync Debug Console (raw API output, transfer rates, logs)"
+                    >
+                      <Terminal size={12} />
+                      <span>Open Debug Window</span>
+                    </button>
                   </div>
                 </div>
               )}

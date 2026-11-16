@@ -1866,6 +1866,7 @@ body {
 }
 
 .chart-loading-box {
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1879,6 +1880,12 @@ body {
   box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
   max-width: 90%;
   text-align: center;
+}
+
+.chart-loading-debug-btn {
+  margin-top: 2px;
+  padding: 4px 10px;
+  font-size: 11px;
 }
 
 .chart-loading-icon-group {
@@ -4805,6 +4812,13 @@ body {
 .video-download-progress-top strong {
   color: var(--accent-sky);
   font-variant-numeric: tabular-nums;
+}
+
+.video-download-progress-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .video-download-progress-track {

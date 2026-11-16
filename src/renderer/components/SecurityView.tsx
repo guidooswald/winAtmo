@@ -23,6 +23,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Terminal,
   User,
   Users,
   UserX,
@@ -246,9 +247,20 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
               ? ` (${formatDownloadBytes(prog.bytesDownloaded)})`
               : ''}
           </span>
-          <strong>
-            {isIndeterminate ? '...' : `${pct}%`}
-          </strong>
+          <div className="video-download-progress-actions">
+            <strong>
+              {isIndeterminate ? '...' : `${pct}%`}
+            </strong>
+            <button
+              type="button"
+              className="sync-debug-link-btn"
+              onClick={() => window.winatmo?.openDebugWindow?.()}
+              title="Open API & Sync Debug Console (raw API output, transfer rates, logs)"
+            >
+              <Terminal size={11} />
+              <span>Debug Window</span>
+            </button>
+          </div>
         </div>
         <div className="video-download-progress-track">
           <div

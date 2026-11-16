@@ -169,7 +169,7 @@ export const SyncOverlayWindow: React.FC<SyncOverlayWindowProps> = ({
             title="Open API & Sync Debug Console (raw API output, transfer rates, logs)"
           >
             <Terminal size={11} />
-            <span>Debug Log</span>
+            <span>Debug Window</span>
           </button>
         </div>
       </div>
