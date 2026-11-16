@@ -1112,6 +1112,32 @@ function setupTokenAutoUpdate(): void {
   }, 3 * 60 * 1000);
 }
 
+async function runFullSync(trigger: 'startup' | 'scheduled'): Promise<void> {
+  const session = store.getSession();
+  if (!session.loggedIn) return;
+
+  if (store.getSettings().autoUpdateTokens !== false) {
+    try {
+      await client.autoRefreshToken();
+    } catch {}
+  }
+
+  try {
+    await client.syncHistoricalData();
+    broadcastToAllWindows('stations:updated', store.getCachedStations());
+    updateTrayTooltipAndMenu();
+  } catch (err) {
+    console.warn(`[Main] ${trigger} station sync error:`, err);
+  }
+
+  try {
+    const securityPayload = await client.fetchSecurityData({ size: 40 });
+    broadcastToAllWindows('security:updated', securityPayload);
+  } catch (secErr) {
+    console.warn(`[Main] ${trigger} security refresh error:`, secErr);
+  }
+}
+
 function setupRefreshSchedule(): void {
   if (refreshTimer) {
     clearInterval(refreshTimer);
@@ -1120,29 +1146,7 @@ function setupRefreshSchedule(): void {
 
   const minutes = Math.max(1, store.getSettings().refreshIntervalMinutes || 10);
   refreshTimer = setInterval(async () => {
-    const session = store.getSession();
-    if (!session.loggedIn) return;
-
-    if (store.getSettings().autoUpdateTokens !== false) {
-      try {
-        await client.autoRefreshToken();
-      } catch {}
-    }
-
-    try {
-      await client.syncHistoricalData();
-      broadcastToAllWindows('stations:updated', store.getCachedStations());
-      updateTrayTooltipAndMenu();
-    } catch (err) {
-      console.warn('[Main] Scheduled refresh error:', err);
-    }
-
-    try {
-      const securityPayload = await client.fetchSecurityData({ size: 40 });
-      broadcastToAllWindows('security:updated', securityPayload);
-    } catch (secErr) {
-      console.warn('[Main] Scheduled security refresh error:', secErr);
-    }
+    await runFullSync('scheduled');
   }, minutes * 60 * 1000);
 }
 
@@ -2169,23 +2173,27 @@ app.whenReady().then(async () => {
     applyStartupRegistration(true);
   }
 
-  // If user is already logged in, check token expiry and kick off an initial sync in background
+  // Kick off an immediate startup sync once the renderer has loaded (with a fallback timer for hidden/autostart launches)
   if (store.getSession().loggedIn) {
-    if (store.getSettings().autoUpdateTokens !== false) {
-      client.autoRefreshToken().catch(() => {});
-    }
-    setTimeout(() => {
-      client.syncHistoricalData().then(() => {
-        broadcastToAllWindows('stations:updated', store.getCachedStations());
-        updateTrayTooltipAndMenu();
+    let startupSyncTriggered = false;
+    let fallbackTimer: NodeJS.Timeout | null = null;
+
+    const triggerStartupSync = () => {
+      if (startupSyncTriggered) return;
+      startupSyncTriggered = true;
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      void runFullSync('startup');
+    };
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.once('did-finish-load', () => {
+        setTimeout(triggerStartupSync, 250);
       });
-      client
-        .fetchSecurityData({ size: 40 })
-        .then((securityPayload) => {
-          broadcastToAllWindows('security:updated', securityPayload);
-        })
-        .catch(() => {});
-    }, 800);
+    }
+    fallbackTimer = setTimeout(triggerStartupSync, 2000);
   }
 });
 

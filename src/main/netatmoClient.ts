@@ -39,6 +39,7 @@ export class NetatmoClient {
   private onQueryStatusCallback?: (status: MeasureQueryStatus) => void;
   private onAccountUpdatedCallback?: (account: AccountInfo) => void;
   private isSyncing = false;
+  private activeRefreshPromise: Promise<string> | null = null;
   private currentProgress: SyncProgress = {
     active: false,
     phase: 'idle',
@@ -242,124 +243,147 @@ export class NetatmoClient {
       return session.accessToken;
     }
 
-    // Attempt OAuth2 refresh_token flow if credentials exist
-    const settings = this.store.getSettings();
-    const clientId = settings.oauthClientId;
-    const clientSecret = settings.oauthClientSecret;
+    if (this.activeRefreshPromise) {
+      return this.activeRefreshPromise;
+    }
 
-    if (session.refreshToken && clientId && clientSecret) {
-      const tokenStart = performance.now();
+    this.activeRefreshPromise = (async (): Promise<string> => {
       try {
-        const res = await fetch('https://api.netatmo.com/oauth2/token', {
-          method: 'POST',
-          signal: AbortSignal.timeout(15000),
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-          },
-          body: new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: session.refreshToken,
-            client_id: clientId,
-            client_secret: clientSecret,
-          }).toString(),
-        });
+        // Attempt OAuth2 refresh_token flow if credentials exist
+        const settings = this.store.getSettings();
+        const clientId = settings.oauthClientId;
+        const clientSecret = settings.oauthClientSecret;
 
-        const rawText = await res.text();
-        const tokenDuration = Math.max(1, Math.round(performance.now() - tokenStart));
-        const tokenBytes = Buffer.byteLength(rawText, 'utf8');
-        let data: any = null;
-        try {
-          data = JSON.parse(rawText);
-        } catch {}
+        if (session.refreshToken && clientId && clientSecret) {
+          const tokenStart = performance.now();
+          try {
+            const res = await fetch('https://api.netatmo.com/oauth2/token', {
+              method: 'POST',
+              signal: AbortSignal.timeout(15000),
+              headers: {
+                'Content-Type':
+                  'application/x-www-form-urlencoded;charset=UTF-8',
+              },
+              body: new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: session.refreshToken,
+                client_id: clientId,
+                client_secret: clientSecret,
+              }).toString(),
+            });
 
-        debugLogger.recordApiRequest({
-          method: 'POST',
-          endpoint: 'oauth2/token',
-          baseHost: 'api.netatmo.com',
-          url: 'https://api.netatmo.com/oauth2/token',
-          status: res.status,
-          ok: res.ok && !!data?.access_token,
-          durationMs: tokenDuration,
-          bytesReceived: tokenBytes,
-          rawBody: rawText,
-          error: res.ok ? undefined : data?.error || `HTTP ${res.status}`,
-          note: 'OAuth2 refresh_token',
-        });
+            const rawText = await res.text();
+            const tokenDuration = Math.max(
+              1,
+              Math.round(performance.now() - tokenStart)
+            );
+            const tokenBytes = Buffer.byteLength(rawText, 'utf8');
+            let data: any = null;
+            try {
+              data = JSON.parse(rawText);
+            } catch {}
 
-        if (res.ok && data?.access_token) {
-          const newExpiresAt = now + (Number(data.expires_in) || 10800);
-          const newRefreshToken = data.refresh_token || session.refreshToken;
+            debugLogger.recordApiRequest({
+              method: 'POST',
+              endpoint: 'oauth2/token',
+              baseHost: 'api.netatmo.com',
+              url: 'https://api.netatmo.com/oauth2/token',
+              status: res.status,
+              ok: res.ok && !!data?.access_token,
+              durationMs: tokenDuration,
+              bytesReceived: tokenBytes,
+              rawBody: rawText,
+              error: res.ok ? undefined : data?.error || `HTTP ${res.status}`,
+              note: 'OAuth2 refresh_token',
+            });
 
-          this.store.updateSession({
-            accessToken: data.access_token,
-            refreshToken: newRefreshToken,
-            expiresAt: newExpiresAt,
-          });
+            if (res.ok && data?.access_token) {
+              const newExpiresAt = now + (Number(data.expires_in) || 10800);
+              const newRefreshToken =
+                data.refresh_token || session.refreshToken;
 
-          await this.store.updateStoredApiKeysTokens(
-            data.access_token,
-            newRefreshToken,
-            newExpiresAt
-          );
+              this.store.updateSession({
+                accessToken: data.access_token,
+                refreshToken: newRefreshToken,
+                expiresAt: newExpiresAt,
+              });
 
-          if (this.onAccountUpdatedCallback) {
-            this.onAccountUpdatedCallback(this.store.getAccountInfo());
+              await this.store.updateStoredApiKeysTokens(
+                data.access_token,
+                newRefreshToken,
+                newExpiresAt
+              );
+
+              if (this.onAccountUpdatedCallback) {
+                this.onAccountUpdatedCallback(this.store.getAccountInfo());
+              }
+
+              console.log(
+                `[NetatmoClient] Token auto-updated successfully. Valid until ${new Date(
+                  newExpiresAt * 1000
+                ).toLocaleTimeString()}`
+              );
+
+              return data.access_token;
+            } else {
+              console.warn(
+                '[NetatmoClient] OAuth token refresh response error:',
+                res.status,
+                data
+              );
+            }
+          } catch (err: any) {
+            const tokenDuration = Math.max(
+              1,
+              Math.round(performance.now() - tokenStart)
+            );
+            debugLogger.recordApiRequest({
+              method: 'POST',
+              endpoint: 'oauth2/token',
+              baseHost: 'api.netatmo.com',
+              url: 'https://api.netatmo.com/oauth2/token',
+              status: null,
+              ok: false,
+              durationMs: tokenDuration,
+              bytesReceived: 0,
+              error: err?.message || 'Network error',
+              note: 'OAuth2 refresh_token',
+            });
+            console.warn(
+              '[NetatmoClient] OAuth token refresh network error:',
+              err
+            );
           }
-
-          console.log(
-            `[NetatmoClient] Token auto-updated successfully. Valid until ${new Date(
-              newExpiresAt * 1000
-            ).toLocaleTimeString()}`
-          );
-
-          return data.access_token;
-        } else {
-          console.warn(
-            '[NetatmoClient] OAuth token refresh response error:',
-            res.status,
-            data
-          );
         }
-      } catch (err: any) {
-        const tokenDuration = Math.max(1, Math.round(performance.now() - tokenStart));
-        debugLogger.recordApiRequest({
-          method: 'POST',
-          endpoint: 'oauth2/token',
-          baseHost: 'api.netatmo.com',
-          url: 'https://api.netatmo.com/oauth2/token',
-          status: null,
-          ok: false,
-          durationMs: tokenDuration,
-          bytesReceived: 0,
-          error: err?.message || 'Network error',
-          note: 'OAuth2 refresh_token',
-        });
-        console.warn('[NetatmoClient] OAuth token refresh network error:', err);
-      }
-    }
 
-    // Attempt silent web refresh if logged in via web
-    if (session.authMethod === 'web' && this.silentRefreshCallback) {
-      const newWebToken = await this.silentRefreshCallback();
-      if (newWebToken) {
-        const updatedSession = this.store.getSession();
-        await this.store.updateStoredApiKeysTokens(
-          newWebToken,
-          updatedSession.refreshToken,
-          updatedSession.expiresAt
-        );
-        if (this.onAccountUpdatedCallback) {
-          this.onAccountUpdatedCallback(this.store.getAccountInfo());
+        // Attempt silent web refresh if logged in via web
+        if (session.authMethod === 'web' && this.silentRefreshCallback) {
+          const newWebToken = await this.silentRefreshCallback();
+          if (newWebToken) {
+            const updatedSession = this.store.getSession();
+            await this.store.updateStoredApiKeysTokens(
+              newWebToken,
+              updatedSession.refreshToken,
+              updatedSession.expiresAt
+            );
+            if (this.onAccountUpdatedCallback) {
+              this.onAccountUpdatedCallback(this.store.getAccountInfo());
+            }
+            return newWebToken;
+          }
         }
-        return newWebToken;
+
+        if (!forceRefresh && session.accessToken) {
+          return session.accessToken;
+        }
+
+        throw new Error('Netatmo session expired. Please sign in again.');
+      } finally {
+        this.activeRefreshPromise = null;
       }
-    }
+    })();
 
-    if (!forceRefresh && session.accessToken) {
-      return session.accessToken;
-    }
-
-    throw new Error('Netatmo session expired. Please sign in again.');
+    return this.activeRefreshPromise;
   }
 
   /**
