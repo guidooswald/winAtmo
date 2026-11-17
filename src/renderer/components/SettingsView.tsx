@@ -287,8 +287,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Live preview for taskbar icon badge
   const previewInfo = useMemo(() => {
-    const target = settings.taskbarSensorTarget || 'outdoor_temp';
-    const isF = settings.temperatureUnit === 'F';
+    const resolveAutoPreview = () => {
+      const target = settings.taskbarSensorTarget || 'outdoor_temp';
+      const isF = settings.temperatureUnit === 'F';
 
     if (target === 'outdoor_temp') {
       for (const st of stations) {
@@ -502,11 +503,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       }
     }
 
-    return {
-      text: isF ? '64°' : '18°',
-      color: '#34d399',
-      label: `Outside Temp: ${isF ? '64.4°F' : '18.0°C'}`,
+      return {
+        text: isF ? '64°' : '18°',
+        color: '#34d399',
+        label: `Outside Temp: ${isF ? '64.4°F' : '18.0°C'}`,
+      };
     };
+
+    const base = resolveAutoPreview();
+    const customColor = settings.taskbarTextColor?.trim();
+    if (
+      customColor &&
+      customColor !== 'auto' &&
+      /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(customColor)
+    ) {
+      return { ...base, color: customColor };
+    }
+    return base;
   }, [stations, settings]);
 
   const earliestStationSetup =
@@ -1038,127 +1051,198 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           {settings.taskbarDisplayMode !== 'icon' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-              <div style={{ flex: 1, minWidth: 260 }}>
-                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  Target Sensor Reading
-                </label>
-                <select
-                  className="select-input"
-                  style={{ width: '100%', padding: '7px 10px', borderRadius: 6 }}
-                  value={settings.taskbarSensorTarget || 'outdoor_temp'}
-                  onChange={(e) => onUpdateSettings({ taskbarSensorTarget: e.target.value })}
-                >
-                  <optgroup label="Standard Presets">
-                    <option value="outdoor_temp">Outside Temperature (Default)</option>
-                    <option value="indoor_temp">Indoor Temperature (Main Station)</option>
-                    <option value="indoor_co2">Indoor CO₂ (Main Station)</option>
-                    <option value="outdoor_humidity">Outdoor Humidity</option>
-                    <option value="indoor_humidity">Indoor Humidity</option>
-                    <option value="pressure">Barometric Pressure</option>
-                  </optgroup>
-                  {stationSensorOptions.length > 0 && (
-                    <optgroup label="Connected Station Sensors">
-                      {stationSensorOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 260 }}>
+                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Target Sensor Reading
+                  </label>
+                  <select
+                    className="select-input"
+                    style={{ width: '100%', padding: '7px 10px', borderRadius: 6 }}
+                    value={settings.taskbarSensorTarget || 'outdoor_temp'}
+                    onChange={(e) => onUpdateSettings({ taskbarSensorTarget: e.target.value })}
+                  >
+                    <optgroup label="Standard Presets">
+                      <option value="outdoor_temp">Outside Temperature (Default)</option>
+                      <option value="indoor_temp">Indoor Temperature (Main Station)</option>
+                      <option value="indoor_co2">Indoor CO₂ (Main Station)</option>
+                      <option value="outdoor_humidity">Outdoor Humidity</option>
+                      <option value="indoor_humidity">Indoor Humidity</option>
+                      <option value="pressure">Barometric Pressure</option>
                     </optgroup>
-                  )}
-                </select>
+                    {stationSensorOptions.length > 0 && (
+                      <optgroup label="Connected Station Sensors">
+                        {stationSensorOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+
+                {/* Live Preview on Taskbar simulated swatches */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '8px 14px',
+                    background: 'var(--bg-subtle)',
+                    borderRadius: 8,
+                    border: '1px solid var(--border-subtle)',
+                    marginTop: 14,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--text-muted)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    Tray Preview:
+                  </div>
+                  {/* Dark Taskbar Swatch */}
+                  <div
+                    title="Preview on Dark Taskbar (no black box background)"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 5,
+                      background: '#1f2430',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: previewInfo.color,
+                      fontWeight: 700,
+                      fontSize:
+                        previewInfo.text.length <= 3
+                          ? 18
+                          : previewInfo.text.length === 4
+                          ? 15.5
+                          : 13,
+                      textShadow:
+                        '0 1px 1px rgba(0, 0, 0, 0.45), 0 0 1px rgba(0, 0, 0, 0.58)',
+                      fontFamily:
+                        '"Bahnschrift", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
+                      userSelect: 'none',
+                    }}
+                  >
+                    {previewInfo.text}
+                  </div>
+                  {/* Light Taskbar Swatch */}
+                  <div
+                    title="Preview on Light Taskbar (no black box background)"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 5,
+                      background: '#f8fafc',
+                      border: '1px solid rgba(0, 0, 0, 0.15)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: previewInfo.color,
+                      fontWeight: 700,
+                      fontSize:
+                        previewInfo.text.length <= 3
+                          ? 18
+                          : previewInfo.text.length === 4
+                          ? 15.5
+                          : 13,
+                      textShadow:
+                        '0 1px 1px rgba(0, 0, 0, 0.45), 0 0 1px rgba(0, 0, 0, 0.58)',
+                      fontFamily:
+                        '"Bahnschrift", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
+                      userSelect: 'none',
+                    }}
+                  >
+                    {previewInfo.text}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '12.5px',
+                      fontWeight: 600,
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    {previewInfo.label}
+                  </div>
+                </div>
               </div>
 
-              {/* Live Preview on Taskbar simulated swatches */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '8px 14px',
-                  background: 'var(--bg-subtle)',
-                  borderRadius: 8,
-                  border: '1px solid var(--border-subtle)',
-                  marginTop: 14,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: '11px',
-                    color: 'var(--text-muted)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                  }}
-                >
-                  Tray Preview:
-                </div>
-                {/* Dark Taskbar Swatch */}
-                <div
-                  title="Preview on Dark Taskbar (no black box background)"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 5,
-                    background: '#1f2430',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: previewInfo.color,
-                    fontWeight: 700,
-                    fontSize:
-                      previewInfo.text.length <= 3
-                        ? 16.5
-                        : previewInfo.text.length === 4
-                        ? 14
-                        : 11.5,
-                    textShadow:
-                      '0 1px 3px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9)',
-                    fontFamily:
-                      '"Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
-                    userSelect: 'none',
-                  }}
-                >
-                  {previewInfo.text}
-                </div>
-                {/* Light Taskbar Swatch */}
-                <div
-                  title="Preview on Light Taskbar (no black box background)"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 5,
-                    background: '#f8fafc',
-                    border: '1px solid rgba(0, 0, 0, 0.15)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: previewInfo.color,
-                    fontWeight: 700,
-                    fontSize:
-                      previewInfo.text.length <= 3
-                        ? 16.5
-                        : previewInfo.text.length === 4
-                        ? 14
-                        : 11.5,
-                    textShadow:
-                      '0 1px 3px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9), 0 0 1px rgba(0, 0, 0, 0.95)',
-                    fontFamily:
-                      '"Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
-                    userSelect: 'none',
-                  }}
-                >
-                  {previewInfo.text}
-                </div>
-                <div
-                  style={{
-                    fontSize: '12.5px',
-                    fontWeight: 600,
-                    color: 'var(--text-primary)',
-                  }}
-                >
-                  {previewInfo.label}
+              {/* Taskbar Value Text Color Picker */}
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Value Text Color
+                </label>
+                <div className="taskbar-color-controls">
+                  <button
+                    type="button"
+                    className={`pill-btn ${
+                      !settings.taskbarTextColor || settings.taskbarTextColor === 'auto'
+                        ? 'active'
+                        : ''
+                    }`}
+                    onClick={() => onUpdateSettings({ taskbarTextColor: 'auto' })}
+                    title="Automatically choose color based on sensor value"
+                  >
+                    Auto (Dynamic)
+                  </button>
+
+                  {[
+                    { hex: '#ffffff', label: 'White' },
+                    { hex: '#38bdf8', label: 'Sky Blue' },
+                    { hex: '#34d399', label: 'Emerald' },
+                    { hex: '#fbbf24', label: 'Amber' },
+                    { hex: '#f87171', label: 'Coral' },
+                    { hex: '#a78bfa', label: 'Violet' },
+                    { hex: '#0f172a', label: 'Dark Slate (for Light Taskbar)' },
+                  ].map((preset) => {
+                    const isSelected =
+                      settings.taskbarTextColor?.toLowerCase() === preset.hex;
+                    return (
+                      <button
+                        key={preset.hex}
+                        type="button"
+                        className={`taskbar-color-swatch ${isSelected ? 'active' : ''}`}
+                        style={{ backgroundColor: preset.hex }}
+                        onClick={() => onUpdateSettings({ taskbarTextColor: preset.hex })}
+                        title={preset.label}
+                        aria-label={`Use ${preset.label} (${preset.hex})`}
+                      />
+                    );
+                  })}
+
+                  <label className="taskbar-color-picker-btn" title="Pick a custom color">
+                    <input
+                      type="color"
+                      value={
+                        settings.taskbarTextColor &&
+                        settings.taskbarTextColor !== 'auto' &&
+                        /^#[0-9a-f]{6}$/i.test(settings.taskbarTextColor)
+                          ? settings.taskbarTextColor
+                          : previewInfo.color
+                      }
+                      onChange={(e) =>
+                        onUpdateSettings({ taskbarTextColor: e.target.value })
+                      }
+                    />
+                    <span>
+                      Custom:{' '}
+                      <code>
+                        {settings.taskbarTextColor && settings.taskbarTextColor !== 'auto'
+                          ? settings.taskbarTextColor.toUpperCase()
+                          : 'Auto'}
+                      </code>
+                    </span>
+                  </label>
                 </div>
               </div>
             </div>

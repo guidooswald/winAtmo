@@ -43,9 +43,28 @@ export async function initTaskbarIconRenderer(): Promise<void> {
 }
 
 /**
- * Resolves the target sensor reading from the cached stations according to user settings.
+ * Resolves the target sensor reading from the cached stations according to user settings,
+ * applying any configured custom taskbar text color override.
  */
 export function resolveTaskbarReading(
+  stations: WeatherStation[],
+  settings: UserSettings
+): TaskbarReadingResult | null {
+  const reading = resolveRawTaskbarReading(stations, settings);
+  if (!reading) return null;
+
+  const customColor = settings.taskbarTextColor?.trim();
+  if (
+    customColor &&
+    customColor !== 'auto' &&
+    /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(customColor)
+  ) {
+    return { ...reading, color: customColor };
+  }
+  return reading;
+}
+
+function resolveRawTaskbarReading(
   stations: WeatherStation[],
   settings: UserSettings
 ): TaskbarReadingResult | null {

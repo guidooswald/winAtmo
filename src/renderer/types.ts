@@ -289,6 +289,7 @@ export interface UserSettings {
   pinnedSensors: PinnedSensorItem[];
   taskbarDisplayMode: 'sensor' | 'icon'; // Default 'sensor' (show sensor reading instead of icon in taskbar)
   taskbarSensorTarget: string; // Default 'outdoor_temp' (outside temperature)
+  taskbarTextColor?: string; // 'auto' (semantic color) or hex color (e.g. '#ffffff')
   oauthClientId?: string;
   oauthClientSecret?: string;
   storeApiKeysLocally: boolean; // When true, stores API keys locally in an encrypted file

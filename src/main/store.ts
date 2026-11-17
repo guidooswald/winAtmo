@@ -87,6 +87,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   pinnedSensors: [],
   taskbarDisplayMode: 'sensor',
   taskbarSensorTarget: 'outdoor_temp',
+  taskbarTextColor: 'auto',
   storeApiKeysLocally: false,
   autoUpdateTokens: true,
   storeSecurityData: true,
