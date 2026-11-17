@@ -1120,17 +1120,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'center',
                       color: previewInfo.color,
-                      fontWeight: 700,
+                      fontWeight: 600,
                       fontSize:
                         previewInfo.text.length <= 3
-                          ? 18
+                          ? 19
                           : previewInfo.text.length === 4
-                          ? 15.5
-                          : 13,
-                      textShadow:
-                        '0 1px 1px rgba(0, 0, 0, 0.45), 0 0 1px rgba(0, 0, 0, 0.58)',
+                          ? 16
+                          : 13.5,
+                      textShadow: '0.6px 0.9px 1px rgba(0, 0, 0, 0.48)',
                       fontFamily:
-                        '"Bahnschrift", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
+                        '"Franklin Gothic Demi Cond", "Arial Narrow", "Trebuchet MS", "Segoe UI", sans-serif',
                       userSelect: 'none',
                     }}
                   >
@@ -1149,17 +1148,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'center',
                       color: previewInfo.color,
-                      fontWeight: 700,
+                      fontWeight: 600,
                       fontSize:
                         previewInfo.text.length <= 3
-                          ? 18
+                          ? 19
                           : previewInfo.text.length === 4
-                          ? 15.5
-                          : 13,
-                      textShadow:
-                        '0 1px 1px rgba(0, 0, 0, 0.45), 0 0 1px rgba(0, 0, 0, 0.58)',
+                          ? 16
+                          : 13.5,
+                      textShadow: '0.6px 0.9px 1px rgba(0, 0, 0, 0.48)',
                       fontFamily:
-                        '"Bahnschrift", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif',
+                        '"Franklin Gothic Demi Cond", "Arial Narrow", "Trebuchet MS", "Segoe UI", sans-serif',
                       userSelect: 'none',
                     }}
                   >

@@ -31,7 +31,7 @@ export async function initTaskbarIconRenderer(): Promise<void> {
       },
     });
 
-    const html = `<!DOCTYPE html><html><body style="margin:0"><canvas id="c32" width="32" height="32"></canvas><canvas id="c64" width="64" height="64"></canvas></body></html>`;
+    const html = `<!DOCTYPE html><html><body style="margin:0"><canvas id="c" width="32" height="32"></canvas></body></html>`;
     await iconRendererWindow.loadURL(
       'data:text/html;charset=utf-8,' + encodeURIComponent(html)
     );
@@ -424,31 +424,33 @@ export async function generateTaskbarIcon(
         (() => {
           const str = ${JSON.stringify(reading.text)};
           const textColor = ${JSON.stringify(reading.color)};
+          const canvas = document.getElementById('c');
+          const ctx = canvas.getContext('2d');
 
-          const renderCanvas = (id, dpr) => {
-            const canvas = document.getElementById(id);
-            const ctx = canvas.getContext('2d');
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.clearRect(0, 0, 32, 32);
+          const renderSize = (size) => {
+            canvas.width = size;
+            canvas.height = size;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, size, size);
 
-            const maxW = 30.5;
-            const maxH = 28.0;
-            // Allow gentle horizontal condensation on 3-4+ char numbers (e.g. "21.4", "1013")
-            // so vertical digit height stays large and crisp inside the taskbar slot.
-            const minScaleX = str.length >= 4 ? 0.72 : str.length === 3 ? 0.84 : 0.94;
-            const fontFamily = '"Bahnschrift", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
+            const maxW = size * 0.95;
+            const maxH = size * 0.89;
+            const minScaleX = str.length >= 4 ? 0.84 : str.length === 3 ? 0.90 : 0.96;
+            const fontFamily = '"Franklin Gothic Demi Cond", "Arial Narrow", "Trebuchet MS", "Segoe UI", sans-serif';
 
-            let fontSize = 36;
+            let fontSize = size * 1.25;
             let metrics;
             let scaleX = 1;
 
             ctx.textAlign = 'center';
             ctx.textBaseline = 'alphabetic';
 
-            while (fontSize > 8) {
-              ctx.font = '700 ' + fontSize + 'px ' + fontFamily;
+            while (fontSize > 6) {
+              ctx.font = '600 ' + fontSize + 'px ' + fontFamily;
               metrics = ctx.measureText(str);
-              const glyphH = (metrics.actualBoundingBoxAscent || fontSize * 0.72) + (metrics.actualBoundingBoxDescent || 0);
+              const glyphH =
+                (metrics.actualBoundingBoxAscent || fontSize * 0.72) +
+                (metrics.actualBoundingBoxDescent || 0);
               const glyphW = Math.max(
                 metrics.width,
                 (metrics.actualBoundingBoxLeft || 0) + (metrics.actualBoundingBoxRight || 0)
@@ -463,32 +465,23 @@ export async function generateTaskbarIcon(
 
             const ascent = metrics?.actualBoundingBoxAscent || fontSize * 0.72;
             const descent = metrics?.actualBoundingBoxDescent || 0;
-            const baselineY = 16 + (ascent - descent) / 2;
+            const baselineY = size / 2 + (ascent - descent) / 2;
             const offsetX =
-              metrics && metrics.actualBoundingBoxLeft !== undefined && metrics.actualBoundingBoxRight !== undefined
+              metrics &&
+              metrics.actualBoundingBoxLeft !== undefined &&
+              metrics.actualBoundingBoxRight !== undefined
                 ? (metrics.actualBoundingBoxLeft - metrics.actualBoundingBoxRight) / 2
                 : 0;
 
             ctx.save();
-            ctx.translate(16 + offsetX * scaleX, baselineY);
+            ctx.translate(size / 2 + offsetX * scaleX, baselineY);
             ctx.scale(scaleX, 1);
 
-            // 1. Subtle outline + light shadow for legibility on light taskbars without muddying contrast
-            ctx.save();
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.42)';
-            ctx.shadowBlur = 1.0;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0.6;
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.58)';
-            ctx.lineWidth = 1.15 / Math.sqrt(scaleX);
-            ctx.lineJoin = 'round';
-            ctx.miterLimit = 2;
-            ctx.strokeText(str, 0, 0);
-            ctx.restore();
-
-            // 2. Clean, unblurred foreground fill for crisp high contrast
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
+            // Light drop shadow without heavy outline so digit interiors stay crisp and open
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.48)';
+            ctx.shadowBlur = Math.max(0.5, size * 0.03);
+            ctx.shadowOffsetX = size * 0.025;
+            ctx.shadowOffsetY = size * 0.035;
             ctx.fillStyle = textColor;
             ctx.fillText(str, 0, 0);
             ctx.restore();
@@ -497,16 +490,18 @@ export async function generateTaskbarIcon(
           };
 
           return {
-            url32: renderCanvas('c32', 1),
-            url64: renderCanvas('c64', 2),
+            url16: renderSize(16),
+            url24: renderSize(24),
+            url32: renderSize(32),
           };
         })()
       `);
 
-      if (rendered?.url32 && rendered?.url64) {
+      if (rendered?.url16 && rendered?.url24 && rendered?.url32) {
         const img = nativeImage.createEmpty();
-        img.addRepresentation({ scaleFactor: 1, dataURL: rendered.url32 });
-        img.addRepresentation({ scaleFactor: 2, dataURL: rendered.url64 });
+        img.addRepresentation({ scaleFactor: 1, dataURL: rendered.url16 });
+        img.addRepresentation({ scaleFactor: 1.5, dataURL: rendered.url24 });
+        img.addRepresentation({ scaleFactor: 2, dataURL: rendered.url32 });
         if (!img.isEmpty()) {
           return img;
         }
