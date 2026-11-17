@@ -1131,7 +1131,10 @@ async function runFullSync(trigger: 'startup' | 'scheduled'): Promise<void> {
   }
 
   try {
-    const securityPayload = await client.fetchSecurityData({ size: 40 });
+    const securityPayload = await client.fetchSecurityData({
+      size: 40,
+      force: true,
+    });
     broadcastToAllWindows('security:updated', securityPayload);
   } catch (secErr) {
     console.warn(`[Main] ${trigger} security refresh error:`, secErr);
@@ -1428,6 +1431,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('auth:web-login', async () => {
     const res = await webAuth.startWebLogin(mainWindow || undefined);
     if (res.success) {
+      client.resetApiCaches();
       broadcastToAllWindows('stations:updated', store.getCachedStations());
       updateTrayTooltipAndMenu();
       createOrUpdateWidgetWindow();
@@ -1456,6 +1460,7 @@ function registerIpcHandlers(): void {
         payload.storeLocally !== false
       );
       if (res.success) {
+        client.resetApiCaches();
         broadcastToAllWindows('stations:updated', store.getCachedStations());
         broadcastToAllWindows('account:updated', store.getAccountInfo());
         broadcastToAllWindows('settings:updated', store.getSettings());
@@ -1491,6 +1496,7 @@ function registerIpcHandlers(): void {
         payload.storeLocally
       );
       if (res.valid) {
+        client.resetApiCaches();
         broadcastToAllWindows('stations:updated', store.getCachedStations());
         broadcastToAllWindows('account:updated', store.getAccountInfo());
         broadcastToAllWindows('settings:updated', store.getSettings());
@@ -1563,6 +1569,7 @@ function registerIpcHandlers(): void {
     ) => {
       const wasDemo = store.getSession().authMethod === 'demo';
       await webAuth.clearWebSession();
+      client.resetApiCaches();
       store.clearSession(
         Boolean(payload?.eraseDatabase || payload?.clearStoredKeys)
       );
@@ -1589,7 +1596,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('stations:refresh', async () => {
-    const stations = await client.fetchStations();
+    const stations = await client.fetchStations({ force: true });
     broadcastToAllWindows('stations:updated', stations);
     updateTrayTooltipAndMenu();
     return stations;
@@ -1645,10 +1652,12 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('storage:clear', () => {
+    client.resetApiCaches();
     return db.clearAllHistory();
   });
 
   ipcMain.handle('storage:clear-security', () => {
+    client.resetApiCaches();
     const stats = db.clearSecurityData();
     broadcastToAllWindows('security:cleared', true);
     return stats;
@@ -1807,7 +1816,12 @@ function registerIpcHandlers(): void {
     'security:get-data',
     async (
       _e,
-      options?: { homeId?: string; size?: number; offsetEventId?: string }
+      options?: {
+        homeId?: string;
+        size?: number;
+        offsetEventId?: string;
+        force?: boolean;
+      }
     ) => {
       return client.fetchSecurityData(options);
     }

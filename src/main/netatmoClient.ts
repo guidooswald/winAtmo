@@ -40,6 +40,18 @@ export class NetatmoClient {
   private onAccountUpdatedCallback?: (account: AccountInfo) => void;
   private isSyncing = false;
   private activeRefreshPromise: Promise<string> | null = null;
+  private inFlightStationsPromise: Promise<WeatherStation[]> | null = null;
+  private lastStationsFetchAt = 0;
+  private hasHomeCoachCache: { hasDevices: boolean; checkedAt: number } | null = null;
+  private homesDataCache: { data: any; fetchedAt: number } | null = null;
+  private hasSecurityCamerasCache: { hasCameras: boolean; checkedAt: number } | null = null;
+  private inFlightSecurityPromise: Promise<SecurityDataPayload> | null = null;
+  private lastSecurityFetchAt = 0;
+  private lastSecurityPayload: SecurityDataPayload | null = null;
+  private cameraUrlCache = new Map<
+    string,
+    { vpnUrl: string; localUrl?: string; isLocal: boolean; updatedAt: number }
+  >();
   private currentProgress: SyncProgress = {
     active: false,
     phase: 'idle',
@@ -52,6 +64,19 @@ export class NetatmoClient {
   constructor(store: AppStore, db: TimeSeriesDatabase) {
     this.store = store;
     this.db = db;
+  }
+
+  /**
+   * Clears in-memory API caches (e.g. on logout, account switch, or manual data clear).
+   */
+  public resetApiCaches(): void {
+    this.lastStationsFetchAt = 0;
+    this.hasHomeCoachCache = null;
+    this.homesDataCache = null;
+    this.hasSecurityCamerasCache = null;
+    this.lastSecurityFetchAt = 0;
+    this.lastSecurityPayload = null;
+    this.cameraUrlCache.clear();
   }
 
   public setAccountUpdatedHandler(cb: (account: AccountInfo) => void): void {
@@ -640,40 +665,93 @@ export class NetatmoClient {
 
   /**
    * Fetches all Weather Stations and Healthy Home Coach devices from the user's Netatmo account.
+   * Deduplicates concurrent calls, reuses very recent results (<15s) unless forced, and skips
+   * `gethomecoachsdata` once confirmed the account has no Home Coach devices (re-checked every 24h).
    */
-  public async fetchStations(): Promise<WeatherStation[]> {
+  public async fetchStations(options?: {
+    force?: boolean;
+  }): Promise<WeatherStation[]> {
     const session = this.store.getSession();
     if (session.authMethod === 'demo') {
       return this.store.getCachedStations();
     }
 
-    const stationsData = await this.apiGet('getstationsdata', {
-      get_favorites: true,
-    });
-
-    const stations = this.parseStationsPayload(stationsData);
-
-    // Also try fetching Healthy Home Coach (Aircare) devices if any exist on the account
-    try {
-      const coachData = await this.apiGet('gethomecoachsdata');
-      this.mergeHomeCoachPayload(stations, coachData);
-    } catch {
-      // Optional scope/device type; ignore if account has no Home Coach
+    const nowMs = Date.now();
+    if (
+      !options?.force &&
+      this.lastStationsFetchAt > 0 &&
+      nowMs - this.lastStationsFetchAt < 15_000
+    ) {
+      const cached = this.store.getCachedStations();
+      if (cached.length > 0) {
+        return cached;
+      }
     }
 
-    // Update user email/locale if present in payload
-    const user = stationsData?.body?.user;
-    if (user?.mail) {
-      this.store.updateSession({
-        email: user.mail,
-        country: user.administrative?.country,
-        locale: user.administrative?.reg_locale || user.administrative?.lang,
-      });
+    if (this.inFlightStationsPromise) {
+      return this.inFlightStationsPromise;
     }
 
-    this.store.setCachedStations(stations);
-    this.ingestDashboardSnapshot(stations);
-    return stations;
+    this.inFlightStationsPromise = (async (): Promise<WeatherStation[]> => {
+      try {
+        const stationsData = await this.apiGet('getstationsdata', {
+          get_favorites: true,
+        });
+
+        const stations = this.parseStationsPayload(stationsData);
+
+        const homeCoachRecheckMs = 24 * 60 * 60 * 1000;
+        const hasKnownNhc = stations.some((s) =>
+          s.modules.some((m) => m.type === 'NHC')
+        );
+        const shouldCheckHomeCoach =
+          Boolean(options?.force) ||
+          hasKnownNhc ||
+          !this.hasHomeCoachCache ||
+          this.hasHomeCoachCache.hasDevices ||
+          Date.now() - this.hasHomeCoachCache.checkedAt > homeCoachRecheckMs;
+
+        if (shouldCheckHomeCoach) {
+          try {
+            const coachData = await this.apiGet('gethomecoachsdata');
+            const devices: any[] = Array.isArray(coachData?.body?.devices)
+              ? coachData.body.devices
+              : [];
+            this.mergeHomeCoachPayload(stations, coachData);
+            this.hasHomeCoachCache = {
+              hasDevices: devices.length > 0,
+              checkedAt: Date.now(),
+            };
+          } catch {
+            // Optional scope/device type; remember absence to avoid polling every 10 minutes
+            this.hasHomeCoachCache = {
+              hasDevices: false,
+              checkedAt: Date.now(),
+            };
+          }
+        }
+
+        // Update user email/locale if present in payload
+        const user = stationsData?.body?.user;
+        if (user?.mail) {
+          this.store.updateSession({
+            email: user.mail,
+            country: user.administrative?.country,
+            locale:
+              user.administrative?.reg_locale || user.administrative?.lang,
+          });
+        }
+
+        this.store.setCachedStations(stations);
+        this.ingestDashboardSnapshot(stations);
+        this.lastStationsFetchAt = Date.now();
+        return stations;
+      } finally {
+        this.inFlightStationsPromise = null;
+      }
+    })();
+
+    return this.inFlightStationsPromise;
   }
 
   /**
@@ -1118,7 +1196,9 @@ export class NetatmoClient {
         error: undefined,
       });
 
-      const stations = await this.fetchStations();
+      const stations = await this.fetchStations({
+        force: Boolean(options?.forceFull),
+      });
 
       if (session.authMethod === 'demo') {
         this.emitProgress({
@@ -1197,12 +1277,27 @@ export class NetatmoClient {
               end: coverage.minTs,
             });
           }
-          // 2. Fetch forward delta from coverage.maxTs to now
-          if (now > coverage.maxTs + stepSeconds / 2) {
-            windowsToFetch.push({
-              begin: Math.max(requestedBegin, coverage.maxTs - stepSeconds),
-              end: now,
-            });
+          // 2. Fetch forward delta only when Netatmo has newer telemetry than SQLite coverage
+          const latestModTs = module.dashboard?.time_utc || 0;
+          const hasNewerModReading =
+            latestModTs > 0
+              ? latestModTs > coverage.maxTs
+              : now > coverage.maxTs + Math.max(stepSeconds, 600);
+          if (hasNewerModReading) {
+            const forwardBegin = Math.max(
+              requestedBegin,
+              coverage.maxTs - stepSeconds
+            );
+            const forwardEnd =
+              latestModTs > 0
+                ? Math.min(now, Math.max(latestModTs + stepSeconds, coverage.maxTs + stepSeconds))
+                : now;
+            if (forwardBegin < forwardEnd) {
+              windowsToFetch.push({
+                begin: forwardBegin,
+                end: forwardEnd,
+              });
+            }
           }
         }
 
@@ -1358,7 +1453,7 @@ export class NetatmoClient {
         date_begin: cursor,
         date_end: chunkEnd,
         limit: 1024,
-        optimize: false,
+        optimize: true,
         real_time: true,
       };
 
@@ -1537,6 +1632,44 @@ export class NetatmoClient {
       byModule.set(key, list);
     }
 
+    // Helper computing only the un-cached sub-windows for a module at the queried scale
+    const computeUncoveredWindows = (
+      st: WeatherStation | undefined,
+      mod: StationModule
+    ): Array<{ begin: number; end: number }> => {
+      if (req.forceRemoteFetch) {
+        return [{ begin: req.dateBegin, end: req.dateEnd }];
+      }
+      const coverage = this.db.getSyncCoverage(mod.id, req.scale);
+      const stepSec = this.db.getScaleSeconds(req.scale);
+      const effectiveBegin = Math.max(
+        req.dateBegin,
+        st?.dateSetup || mod.dateSetup || 0
+      );
+      const modLatestTs = mod.dashboard?.time_utc || 0;
+      const effectiveTargetEnd =
+        modLatestTs > 0 ? Math.min(req.dateEnd, modLatestTs) : req.dateEnd;
+
+      if (!coverage) {
+        return [{ begin: effectiveBegin, end: req.dateEnd }];
+      }
+
+      const windows: Array<{ begin: number; end: number }> = [];
+      if (effectiveBegin < coverage.minTs - stepSec * 4) {
+        windows.push({
+          begin: effectiveBegin,
+          end: Math.min(req.dateEnd, coverage.minTs + stepSec),
+        });
+      }
+      if (effectiveTargetEnd > coverage.maxTs + stepSec * 2) {
+        const fwdBegin = Math.max(effectiveBegin, coverage.maxTs - stepSec);
+        if (fwdBegin < req.dateEnd) {
+          windows.push({ begin: fwdBegin, end: req.dateEnd });
+        }
+      }
+      return windows;
+    };
+
     // Determine upfront whether this query requires remote Netatmo Cloud API requests or is served 100% from local SQLite
     let willHitApi = false;
     if (session.loggedIn && session.authMethod !== 'demo') {
@@ -1544,40 +1677,9 @@ export class NetatmoClient {
         const sample = group[0];
         const st = stations.find((s) => s.id === sample.stationId);
         const mod = st?.modules.find((m) => m.id === sample.moduleId);
-        if (mod) {
-          const coverage = this.db.getSyncCoverage(mod.id, req.scale);
-          const stepSec = this.db.getScaleSeconds(req.scale);
-          const effectiveBegin = Math.max(req.dateBegin, st?.dateSetup || mod.dateSetup || 0);
-          const spanSec = Math.max(0, req.dateEnd - effectiveBegin);
-          const expectedPoints = Math.max(1, Math.floor(spanSec / stepSec));
-
-          const needsBackfill =
-            !coverage || req.dateBegin < coverage.minTs - stepSec * 4;
-          const needsForward =
-            !coverage || req.dateEnd > coverage.maxTs + stepSec * 2;
-          const existingPoints = this.db.queryPoints(
-            mod.id,
-            sample.metric,
-            req.scale,
-            req.dateBegin,
-            req.dateEnd
-          );
-
-          const hasZeroPoints = existingPoints.length === 0;
-          const hasSparsePoints = existingPoints.length < expectedPoints * 0.7;
-          const hasGapAtStart =
-            existingPoints.length > 0 &&
-            existingPoints[0].ts > effectiveBegin + stepSec * 3;
-          const hasGapAtEnd =
-            existingPoints.length > 0 &&
-            existingPoints[existingPoints.length - 1].ts < req.dateEnd - stepSec * 3;
-          const isMissingData =
-            hasZeroPoints || hasSparsePoints || hasGapAtStart || hasGapAtEnd;
-
-          if (req.forceRemoteFetch || needsBackfill || needsForward || isMissingData) {
-            willHitApi = true;
-            break;
-          }
+        if (mod && computeUncoveredWindows(st, mod).length > 0) {
+          willHitApi = true;
+          break;
         }
       }
     }
@@ -1602,48 +1704,18 @@ export class NetatmoClient {
         session.authMethod !== 'demo' &&
         !authFailed
       ) {
-        const coverage = this.db.getSyncCoverage(mod.id, req.scale);
-        const stepSec = this.db.getScaleSeconds(req.scale);
-        const effectiveBegin = Math.max(req.dateBegin, st?.dateSetup || mod.dateSetup || 0);
-        const spanSec = Math.max(0, req.dateEnd - effectiveBegin);
-        const expectedPoints = Math.max(1, Math.floor(spanSec / stepSec));
-
-        const needsBackfill =
-          !coverage || req.dateBegin < coverage.minTs - stepSec * 4;
-        const needsForward =
-          !coverage || req.dateEnd > coverage.maxTs + stepSec * 2;
-        const existingPoints = this.db.queryPoints(
-          mod.id,
-          sample.metric,
-          req.scale,
-          req.dateBegin,
-          req.dateEnd
-        );
-
-        const hasZeroPoints = existingPoints.length === 0;
-        const hasSparsePoints = existingPoints.length < expectedPoints * 0.7;
-        const hasGapAtStart =
-          existingPoints.length > 0 &&
-          existingPoints[0].ts > effectiveBegin + stepSec * 3;
-        const hasGapAtEnd =
-          existingPoints.length > 0 &&
-          existingPoints[existingPoints.length - 1].ts < req.dateEnd - stepSec * 3;
-        const isMissingData =
-          hasZeroPoints || hasSparsePoints || hasGapAtStart || hasGapAtEnd;
-
-        if (req.forceRemoteFetch || needsBackfill || needsForward || isMissingData) {
+        const missingWindows = computeUncoveredWindows(st, mod);
+        if (missingWindows.length > 0) {
           try {
-            const fetchBegin =
-              !req.forceRemoteFetch && coverage && !needsBackfill && !isMissingData
-                ? Math.max(req.dateBegin, coverage.maxTs - stepSec)
-                : req.dateBegin;
-            await this.fetchAndStoreModuleWindow(
-              sample.stationId,
-              mod,
-              req.scale,
-              fetchBegin,
-              req.dateEnd
-            );
+            for (const win of missingWindows) {
+              await this.fetchAndStoreModuleWindow(
+                sample.stationId,
+                mod,
+                req.scale,
+                win.begin,
+                win.end
+              );
+            }
             didFetchForModule = true;
           } catch (err: any) {
             console.warn(
@@ -1661,48 +1733,13 @@ export class NetatmoClient {
       }
 
       for (const item of group) {
-        let points = this.db.queryPoints(
+        const points = this.db.queryPoints(
           item.moduleId,
           item.metric,
           req.scale,
           req.dateBegin,
           req.dateEnd
         );
-
-        // Fail-safe: If points are still completely empty after primary sync, do an immediate direct window fetch
-        if (
-          points.length === 0 &&
-          mod &&
-          session.loggedIn &&
-          session.authMethod !== 'demo' &&
-          !didFetchForModule &&
-          !authFailed
-        ) {
-          try {
-            await this.fetchAndStoreModuleWindow(
-              sample.stationId,
-              mod,
-              req.scale,
-              req.dateBegin,
-              req.dateEnd
-            );
-            didFetchForModule = true;
-            points = this.db.queryPoints(
-              item.moduleId,
-              item.metric,
-              req.scale,
-              req.dateBegin,
-              req.dateEnd
-            );
-          } catch (err: any) {
-            if (
-              err?.message?.includes('session expired') ||
-              err?.message?.includes('authentication failed')
-            ) {
-              authFailed = true;
-            }
-          }
-        }
 
         results.push({
           seriesKey: `${item.moduleId}::${item.metric}`,
@@ -2131,13 +2168,39 @@ export class NetatmoClient {
   }
 
   /**
+   * Returns cached `/api/homesdata` static home/camera/person topology (6h TTL) unless forced.
+   */
+  private async getHomesDataCached(force = false): Promise<any> {
+    const ttlMs = 6 * 60 * 60 * 1000;
+    if (
+      !force &&
+      this.homesDataCache &&
+      Date.now() - this.homesDataCache.fetchedAt < ttlMs
+    ) {
+      return this.homesDataCache.data;
+    }
+
+    const homesResp = await this.apiGet(
+      'homesdata',
+      {},
+      false,
+      'Security: discover homes & cameras'
+    );
+    this.homesDataCache = { data: homesResp, fetchedAt: Date.now() };
+    return homesResp;
+  }
+
+  /**
    * Fetches Netatmo Security homes, live camera hardware status, and event timeline.
-   * When local security storage is enabled, only new/unseen events are downloaded and persisted.
+   * Consolidates/reuses cached static `/homesdata` topology, skips polling accounts confirmed
+   * to have zero cameras (6h TTL), deduplicates concurrent refreshes, and serves recent data
+   * unless `force` or pagination (`offsetEventId`) is requested.
    */
   public async fetchSecurityData(options?: {
     homeId?: string;
     size?: number;
     offsetEventId?: string;
+    force?: boolean;
   }): Promise<SecurityDataPayload> {
     const session = this.store.getSession();
     if (!session.loggedIn) {
@@ -2148,240 +2211,300 @@ export class NetatmoClient {
       return this.getDemoSecurityData();
     }
 
-    const shouldStore = this.store.getSettings().storeSecurityData !== false;
-    const size = options?.size ?? 40;
-    const homes: SecurityHome[] = [];
-    const allEvents: SecurityEvent[] = [];
-    const cameraNamesById = new Map<string, string>();
-    const personsById = new Map<string, string>();
+    const isDefaultRefresh = !options?.homeId && !options?.offsetEventId;
+    const refreshMs = Math.max(
+      90_000,
+      (this.store.getSettings().refreshIntervalMinutes || 10) * 60 * 1000
+    );
 
-    try {
-      const homesResp = await this.apiGet(
-        'homesdata',
-        {},
-        false,
-        'Security: discover homes & cameras'
-      );
-      const rawHomes: any[] = Array.isArray(homesResp?.body?.homes)
-        ? homesResp.body.homes
-        : [];
-
-      for (const h of rawHomes) {
-        const homeId = String(h.id);
-        const homeName = String(h.name || 'Home');
-        if (options?.homeId && options.homeId !== homeId) {
-          continue;
-        }
-
-        const roomNamesById = new Map<string, string>();
-        for (const r of Array.isArray(h.rooms) ? h.rooms : []) {
-          roomNamesById.set(String(r.id), String(r.name || ''));
-        }
-
-        const rawHomePersons: any[] = Array.isArray(h.persons) ? h.persons : [];
-        let statusPersons: any[] = [];
-
-        const cameras: SecurityCamera[] = [];
-        for (const m of Array.isArray(h.modules) ? h.modules : []) {
-          if (!this.isCameraModuleType(m.type)) continue;
-          const cid = String(m.id);
-          const cname = String(m.name || m.type || cid);
-          cameraNamesById.set(cid, cname);
-          cameras.push({
-            id: cid,
-            homeId,
-            homeName,
-            name: cname,
-            type: String(m.type),
-            roomName: m.room_id ? roomNamesById.get(String(m.room_id)) : undefined,
-            lastSetup: m.setup_date,
-          });
-        }
-
-        if (cameras.length > 0) {
-          // Fetch live camera & person presence status via /api/homestatus
-          try {
-            const statusResp = await this.apiGet(
-              'homestatus',
-              { home_id: homeId },
-              false,
-              `Security status: ${homeName}`
-            );
-            const statusHome = statusResp?.body?.home;
-            statusPersons = Array.isArray(statusHome?.persons)
-              ? statusHome.persons
-              : [];
-            const statusModules: any[] = Array.isArray(statusHome?.modules)
-              ? statusHome.modules
-              : [];
-            const statusById = new Map<string, any>();
-            for (const sm of statusModules) {
-              statusById.set(String(sm.id), sm);
-            }
-            for (const cam of cameras) {
-              const sm = statusById.get(cam.id);
-              if (sm) {
-                cam.monitoring = sm.monitoring;
-                cam.status = sm.status || sm.monitoring;
-                cam.sdStatus = sm.sd_status;
-                cam.alimStatus = sm.alim_status;
-                cam.wifiStrength = sm.wifi_strength;
-                cam.wifiState = sm.wifi_state;
-                cam.firmwareRevision = sm.firmware_revision;
-                cam.isLocal = sm.is_local;
-                cam.floodlight = sm.floodlight;
-                cam.sirenStatus = sm.siren_status;
-                if (sm.vpn_url) {
-                  cam.vpnUrl = String(sm.vpn_url);
-                }
-              }
-            }
-          } catch (statusErr: any) {
-            debugLogger.log(
-              'warn',
-              'Security',
-              `Could not fetch /homestatus for ${homeName}: ${statusErr?.message || statusErr}`
-            );
-          }
-        }
-
-        const persons = this.mergeAndFilterPersons(
-          rawHomePersons,
-          statusPersons,
-          homeId,
-          personsById
-        );
-
-        if (cameras.length > 0) {
-
-          // Fetch event list via /api/getevents (incremental unseen-only when SQLite storage is enabled)
-          try {
-            const knownIds = shouldStore
-              ? this.db.getKnownSecurityEventIds(homeId)
-              : new Set<string>();
-            let cursorEventId: string | undefined = options?.offsetEventId;
-            const maxPages = shouldStore && !options?.offsetEventId && knownIds.size > 0 ? 5 : 1;
-            let newForHome = 0;
-
-            for (let page = 0; page < maxPages; page++) {
-              const eventsResp = await this.apiGet(
-                'getevents',
-                {
-                  home_id: homeId,
-                  size,
-                  event_id: cursorEventId,
-                },
-                false,
-                `Security events: ${homeName} (size=${size}${cursorEventId ? `, until=${cursorEventId}` : ''})`
-              );
-              const rawEvents: any[] =
-                eventsResp?.body?.home?.events ||
-                eventsResp?.body?.events ||
-                [];
-
-              let hitKnownEvent = false;
-              let addedInPage = 0;
-
-              for (const ev of rawEvents) {
-                const evId = ev.id ? String(ev.id) : '';
-                if (shouldStore && evId && knownIds.has(evId)) {
-                  hitKnownEvent = true;
-                  continue;
-                }
-                if (evId) knownIds.add(evId);
-                allEvents.push(
-                  this.normalizeSecurityEvent(
-                    ev,
-                    homeId,
-                    homeName,
-                    cameraNamesById,
-                    personsById
-                  )
-                );
-                addedInPage++;
-                newForHome++;
-              }
-
-              if (
-                rawEvents.length === 0 ||
-                rawEvents.length < size ||
-                hitKnownEvent ||
-                addedInPage === 0
-              ) {
-                break;
-              }
-
-              const lastRaw = rawEvents[rawEvents.length - 1];
-              if (!lastRaw?.id) break;
-              cursorEventId = String(lastRaw.id);
-            }
-
-            if (shouldStore && !options?.offsetEventId) {
-              debugLogger.log(
-                'info',
-                'Security',
-                `Security sync (${homeName}): ${newForHome} new unseen event(s)`
-              );
-            }
-          } catch (evErr: any) {
-            const msg = evErr?.message || String(evErr);
-            debugLogger.log(
-              'warn',
-              'Security',
-              `Could not fetch /getevents for ${homeName}: ${msg}`
-            );
-            if (
-              msg.includes('403') ||
-              msg.toLowerCase().includes('scope') ||
-              msg.toLowerCase().includes('forbidden')
-            ) {
-              return {
-                homes,
-                events: allEvents,
-                fetchedAt: Date.now(),
-                scopeError: msg,
-              };
-            }
-          }
-        }
-
-        if (cameras.length > 0 || persons.length > 0) {
-          homes.push({
-            id: homeId,
-            name: homeName,
-            timezone: h.timezone,
-            cameras,
-            persons,
-          });
-        }
+    if (!options?.force && isDefaultRefresh) {
+      if (
+        this.hasSecurityCamerasCache &&
+        !this.hasSecurityCamerasCache.hasCameras &&
+        Date.now() - this.hasSecurityCamerasCache.checkedAt < 6 * 60 * 60 * 1000
+      ) {
+        return {
+          homes: [],
+          events: [],
+          fetchedAt: this.hasSecurityCamerasCache.checkedAt,
+        };
       }
 
-      // Fallback to classic /api/gethomedata if homesdata yielded no cameras
-      if (homes.every((h) => h.cameras.length === 0)) {
-        try {
-          const legacyResp = await this.apiGet(
-            'gethomedata',
-            options?.homeId ? { home_id: options.homeId } : {},
-            false,
-            'Security fallback: /gethomedata'
-          );
-          const legacyHomes: any[] = Array.isArray(legacyResp?.body?.homes)
-            ? legacyResp.body.homes
-            : [];
-          for (const lh of legacyHomes) {
-            const homeId = String(lh.id);
-            const homeName = String(lh.name || 'Home');
-            const persons = this.mergeAndFilterPersons(
-              Array.isArray(lh.persons) ? lh.persons : [],
-              undefined,
+      if (
+        this.lastSecurityFetchAt > 0 &&
+        Date.now() - this.lastSecurityFetchAt < refreshMs
+      ) {
+        if (this.store.getSettings().storeSecurityData !== false) {
+          const cached = this.db.getSecurityData();
+          if (cached.homes.length > 0 || cached.events.length > 0) {
+            return cached;
+          }
+        }
+        if (this.lastSecurityPayload) {
+          return this.lastSecurityPayload;
+        }
+      }
+    }
+
+    if (isDefaultRefresh && this.inFlightSecurityPromise) {
+      return this.inFlightSecurityPromise;
+    }
+
+    const executeFetch = async (): Promise<SecurityDataPayload> => {
+      const shouldStore = this.store.getSettings().storeSecurityData !== false;
+      const size = options?.size ?? 40;
+      const homes: SecurityHome[] = [];
+      const allEvents: SecurityEvent[] = [];
+      const cameraNamesById = new Map<string, string>();
+      const personsById = new Map<string, string>();
+
+      try {
+        const homesResp = await this.getHomesDataCached(Boolean(options?.force));
+        const rawHomes: any[] = Array.isArray(homesResp?.body?.homes)
+          ? homesResp.body.homes
+          : [];
+
+        for (const h of rawHomes) {
+          const homeId = String(h.id);
+          const homeName = String(h.name || 'Home');
+          if (options?.homeId && options.homeId !== homeId) {
+            continue;
+          }
+
+          const roomNamesById = new Map<string, string>();
+          for (const r of Array.isArray(h.rooms) ? h.rooms : []) {
+            roomNamesById.set(String(r.id), String(r.name || ''));
+          }
+
+          const rawHomePersons: any[] = Array.isArray(h.persons) ? h.persons : [];
+          let statusPersons: any[] = [];
+
+          const cameras: SecurityCamera[] = [];
+          for (const m of Array.isArray(h.modules) ? h.modules : []) {
+            if (!this.isCameraModuleType(m.type)) continue;
+            const cid = String(m.id);
+            const cname = String(m.name || m.type || cid);
+            cameraNamesById.set(cid, cname);
+            cameras.push({
+              id: cid,
               homeId,
-              personsById
+              homeName,
+              name: cname,
+              type: String(m.type),
+              roomName: m.room_id
+                ? roomNamesById.get(String(m.room_id))
+                : undefined,
+              lastSetup: m.setup_date,
+            });
+          }
+
+          if (cameras.length > 0) {
+            // Fetch live camera & person presence status via /api/homestatus
+            try {
+              const statusResp = await this.apiGet(
+                'homestatus',
+                { home_id: homeId },
+                false,
+                `Security status: ${homeName}`
+              );
+              const statusHome = statusResp?.body?.home;
+              statusPersons = Array.isArray(statusHome?.persons)
+                ? statusHome.persons
+                : [];
+              const statusModules: any[] = Array.isArray(statusHome?.modules)
+                ? statusHome.modules
+                : [];
+              const statusById = new Map<string, any>();
+              for (const sm of statusModules) {
+                statusById.set(String(sm.id), sm);
+              }
+              for (const cam of cameras) {
+                const sm = statusById.get(cam.id);
+                if (sm) {
+                  cam.monitoring = sm.monitoring;
+                  cam.status = sm.status || sm.monitoring;
+                  cam.sdStatus = sm.sd_status;
+                  cam.alimStatus = sm.alim_status;
+                  cam.wifiStrength = sm.wifi_strength;
+                  cam.wifiState = sm.wifi_state;
+                  cam.firmwareRevision = sm.firmware_revision;
+                  cam.isLocal = sm.is_local;
+                  cam.floodlight = sm.floodlight;
+                  cam.sirenStatus = sm.siren_status;
+                  if (sm.vpn_url) {
+                    cam.vpnUrl = String(sm.vpn_url).replace(/\/+$/, '');
+                    const prevUrlCache = this.cameraUrlCache.get(cam.id);
+                    this.cameraUrlCache.set(cam.id, {
+                      vpnUrl: cam.vpnUrl,
+                      localUrl:
+                        prevUrlCache?.vpnUrl === cam.vpnUrl
+                          ? prevUrlCache.localUrl
+                          : undefined,
+                      isLocal: Boolean(sm.is_local),
+                      updatedAt: Date.now(),
+                    });
+                  }
+                }
+              }
+            } catch (statusErr: any) {
+              debugLogger.log(
+                'warn',
+                'Security',
+                `Could not fetch /homestatus for ${homeName}: ${statusErr?.message || statusErr}`
+              );
+            }
+          }
+
+          const persons = this.mergeAndFilterPersons(
+            rawHomePersons,
+            statusPersons,
+            homeId,
+            personsById
+          );
+
+          if (cameras.length > 0) {
+            // Fetch event list via /api/getevents (incremental unseen-only when SQLite storage is enabled)
+            try {
+              const knownIds = shouldStore
+                ? this.db.getKnownSecurityEventIds(homeId)
+                : new Set<string>();
+              let cursorEventId: string | undefined = options?.offsetEventId;
+              const maxPages =
+                shouldStore && !options?.offsetEventId && knownIds.size > 0
+                  ? 5
+                  : 1;
+              let newForHome = 0;
+
+              for (let page = 0; page < maxPages; page++) {
+                const eventsResp = await this.apiGet(
+                  'getevents',
+                  {
+                    home_id: homeId,
+                    size,
+                    event_id: cursorEventId,
+                  },
+                  false,
+                  `Security events: ${homeName} (size=${size}${cursorEventId ? `, until=${cursorEventId}` : ''})`
+                );
+                const rawEvents: any[] =
+                  eventsResp?.body?.home?.events ||
+                  eventsResp?.body?.events ||
+                  [];
+
+                let hitKnownEvent = false;
+                let addedInPage = 0;
+
+                for (const ev of rawEvents) {
+                  const evId = ev.id ? String(ev.id) : '';
+                  if (shouldStore && evId && knownIds.has(evId)) {
+                    hitKnownEvent = true;
+                    continue;
+                  }
+                  if (evId) knownIds.add(evId);
+                  allEvents.push(
+                    this.normalizeSecurityEvent(
+                      ev,
+                      homeId,
+                      homeName,
+                      cameraNamesById,
+                      personsById
+                    )
+                  );
+                  addedInPage++;
+                  newForHome++;
+                }
+
+                if (
+                  rawEvents.length === 0 ||
+                  rawEvents.length < size ||
+                  hitKnownEvent ||
+                  addedInPage === 0
+                ) {
+                  break;
+                }
+
+                const lastRaw = rawEvents[rawEvents.length - 1];
+                if (!lastRaw?.id) break;
+                cursorEventId = String(lastRaw.id);
+              }
+
+              if (shouldStore && !options?.offsetEventId) {
+                debugLogger.log(
+                  'info',
+                  'Security',
+                  `Security sync (${homeName}): ${newForHome} new unseen event(s)`
+                );
+              }
+            } catch (evErr: any) {
+              const msg = evErr?.message || String(evErr);
+              debugLogger.log(
+                'warn',
+                'Security',
+                `Could not fetch /getevents for ${homeName}: ${msg}`
+              );
+              if (
+                msg.includes('403') ||
+                msg.toLowerCase().includes('scope') ||
+                msg.toLowerCase().includes('forbidden')
+              ) {
+                return {
+                  homes,
+                  events: allEvents,
+                  fetchedAt: Date.now(),
+                  scopeError: msg,
+                };
+              }
+            }
+          }
+
+          if (cameras.length > 0 || persons.length > 0) {
+            homes.push({
+              id: homeId,
+              name: homeName,
+              timezone: h.timezone,
+              cameras,
+              persons,
+            });
+          }
+        }
+
+        // Fallback to classic /api/gethomedata if homesdata yielded no cameras
+        if (homes.every((h) => h.cameras.length === 0)) {
+          try {
+            const legacyResp = await this.apiGet(
+              'gethomedata',
+              options?.homeId ? { home_id: options.homeId } : {},
+              false,
+              'Security fallback: /gethomedata'
             );
-            const cameras: SecurityCamera[] = (Array.isArray(lh.cameras) ? lh.cameras : []).map(
-              (c: any) => {
+            const legacyHomes: any[] = Array.isArray(legacyResp?.body?.homes)
+              ? legacyResp.body.homes
+              : [];
+            for (const lh of legacyHomes) {
+              const homeId = String(lh.id);
+              const homeName = String(lh.name || 'Home');
+              const persons = this.mergeAndFilterPersons(
+                Array.isArray(lh.persons) ? lh.persons : [],
+                undefined,
+                homeId,
+                personsById
+              );
+              const cameras: SecurityCamera[] = (
+                Array.isArray(lh.cameras) ? lh.cameras : []
+              ).map((c: any) => {
                 const cid = String(c.id);
                 const cname = String(c.name || c.type || cid);
                 cameraNamesById.set(cid, cname);
+                const vpnUrl = c.vpn_url
+                  ? String(c.vpn_url).replace(/\/+$/, '')
+                  : undefined;
+                if (vpnUrl) {
+                  this.cameraUrlCache.set(cid, {
+                    vpnUrl,
+                    isLocal: Boolean(c.is_local),
+                    updatedAt: Date.now(),
+                  });
+                }
                 return {
                   id: cid,
                   homeId,
@@ -2393,88 +2516,109 @@ export class NetatmoClient {
                   sdStatus: c.sd_status,
                   alimStatus: c.alim_status,
                   isLocal: c.is_local,
-                  vpnUrl: c.vpn_url ? String(c.vpn_url) : undefined,
+                  vpnUrl,
                 };
-              }
-            );
-            for (const ev of Array.isArray(lh.events) ? lh.events : []) {
-              allEvents.push(
-                this.normalizeSecurityEvent(
-                  ev,
-                  homeId,
-                  homeName,
-                  cameraNamesById,
-                  personsById
-                )
-              );
-            }
-            if (cameras.length > 0) {
-              homes.push({
-                id: homeId,
-                name: homeName,
-                timezone: lh.place?.timezone,
-                cameras,
-                persons,
               });
+              for (const ev of Array.isArray(lh.events) ? lh.events : []) {
+                allEvents.push(
+                  this.normalizeSecurityEvent(
+                    ev,
+                    homeId,
+                    homeName,
+                    cameraNamesById,
+                    personsById
+                  )
+                );
+              }
+              if (cameras.length > 0) {
+                homes.push({
+                  id: homeId,
+                  name: homeName,
+                  timezone: lh.place?.timezone,
+                  cameras,
+                  persons,
+                });
+              }
             }
+          } catch (legacyErr: any) {
+            debugLogger.log(
+              'debug',
+              'Security',
+              `Fallback /gethomedata note: ${legacyErr?.message || legacyErr}`
+            );
           }
-        } catch (legacyErr: any) {
-          debugLogger.log(
-            'debug',
-            'Security',
-            `Fallback /gethomedata note: ${legacyErr?.message || legacyErr}`
-          );
         }
+
+        const totalCams = homes.reduce((acc, h) => acc + h.cameras.length, 0);
+        const totalPersons = homes.reduce((acc, h) => acc + h.persons.length, 0);
+        if (isDefaultRefresh) {
+          this.hasSecurityCamerasCache = {
+            hasCameras: totalCams > 0,
+            checkedAt: Date.now(),
+          };
+        }
+        debugLogger.log(
+          'info',
+          'Security',
+          `Loaded ${homes.length} home(s), ${totalCams} camera(s), ${totalPersons} person(s), ${allEvents.length} fetched event(s)`,
+          allEvents.length > 0
+            ? allEvents
+                .slice(0, 10)
+                .map(
+                  (e) =>
+                    `[${new Date(e.time * 1000).toISOString()}] ${e.cameraName || 'Camera'}: ${e.message}`
+                )
+                .join(' | ')
+            : undefined,
+          'security'
+        );
+
+        let payload: SecurityDataPayload;
+        if (shouldStore) {
+          this.db.upsertSecurityData({ homes, events: allEvents });
+          payload = this.db.getSecurityData(options?.homeId);
+        } else {
+          allEvents.sort((a, b) => b.time - a.time);
+          payload = {
+            homes,
+            events: allEvents,
+            fetchedAt: Date.now(),
+          };
+        }
+
+        if (isDefaultRefresh) {
+          this.lastSecurityFetchAt = Date.now();
+          this.lastSecurityPayload = payload;
+        }
+        return payload;
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        debugLogger.log('error', 'Security', `Security fetch failed: ${msg}`);
+        if (
+          msg.includes('403') ||
+          msg.toLowerCase().includes('scope') ||
+          msg.toLowerCase().includes('forbidden') ||
+          msg.includes('401')
+        ) {
+          return {
+            homes: [],
+            events: [],
+            fetchedAt: Date.now(),
+            scopeError: msg,
+          };
+        }
+        throw err;
       }
+    };
 
-      const totalCams = homes.reduce((acc, h) => acc + h.cameras.length, 0);
-      const totalPersons = homes.reduce((acc, h) => acc + h.persons.length, 0);
-      debugLogger.log(
-        'info',
-        'Security',
-        `Loaded ${homes.length} home(s), ${totalCams} camera(s), ${totalPersons} person(s), ${allEvents.length} fetched event(s)`,
-        allEvents.length > 0
-          ? allEvents
-              .slice(0, 10)
-              .map(
-                (e) =>
-                  `[${new Date(e.time * 1000).toISOString()}] ${e.cameraName || 'Camera'}: ${e.message}`
-              )
-              .join(' | ')
-          : undefined,
-        'security'
-      );
-
-      if (shouldStore) {
-        this.db.upsertSecurityData({ homes, events: allEvents });
-        return this.db.getSecurityData(options?.homeId);
-      }
-
-      allEvents.sort((a, b) => b.time - a.time);
-
-      return {
-        homes,
-        events: allEvents,
-        fetchedAt: Date.now(),
-      };
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      debugLogger.log('error', 'Security', `Security fetch failed: ${msg}`);
-      if (
-        msg.includes('403') ||
-        msg.toLowerCase().includes('scope') ||
-        msg.toLowerCase().includes('forbidden') ||
-        msg.includes('401')
-      ) {
-        return {
-          homes: [],
-          events: [],
-          fetchedAt: Date.now(),
-          scopeError: msg,
-        };
-      }
-      throw err;
+    if (isDefaultRefresh) {
+      this.inFlightSecurityPromise = executeFetch().finally(() => {
+        this.inFlightSecurityPromise = null;
+      });
+      return this.inFlightSecurityPromise;
     }
+
+    return executeFetch();
   }
 
   /**
@@ -2718,57 +2862,81 @@ export class NetatmoClient {
   }
 
   /**
-   * Resolves the freshest cloud `vpn_url` (and optional LAN `local_url`) for a camera.
+   * Resolves the cloud `vpn_url` (and optional LAN `local_url`) for a camera,
+   * reusing cached entries from `/homestatus` & `/command/ping` for 30 minutes unless `forceRefresh` is set.
    */
   private async resolveCameraUrls(
     homeId: string,
-    cameraId: string
-  ): Promise<{ vpnUrl?: string; localUrl?: string; isLocal?: boolean }> {
-    let vpnUrl: string | undefined;
-    let isLocal = false;
-
-    try {
-      const statusResp = await this.apiGet(
-        'homestatus',
-        { home_id: homeId },
-        false,
-        `Security camera stream lookup: ${cameraId}`
-      );
-      const modules: any[] = Array.isArray(statusResp?.body?.home?.modules)
-        ? statusResp.body.home.modules
-        : [];
-      const cam = modules.find((m) => String(m.id) === cameraId);
-      if (cam?.vpn_url) vpnUrl = String(cam.vpn_url).replace(/\/+$/, '');
-      if (cam?.is_local !== undefined) isLocal = Boolean(cam.is_local);
-    } catch (err: any) {
-      debugLogger.log(
-        'warn',
-        'Security',
-        `homestatus camera lookup failed: ${err?.message || err}`
-      );
+    cameraId: string,
+    forceRefresh = false
+  ): Promise<{
+    vpnUrl?: string;
+    localUrl?: string;
+    isLocal?: boolean;
+    fromCache?: boolean;
+  }> {
+    const cacheTtlMs = 30 * 60 * 1000;
+    const cached = !forceRefresh ? this.cameraUrlCache.get(cameraId) : undefined;
+    if (cached && Date.now() - cached.updatedAt < cacheTtlMs) {
+      if (!cached.isLocal || cached.localUrl) {
+        return {
+          vpnUrl: cached.vpnUrl,
+          localUrl: cached.localUrl,
+          isLocal: cached.isLocal,
+          fromCache: true,
+        };
+      }
     }
 
-    if (!vpnUrl) {
+    let vpnUrl: string | undefined = cached?.vpnUrl;
+    let isLocal = cached?.isLocal ?? false;
+
+    if (!vpnUrl || forceRefresh) {
+      vpnUrl = undefined;
+      isLocal = false;
       try {
-        const legacyResp = await this.apiGet(
-          'gethomedata',
+        const statusResp = await this.apiGet(
+          'homestatus',
           { home_id: homeId },
           false,
-          `Security camera legacy lookup: ${cameraId}`
+          `Security camera stream lookup: ${cameraId}`
         );
-        const homesList: any[] = Array.isArray(legacyResp?.body?.homes)
-          ? legacyResp.body.homes
+        const modules: any[] = Array.isArray(statusResp?.body?.home?.modules)
+          ? statusResp.body.home.modules
           : [];
-        for (const h of homesList) {
-          const cams: any[] = Array.isArray(h.cameras) ? h.cameras : [];
-          const match = cams.find((c) => String(c.id) === cameraId);
-          if (match?.vpn_url) {
-            vpnUrl = String(match.vpn_url).replace(/\/+$/, '');
-            isLocal = Boolean(match.is_local);
-            break;
+        const cam = modules.find((m) => String(m.id) === cameraId);
+        if (cam?.vpn_url) vpnUrl = String(cam.vpn_url).replace(/\/+$/, '');
+        if (cam?.is_local !== undefined) isLocal = Boolean(cam.is_local);
+      } catch (err: any) {
+        debugLogger.log(
+          'warn',
+          'Security',
+          `homestatus camera lookup failed: ${err?.message || err}`
+        );
+      }
+
+      if (!vpnUrl) {
+        try {
+          const legacyResp = await this.apiGet(
+            'gethomedata',
+            { home_id: homeId },
+            false,
+            `Security camera legacy lookup: ${cameraId}`
+          );
+          const homesList: any[] = Array.isArray(legacyResp?.body?.homes)
+            ? legacyResp.body.homes
+            : [];
+          for (const h of homesList) {
+            const cams: any[] = Array.isArray(h.cameras) ? h.cameras : [];
+            const match = cams.find((c) => String(c.id) === cameraId);
+            if (match?.vpn_url) {
+              vpnUrl = String(match.vpn_url).replace(/\/+$/, '');
+              isLocal = Boolean(match.is_local);
+              break;
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
     }
 
     let localUrl: string | undefined;
@@ -2830,7 +2998,16 @@ export class NetatmoClient {
       }
     }
 
-    return { vpnUrl, localUrl, isLocal };
+    if (vpnUrl) {
+      this.cameraUrlCache.set(cameraId, {
+        vpnUrl,
+        localUrl,
+        isLocal,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return { vpnUrl, localUrl, isLocal, fromCache: false };
   }
 
   /**
@@ -2855,14 +3032,78 @@ export class NetatmoClient {
       return { ok: true, imageUrl: dataUrl, vignetteUrl: dataUrl };
     }
 
+    const tryFetchCandidateUrls = async (
+      urls: string[],
+      eventMeta?: SecurityEvent
+    ): Promise<SecurityEventImageRefreshResult | null> => {
+      for (const url of urls) {
+        const fetched = await this.fetchSecurityMedia({
+          url,
+          responseType: 'arraybuffer',
+        });
+        if (
+          fetched.ok &&
+          fetched.dataBuffer &&
+          fetched.dataBuffer.byteLength > 0 &&
+          (!fetched.contentType ||
+            fetched.contentType.toLowerCase().startsWith('image/'))
+        ) {
+          const mime =
+            fetched.contentType?.split(';')[0]?.trim() || 'image/jpeg';
+          const dataUrl = `data:${mime};base64,${Buffer.from(
+            fetched.dataBuffer
+          ).toString('base64')}`;
+          if (this.store.getSettings().storeSecurityData !== false) {
+            try {
+              this.db.updateSecurityEventImage(
+                options.eventId,
+                dataUrl,
+                dataUrl,
+                eventMeta?.snapshotExpiresAt,
+                eventMeta
+              );
+            } catch {}
+          }
+          return {
+            ok: true,
+            imageUrl: dataUrl,
+            vignetteUrl: dataUrl,
+            snapshotExpiresAt: eventMeta?.snapshotExpiresAt,
+            event: eventMeta
+              ? {
+                  ...eventMeta,
+                  snapshotUrl: dataUrl,
+                }
+              : undefined,
+          };
+        }
+      }
+      return null;
+    };
+
+    const initialHttpCandidates: string[] = [];
+    for (const u of options.candidateUrls || []) {
+      const trimmed = u?.trim();
+      if (
+        trimmed &&
+        (trimmed.startsWith('https://') || trimmed.startsWith('http://')) &&
+        !initialHttpCandidates.includes(trimmed)
+      ) {
+        initialHttpCandidates.push(trimmed);
+      }
+    }
+
+    // Try already-known HTTP candidate URLs before hitting /homesdata or /getevents
+    if (initialHttpCandidates.length > 0) {
+      const directResult = await tryFetchCandidateUrls(initialHttpCandidates);
+      if (directResult) {
+        return directResult;
+      }
+    }
+
     let refreshedEvent: SecurityEvent | undefined;
     try {
-      const homeData = await this.apiGet(
-        'homesdata',
-        {},
-        false,
-        `Security image refresh home lookup`
-      );
+      const homeData = await this.getHomesDataCached(false);
       const rawHomes: any[] = Array.isArray(homeData?.body?.homes)
         ? homeData.body.homes
         : [];
@@ -2919,9 +3160,12 @@ export class NetatmoClient {
     }
 
     const candidates: string[] = [];
+    const seen = new Set<string>(initialHttpCandidates);
     const pushUrl = (u?: string) => {
-      if (u && u.trim() && !candidates.includes(u.trim())) {
-        candidates.push(u.trim());
+      const trimmed = u?.trim();
+      if (trimmed && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        candidates.push(trimmed);
       }
     };
 
@@ -2932,9 +3176,6 @@ export class NetatmoClient {
         pushUrl(se.snapshotUrl);
         pushUrl(se.vignetteUrl);
       }
-    }
-    for (const u of options.candidateUrls || []) {
-      pushUrl(u);
     }
 
     // If still no cloud image URL and event has a videoId, try camera VOD thumbnail endpoints
@@ -2951,47 +3192,12 @@ export class NetatmoClient {
       }
     }
 
-    for (const url of candidates) {
-      const fetched = await this.fetchSecurityMedia({
-        url,
-        responseType: 'arraybuffer',
-      });
-      if (
-        fetched.ok &&
-        fetched.dataBuffer &&
-        fetched.dataBuffer.byteLength > 0 &&
-        (!fetched.contentType ||
-          fetched.contentType.toLowerCase().startsWith('image/'))
-      ) {
-        const mime =
-          fetched.contentType?.split(';')[0]?.trim() || 'image/jpeg';
-        const dataUrl = `data:${mime};base64,${Buffer.from(
-          fetched.dataBuffer
-        ).toString('base64')}`;
-        if (this.store.getSettings().storeSecurityData !== false) {
-          try {
-            this.db.updateSecurityEventImage(
-              options.eventId,
-              dataUrl,
-              dataUrl,
-              refreshedEvent?.snapshotExpiresAt,
-              refreshedEvent
-            );
-          } catch {}
-        }
-        return {
-          ok: true,
-          imageUrl: dataUrl,
-          vignetteUrl: dataUrl,
-          snapshotExpiresAt: refreshedEvent?.snapshotExpiresAt,
-          event: refreshedEvent
-            ? {
-                ...refreshedEvent,
-                snapshotUrl: dataUrl,
-              }
-            : undefined,
-        };
-      }
+    const discoveredResult = await tryFetchCandidateUrls(
+      candidates,
+      refreshedEvent
+    );
+    if (discoveredResult) {
+      return discoveredResult;
     }
 
     return {
@@ -3200,70 +3406,92 @@ export class NetatmoClient {
       };
     }
 
-    const { vpnUrl, localUrl } = await this.resolveCameraUrls(
-      options.homeId,
-      options.cameraId
-    );
+    const tryProbe = async (forceRefreshUrls: boolean) => {
+      const { vpnUrl, localUrl, fromCache } = await this.resolveCameraUrls(
+        options.homeId,
+        options.cameraId,
+        forceRefreshUrls
+      );
 
-    if (!vpnUrl && !localUrl) {
-      return {
-        ok: false,
-        candidates: [],
-        workingCandidates: [],
-        needsAccessScope: true,
-        error:
-          'Netatmo did not expose a camera stream URL (vpn_url). Video playback requires Netatmo Web Sign-In or OAuth access_camera / access_presence scopes.',
-      };
-    }
-
-    const candidates: string[] = [];
-    if (localUrl) {
-      securityMediaProxy.allowUrlOrigin(localUrl);
-      for (const p of options.localPaths) {
-        candidates.push(`${localUrl}${p}`);
+      if (!vpnUrl && !localUrl) {
+        return {
+          ok: false as const,
+          fromCache: Boolean(fromCache),
+          needsAccessScope: true,
+          candidates: [] as string[],
+          workingCandidates: [] as string[],
+          error:
+            'Netatmo did not expose a camera stream URL (vpn_url). Video playback requires Netatmo Web Sign-In or OAuth access_camera / access_presence scopes.',
+        };
       }
-    }
-    if (vpnUrl) {
-      securityMediaProxy.allowUrlOrigin(vpnUrl);
-      for (const p of options.vpnPaths) {
-        candidates.push(`${vpnUrl}${p}`);
-      }
-    }
 
-    const workingCandidates: string[] = [];
-    let lastError: string | undefined;
-    for (const candidate of candidates) {
-      const probe = await this.fetchSecurityMedia({
-        url: candidate,
-        responseType: 'text',
-      });
-      if (probe.ok && probe.dataText && probe.dataText.includes('#EXTM3U')) {
-        workingCandidates.push(candidate);
-        if (localUrl && candidate.startsWith(localUrl)) {
-          continue;
+      const candidates: string[] = [];
+      if (localUrl) {
+        securityMediaProxy.allowUrlOrigin(localUrl);
+        for (const p of options.localPaths) {
+          candidates.push(`${localUrl}${p}`);
         }
-        break;
       }
-      lastError = probe.error || `HTTP ${probe.status}`;
-    }
+      if (vpnUrl) {
+        securityMediaProxy.allowUrlOrigin(vpnUrl);
+        for (const p of options.vpnPaths) {
+          candidates.push(`${vpnUrl}${p}`);
+        }
+      }
 
-    if (workingCandidates.length === 0) {
+      const workingCandidates: string[] = [];
+      let lastError: string | undefined;
+      for (const candidate of candidates) {
+        const probe = await this.fetchSecurityMedia({
+          url: candidate,
+          responseType: 'text',
+        });
+        if (probe.ok && probe.dataText && probe.dataText.includes('#EXTM3U')) {
+          workingCandidates.push(candidate);
+          break;
+        }
+        lastError = probe.error || `HTTP ${probe.status}`;
+      }
+
       return {
-        ok: false,
+        ok: workingCandidates.length > 0,
+        fromCache: Boolean(fromCache),
+        needsAccessScope: false,
         vpnUrl,
         localUrl,
         candidates,
+        workingCandidates,
+        error:
+          workingCandidates.length === 0
+            ? `${options.unavailableError} (${lastError || 'stream unavailable'}).`
+            : undefined,
+      };
+    };
+
+    let attempt = await tryProbe(false);
+    if (!attempt.ok && attempt.fromCache) {
+      this.cameraUrlCache.delete(options.cameraId);
+      attempt = await tryProbe(true);
+    }
+
+    if (!attempt.ok) {
+      return {
+        ok: false,
+        vpnUrl: attempt.vpnUrl,
+        localUrl: attempt.localUrl,
+        candidates: attempt.candidates,
         workingCandidates: [],
-        error: `${options.unavailableError} (${lastError || 'stream unavailable'}).`,
+        needsAccessScope: attempt.needsAccessScope || undefined,
+        error: attempt.error,
       };
     }
 
     return {
       ok: true,
-      vpnUrl,
-      localUrl,
-      candidates,
-      workingCandidates,
+      vpnUrl: attempt.vpnUrl,
+      localUrl: attempt.localUrl,
+      candidates: attempt.candidates,
+      workingCandidates: attempt.workingCandidates,
     };
   }
 

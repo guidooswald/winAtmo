@@ -689,7 +689,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     [openVideoStreamModal]
   );
 
-  const loadSecurity = useCallback(async () => {
+  const loadSecurity = useCallback(async (force = false) => {
     if (typeof window.winatmo?.getSecurityData !== 'function') {
       setError(
         'Preload API does not expose Security endpoints yet. Please restart Electron (npm run dev) to load the updated build.'
@@ -699,7 +699,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const payload = await window.winatmo.getSecurityData({ size: 40 });
+      const payload = await window.winatmo.getSecurityData({ size: 40, force });
       setData(payload);
       setFailedImages({});
     } catch (err: any) {
@@ -714,6 +714,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     let cancelled = false;
 
     const loadInitial = async () => {
+      let hasFreshCache = false;
       if (typeof window.winatmo?.getCachedSecurityData === 'function') {
         try {
           const cached = await window.winatmo.getCachedSecurityData();
@@ -722,11 +723,14 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
             (cached.homes.length > 0 || cached.events.length > 0)
           ) {
             setData(cached);
+            hasFreshCache =
+              Boolean(cached.fetchedAt) &&
+              Date.now() - cached.fetchedAt < 90_000;
           }
         } catch {}
       }
-      if (!cancelled) {
-        await loadSecurity();
+      if (!cancelled && !hasFreshCache) {
+        await loadSecurity(false);
       }
     };
 
@@ -1038,7 +1042,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
           <button
             type="button"
             className="action-btn primary"
-            onClick={loadSecurity}
+            onClick={() => loadSecurity(true)}
             disabled={loading}
           >
             <RefreshCw size={14} className={loading ? 'spin' : ''} />

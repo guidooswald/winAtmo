@@ -489,6 +489,18 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     }
   };
 
+  const earliestStationSetup = useMemo(() => {
+    let min: number | null = null;
+    for (const s of stations) {
+      if (s.dateSetup && (min === null || s.dateSetup < min)) {
+        min = s.dateSetup;
+      }
+    }
+    return min;
+  }, [stations]);
+
+  const maxRangeSetupTs = rangePreset === 'max' ? earliestStationSetup : null;
+
   // Compute time window [dateBegin, dateEnd] and effective scale
   const { dateBegin, dateEnd, effectiveScale } = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -503,10 +515,10 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
     else if (rangePreset === '90d') begin = now - 90 * 86400;
     else if (rangePreset === '1y') begin = now - 365 * 86400;
     else if (rangePreset === 'max') {
-      const earliestSetup = stations.reduce((min, s) => {
-        return s.dateSetup && s.dateSetup < min ? s.dateSetup : min;
-      }, now - 365 * 86400);
-      begin = earliestSetup;
+      begin =
+        maxRangeSetupTs !== null
+          ? maxRangeSetupTs
+          : now - 365 * 86400;
     } else if (rangePreset === 'custom') {
       const s = Math.floor(new Date(customStartDate + 'T00:00:00').getTime() / 1000);
       const e = Math.floor(new Date(customEndDate + 'T23:59:59').getTime() / 1000);
@@ -521,7 +533,13 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
       dateEnd: end,
       effectiveScale: currentScale,
     };
-  }, [rangePreset, customStartDate, customEndDate, currentScale, stations]);
+  }, [
+    rangePreset,
+    customStartDate,
+    customEndDate,
+    currentScale,
+    maxRangeSetupTs,
+  ]);
 
   const handleRangePresetChange = (nextPreset: RangePreset) => {
     setRangePreset(nextPreset);

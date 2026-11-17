@@ -124,6 +124,7 @@ export interface WinAtmoAPI {
     homeId?: string;
     size?: number;
     offsetEventId?: string;
+    force?: boolean;
   }) => Promise<SecurityDataPayload>;
   refreshSecurityEventImage: (options: {
     homeId: string;
