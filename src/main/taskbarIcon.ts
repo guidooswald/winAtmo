@@ -31,7 +31,7 @@ export async function initTaskbarIconRenderer(): Promise<void> {
       },
     });
 
-    const html = `<!DOCTYPE html><html><body style="margin:0"><canvas id="c" width="32" height="32"></canvas></body></html>`;
+    const html = `<!DOCTYPE html><html><body style="margin:0"><canvas id="c32" width="32" height="32"></canvas><canvas id="c64" width="64" height="64"></canvas></body></html>`;
     await iconRendererWindow.loadURL(
       'data:text/html;charset=utf-8,' + encodeURIComponent(html)
     );
@@ -401,60 +401,96 @@ export async function generateTaskbarIcon(
 
   if (isRendererReady && iconRendererWindow && !iconRendererWindow.isDestroyed()) {
     try {
-      const dataUrl = await iconRendererWindow.webContents.executeJavaScript(`
+      const rendered = await iconRendererWindow.webContents.executeJavaScript(`
         (() => {
-          const canvas = document.getElementById('c');
-          const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, 32, 32);
-
           const str = ${JSON.stringify(reading.text)};
           const textColor = ${JSON.stringify(reading.color)};
 
-          // Dynamic font maximizer: calculate largest font size that fits into 27.5px width & 23px height
-          let fontSize = 23;
-          ctx.font = 'bold ' + fontSize + 'px "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
-          while ((ctx.measureText(str).width > 27.5 || fontSize > 23) && fontSize > 8) {
-            fontSize -= 0.5;
-            ctx.font = 'bold ' + fontSize + 'px "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
-          }
+          const renderCanvas = (id, dpr) => {
+            const canvas = document.getElementById(id);
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, 32, 32);
 
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          const x = 16;
-          const y = 16;
+            const maxW = 30.5;
+            const maxH = 28.0;
+            // Allow gentle horizontal condensation on 3-4+ char numbers (e.g. "21.4", "1013")
+            // so vertical digit height stays large and crisp inside the taskbar slot.
+            const minScaleX = str.length >= 4 ? 0.72 : str.length === 3 ? 0.84 : 0.94;
+            const fontFamily = '"Bahnschrift", "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif';
 
-          // 1. Dark outline + drop shadow to guarantee readability on white/light backgrounds
-          ctx.save();
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
-          ctx.shadowBlur = 3.5;
-          ctx.shadowOffsetX = 0;
-          ctx.shadowOffsetY = 1;
-          ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-          ctx.lineWidth = 2.2;
-          ctx.lineJoin = 'round';
-          ctx.miterLimit = 2;
-          ctx.strokeText(str, x, y);
-          ctx.restore();
+            let fontSize = 36;
+            let metrics;
+            let scaleX = 1;
 
-          // 2. Secondary soft shadow under fill for depth
-          ctx.save();
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-          ctx.shadowBlur = 2;
-          ctx.shadowOffsetX = 0;
-          ctx.shadowOffsetY = 0.5;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'alphabetic';
 
-          // 3. Fill text with subtle semantic color
-          ctx.fillStyle = textColor;
-          ctx.fillText(str, x, y);
-          ctx.restore();
+            while (fontSize > 8) {
+              ctx.font = '700 ' + fontSize + 'px ' + fontFamily;
+              metrics = ctx.measureText(str);
+              const glyphH = (metrics.actualBoundingBoxAscent || fontSize * 0.72) + (metrics.actualBoundingBoxDescent || 0);
+              const glyphW = Math.max(
+                metrics.width,
+                (metrics.actualBoundingBoxLeft || 0) + (metrics.actualBoundingBoxRight || 0)
+              );
+              const neededScaleX = glyphW > maxW ? maxW / glyphW : 1;
+              if (glyphH <= maxH && neededScaleX >= minScaleX) {
+                scaleX = Math.min(1, neededScaleX);
+                break;
+              }
+              fontSize -= 0.5;
+            }
 
-          return canvas.toDataURL('image/png');
+            const ascent = metrics?.actualBoundingBoxAscent || fontSize * 0.72;
+            const descent = metrics?.actualBoundingBoxDescent || 0;
+            const baselineY = 16 + (ascent - descent) / 2;
+            const offsetX =
+              metrics && metrics.actualBoundingBoxLeft !== undefined && metrics.actualBoundingBoxRight !== undefined
+                ? (metrics.actualBoundingBoxLeft - metrics.actualBoundingBoxRight) / 2
+                : 0;
+
+            ctx.save();
+            ctx.translate(16 + offsetX * scaleX, baselineY);
+            ctx.scale(scaleX, 1);
+
+            // 1. Subtle outline + light shadow for legibility on light taskbars without muddying contrast
+            ctx.save();
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.42)';
+            ctx.shadowBlur = 1.0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0.6;
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.58)';
+            ctx.lineWidth = 1.15 / Math.sqrt(scaleX);
+            ctx.lineJoin = 'round';
+            ctx.miterLimit = 2;
+            ctx.strokeText(str, 0, 0);
+            ctx.restore();
+
+            // 2. Clean, unblurred foreground fill for crisp high contrast
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = textColor;
+            ctx.fillText(str, 0, 0);
+            ctx.restore();
+
+            return canvas.toDataURL('image/png');
+          };
+
+          return {
+            url32: renderCanvas('c32', 1),
+            url64: renderCanvas('c64', 2),
+          };
         })()
       `);
 
-      const img = nativeImage.createFromDataURL(dataUrl);
-      if (!img.isEmpty()) {
-        return img;
+      if (rendered?.url32 && rendered?.url64) {
+        const img = nativeImage.createEmpty();
+        img.addRepresentation({ scaleFactor: 1, dataURL: rendered.url32 });
+        img.addRepresentation({ scaleFactor: 2, dataURL: rendered.url64 });
+        if (!img.isEmpty()) {
+          return img;
+        }
       }
     } catch (err) {
       console.warn('[TaskbarIcon] executeJavaScript failed, using fallback:', err);
