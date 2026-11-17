@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   CheckCircle2,
   CloudSun,
   Database,
@@ -16,9 +17,11 @@ import {
   Shield,
   ShieldCheck,
   Sparkles,
+  Terminal,
 } from 'lucide-react';
 import {
   AccountInfo,
+  DebugTelemetryStats,
   MetricType,
   SyncProgress,
   ThemeId,
@@ -75,6 +78,15 @@ const MainStudioApp: React.FC = () => {
     totalModules: 0,
     pointsStored: 0,
   });
+  const [rateLimitStats, setRateLimitStats] = useState<
+    Pick<
+      DebugTelemetryStats,
+      | 'rateLimitHits'
+      | 'lastRateLimitAt'
+      | 'lastRateLimitEndpoint'
+      | 'lastRateLimitMessage'
+    >
+  >({ rateLimitHits: 0 });
   const [authBannerError, setAuthBannerError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState<boolean>(false);
   const [showInlineAuth, setShowInlineAuth] = useState<boolean>(false);
@@ -91,20 +103,30 @@ const MainStudioApp: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      const [acc, cached, s, prog] = await Promise.all([
+      const [acc, cached, s, prog, debugSnap] = await Promise.all([
         window.winatmo.getAccountInfo(),
         window.winatmo.getCachedStations(),
         window.winatmo.getSettings(),
         window.winatmo.getSyncProgress(),
+        window.winatmo.getDebugSnapshot?.().catch(() => null),
       ]);
       setAccount(acc);
       setStations(cached.stations || []);
       setSettings(s);
       setSyncProgress(prog);
+      if (debugSnap?.stats) {
+        setRateLimitStats(debugSnap.stats);
+      }
       if (s?.oauthClientId) setWelcomeClientId(s.oauthClientId);
       if (s?.oauthClientSecret) setWelcomeClientSecret(s.oauthClientSecret);
     };
     init();
+
+    const unsubDebug = window.winatmo.onDebugStream?.((evt) => {
+      if (evt?.stats) {
+        setRateLimitStats(evt.stats);
+      }
+    });
 
     const unsubStations = window.winatmo.onStationsUpdated((next) => {
       setStations(next);
@@ -134,6 +156,7 @@ const MainStudioApp: React.FC = () => {
       unsubProgress();
       unsubSettings();
       unsubFocus();
+      unsubDebug?.();
     };
   }, []);
 
@@ -269,6 +292,7 @@ const MainStudioApp: React.FC = () => {
         account={account}
         stations={stations}
         syncProgress={syncProgress}
+        rateLimitStats={rateLimitStats}
         authBannerError={authBannerError}
         setAuthBannerError={setAuthBannerError}
         authBusy={authBusy}
@@ -307,6 +331,13 @@ interface MainStudioShellProps {
   account: AccountInfo;
   stations: WeatherStation[];
   syncProgress: SyncProgress;
+  rateLimitStats: Pick<
+    DebugTelemetryStats,
+    | 'rateLimitHits'
+    | 'lastRateLimitAt'
+    | 'lastRateLimitEndpoint'
+    | 'lastRateLimitMessage'
+  >;
   authBannerError: string | null;
   setAuthBannerError: (err: string | null) => void;
   authBusy: boolean;
@@ -352,6 +383,7 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
   account,
   stations,
   syncProgress,
+  rateLimitStats,
   authBannerError,
   setAuthBannerError,
   authBusy,
@@ -382,6 +414,33 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
   handleSyncNow,
 }) => {
   const { t } = useI18n();
+  const [rateLimitHovered, setRateLimitHovered] = useState(false);
+  const rateLimitCloseTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (rateLimitCloseTimerRef.current !== null) {
+        window.clearTimeout(rateLimitCloseTimerRef.current);
+      }
+    };
+  }, []);
+
+  const openRateLimitPopover = () => {
+    if (rateLimitCloseTimerRef.current !== null) {
+      window.clearTimeout(rateLimitCloseTimerRef.current);
+      rateLimitCloseTimerRef.current = null;
+    }
+    setRateLimitHovered(true);
+  };
+
+  const scheduleCloseRateLimitPopover = () => {
+    if (rateLimitCloseTimerRef.current !== null) {
+      window.clearTimeout(rateLimitCloseTimerRef.current);
+    }
+    rateLimitCloseTimerRef.current = window.setTimeout(() => {
+      setRateLimitHovered(false);
+    }, 180);
+  };
   const primaryStation = stations.length > 0 ? stations[0] : undefined;
   const primaryStationName =
     primaryStation?.stationName || primaryStation?.homeName;
@@ -446,6 +505,83 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
         </nav>
 
         <div className="header-right-controls">
+          {rateLimitStats.rateLimitHits > 0 && (
+            <div
+              className={`rate-limit-warning-wrap ${
+                rateLimitHovered ? 'is-open' : ''
+              }`}
+              onMouseEnter={openRateLimitPopover}
+              onMouseLeave={scheduleCloseRateLimitPopover}
+              onFocus={openRateLimitPopover}
+              onBlur={scheduleCloseRateLimitPopover}
+            >
+              <button
+                type="button"
+                className="header-btn rate-limit-warning-btn"
+                onClick={() => window.winatmo?.openDebugWindow?.()}
+                aria-label={`API rate limit warning (${rateLimitStats.rateLimitHits} hit${
+                  rateLimitStats.rateLimitHits === 1 ? '' : 's'
+                })`}
+              >
+                <AlertTriangle size={14} />
+                {rateLimitStats.rateLimitHits > 1 && (
+                  <span className="rate-limit-count-badge">
+                    {rateLimitStats.rateLimitHits}
+                  </span>
+                )}
+              </button>
+
+              <div
+                className="rate-limit-popover-bridge"
+                role="tooltip"
+                aria-hidden={!rateLimitHovered}
+              >
+                <div className="rate-limit-popover">
+                  <div className="rate-limit-popover-header">
+                    <span className="rate-limit-popover-title">
+                      <AlertTriangle size={13} />
+                      API Rate Limit Hit ({rateLimitStats.rateLimitHits}×)
+                    </span>
+                    {rateLimitStats.lastRateLimitAt && (
+                      <span className="rate-limit-popover-time">
+                        {new Date(
+                          rateLimitStats.lastRateLimitAt
+                        ).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <p className="rate-limit-popover-desc">
+                    Netatmo temporarily throttled requests
+                    {rateLimitStats.lastRateLimitEndpoint
+                      ? ` on /${rateLimitStats.lastRateLimitEndpoint}`
+                      : ''}
+                    .{' '}
+                    {rateLimitStats.lastRateLimitMessage
+                      ? `${rateLimitStats.lastRateLimitMessage}. `
+                      : ''}
+                    Some live or historical updates may be delayed until the
+                    quota resets.
+                  </p>
+                  <button
+                    type="button"
+                    className="rate-limit-debug-link"
+                    onClick={() => {
+                      setRateLimitHovered(false);
+                      window.winatmo?.openDebugWindow?.();
+                    }}
+                  >
+                    <Terminal size={12} />
+                    <span>Open Debug Window</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <button
             className={`header-btn ${settings.widgetEnabled ? 'widget-on' : ''}`}
             onClick={() => window.winatmo.toggleWidget()}

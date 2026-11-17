@@ -253,8 +253,17 @@ export class DebugLogger {
     } else {
       this.stats.failedRequests += 1;
     }
-    if (input.status === 429) {
+    if (
+      input.status === 429 ||
+      /\b(rate limit|usage limit|too many requests|quota exceeded)\b/i.test(
+        input.error || ''
+      )
+    ) {
       this.stats.rateLimitHits += 1;
+      this.stats.lastRateLimitAt = entry.timestamp;
+      this.stats.lastRateLimitEndpoint = entry.endpoint;
+      this.stats.lastRateLimitMessage =
+        entry.error || 'Netatmo API rate limit exceeded (HTTP 429)';
     }
 
     this.stats.totalBytesReceived += input.bytesReceived;

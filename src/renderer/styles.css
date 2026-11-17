@@ -421,6 +421,7 @@ body {
   border-bottom: var(--border-width) solid var(--border-subtle);
   flex-shrink: 0;
   position: relative;
+  z-index: 20;
 }
 
 .brand-block {
@@ -767,6 +768,119 @@ body {
 
 .header-btn.primary:hover {
   filter: brightness(1.08);
+}
+
+/* Rate-limit warning indicator + hover popover */
+.rate-limit-warning-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rate-limit-warning-btn {
+  padding: 7px 10px;
+  color: var(--accent-amber, #f59e0b);
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.rate-limit-warning-btn:hover {
+  color: var(--accent-amber, #f59e0b);
+  border-color: var(--accent-amber, #f59e0b);
+  background: rgba(245, 158, 11, 0.22);
+}
+
+.rate-limit-count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.rate-limit-popover-bridge {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  padding-top: 8px;
+  width: 320px;
+  z-index: 150;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+}
+
+.rate-limit-warning-wrap:hover .rate-limit-popover-bridge,
+.rate-limit-warning-wrap:focus-within .rate-limit-popover-bridge,
+.rate-limit-warning-wrap.is-open .rate-limit-popover-bridge {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.rate-limit-popover {
+  background: var(--bg-card);
+  border: var(--border-width) solid rgba(245, 158, 11, 0.45);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(245, 158, 11, 0.12);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.rate-limit-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rate-limit-popover-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-amber, #f59e0b);
+}
+
+.rate-limit-popover-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rate-limit-popover-desc {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.rate-limit-debug-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent-sky);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rate-limit-debug-link:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: var(--accent-sky);
+  text-decoration: underline;
 }
 
 .header-theme-select {

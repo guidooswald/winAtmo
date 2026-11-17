@@ -363,6 +363,9 @@ export interface DebugTelemetryStats {
   averageTransferRateBps: number;
   lastTransferRateBps: number;
   rateLimitHits: number;
+  lastRateLimitAt?: number;
+  lastRateLimitEndpoint?: string;
+  lastRateLimitMessage?: string;
   startedAt: number;
 }
 
