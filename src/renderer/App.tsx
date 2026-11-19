@@ -170,7 +170,6 @@ const MainStudioApp: React.FC = () => {
         setRateLimitStats(debugSnap.stats);
       }
       if (s?.oauthClientId) setWelcomeClientId(s.oauthClientId);
-      if (s?.oauthClientSecret) setWelcomeClientSecret(s.oauthClientSecret);
     };
     init();
 

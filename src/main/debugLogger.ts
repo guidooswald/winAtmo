@@ -14,8 +14,23 @@ const MAX_RAW_BODY_CHARS = 60000;
 
 function redactSensitiveText(input: string): string {
   return input
-    .replace(/(access_token|refresh_token|client_secret)=([^&\s]+)/gi, '$1=[REDACTED]')
-    .replace(/(Bearer\s+)[A-Za-z0-9\-_.~+/=]+/gi, '$1[REDACTED]');
+    .replace(
+      /(access_token|refresh_token|client_secret|token|key)=([^&\s"'`]+)/gi,
+      '$1=[REDACTED]'
+    )
+    .replace(/(Bearer\s+)[A-Za-z0-9\-_.~+/=]+/gi, '$1[REDACTED]')
+    .replace(
+      /("(?:access_token|refresh_token|client_secret|vpn_url|local_url|key|secret|password|authorization|cookie)"\s*:\s*")([^"]*)(")/gi,
+      '$1[REDACTED]$3'
+    )
+    .replace(
+      /(https?:\/\/[a-z0-9.-]*vpn[a-z0-9.-]*\.netatmo\.net\/[^/\s"']+\/)([^/\s"']+\/[^/\s"']+)/gi,
+      '$1[REDACTED]'
+    )
+    .replace(
+      /(https?:\/\/(?:10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(?::\d+)?\/)([a-f0-9]{16,})/gi,
+      '$1[REDACTED]'
+    );
 }
 
 function formatArgs(args: any[]): string {

@@ -9,14 +9,16 @@ import {
   nativeImage,
   nativeTheme,
   screen,
+  session,
 } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { execFile } from 'child_process';
+import { fileURLToPath } from 'url';
 import { AppStore } from './store';
 import { TimeSeriesDatabase } from './database';
 import { NetatmoClient } from './netatmoClient';
-import { WebAuthManager } from './webAuth';
+import { NETATMO_PARTITION, WebAuthManager } from './webAuth';
 import { debugLogger } from './debugLogger';
 import { securityMediaProxy } from './securityMediaProxy';
 import {
@@ -146,8 +148,9 @@ function getRendererEntryUrl(queryMode?: string): {
   filePath: string;
 } {
   const isDev =
-    Boolean(process.env.VITE_DEV_SERVER_URL) ||
-    process.env.NODE_ENV === 'development';
+    !app.isPackaged &&
+    (Boolean(process.env.VITE_DEV_SERVER_URL) ||
+      process.env.NODE_ENV === 'development');
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
   const filePath = path.join(__dirname, '../renderer/index.html');
   const suffix = queryMode ? `?mode=${queryMode}` : '';
@@ -156,6 +159,131 @@ function getRendererEntryUrl(queryMode?: string): {
     url: `${devUrl}${suffix}`,
     filePath,
   };
+}
+
+function isTrustedAppUrl(rawUrl: string): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === 'file:') {
+      const expected = path
+        .resolve(__dirname, '../renderer/index.html')
+        .toLowerCase();
+      const target = path.resolve(fileURLToPath(parsed)).toLowerCase();
+      return target === expected;
+    }
+    const entry = getRendererEntryUrl();
+    if (entry.isDev && parsed.protocol === 'http:') {
+      const devUrl = new URL(entry.url);
+      return (
+        (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+        parsed.port === devUrl.port
+      );
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function attachWindowSecurityGuards(win: BrowserWindow): void {
+  win.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isTrustedAppUrl(targetUrl)) {
+      event.preventDefault();
+    }
+  });
+  win.webContents.on('will-redirect', (event, targetUrl) => {
+    if (!isTrustedAppUrl(targetUrl)) {
+      event.preventDefault();
+    }
+  });
+}
+
+function assertTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean {
+  const url = event.senderFrame?.url;
+  return Boolean(url && isTrustedAppUrl(url));
+}
+
+function handleTrustedIpc(
+  channel: string,
+  listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any
+): void {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!assertTrustedSender(event)) {
+      throw new Error(`Untrusted IPC sender on ${channel}`);
+    }
+    return listener(event, ...args);
+  });
+}
+
+function onTrustedIpc(
+  channel: string,
+  listener: (event: Electron.IpcMainEvent, ...args: any[]) => void
+): void {
+  ipcMain.on(channel, (event, ...args) => {
+    if (!assertTrustedSender(event)) {
+      return;
+    }
+    listener(event, ...args);
+  });
+}
+
+const ALLOWED_SETTINGS_KEYS = new Set<string>([
+  'language',
+  'historyDays',
+  'historyMaxMode',
+  'defaultScale',
+  'refreshIntervalMinutes',
+  'temperatureUnit',
+  'pressureUnit',
+  'windUnit',
+  'rainUnit',
+  'theme',
+  'widgetEnabled',
+  'widgetAlwaysOnTop',
+  'widgetLocked',
+  'widgetOpacity',
+  'widgetCompact',
+  'widgetPosition',
+  'widgetSize',
+  'widgetExpanded',
+  'widgetExpandedSize',
+  'mainWindowBounds',
+  'pinnedSensors',
+  'taskbarDisplayMode',
+  'taskbarSensorTarget',
+  'taskbarTextColor',
+  'oauthClientId',
+  'storeApiKeysLocally',
+  'autoUpdateTokens',
+  'storeSecurityData',
+  'minimizeToTray',
+  'launchOnStartup',
+]);
+
+function sanitizePartialSettings(input: unknown): Partial<UserSettings> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {};
+  }
+  const clean: Record<string, any> = {};
+  for (const key of Object.keys(input)) {
+    if (
+      key !== '__proto__' &&
+      key !== 'constructor' &&
+      key !== 'prototype' &&
+      ALLOWED_SETTINGS_KEYS.has(key) &&
+      Object.prototype.hasOwnProperty.call(input, key)
+    ) {
+      clean[key] = (input as Record<string, any>)[key];
+    }
+  }
+  return clean as Partial<UserSettings>;
+}
+
+function escapeCsvCell(raw: string): string {
+  const flat = raw.replace(/\r?\n/g, ' ');
+  const neutralized = /^[=+\-@\t]/.test(flat) ? `'${flat}` : flat;
+  return `"${neutralized.replace(/"/g, '""')}"`;
 }
 
 function showMainWindow(focusModuleId?: string, focusMetric?: string): void {
@@ -401,6 +529,7 @@ function createMainWindow(shouldShow = true): void {
   }
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  attachWindowSecurityGuards(mainWindow);
 
   mainWindow.on('page-title-updated', (e) => {
     e.preventDefault();
@@ -459,7 +588,7 @@ function createMainWindow(shouldShow = true): void {
   });
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'F12' && input.type === 'keyDown') {
+    if (!app.isPackaged && input.key === 'F12' && input.type === 'keyDown') {
       mainWindow?.webContents.toggleDevTools();
       event.preventDefault();
     }
@@ -721,6 +850,7 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
   }
 
   widgetWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  attachWindowSecurityGuards(widgetWindow);
 
   widgetWindow.setAlwaysOnTop(settings.widgetAlwaysOnTop, 'pop-up-menu');
   widgetWindow.setOpacity(1.0);
@@ -820,6 +950,7 @@ function createOrShowDebugWindow(): void {
   });
 
   debugWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  attachWindowSecurityGuards(debugWindow);
 
   debugWindow.on('page-title-updated', (e) => {
     e.preventDefault();
@@ -856,7 +987,7 @@ function createOrShowDebugWindow(): void {
   });
 
   debugWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'F12' && input.type === 'keyDown') {
+    if (!app.isPackaged && input.key === 'F12' && input.type === 'keyDown') {
       debugWindow?.webContents.toggleDevTools();
       event.preventDefault();
     }
@@ -998,11 +1129,11 @@ function updateTrayTooltipAndMenu(): void {
         ? 'Hide Taskbar Widget'
         : 'Show Taskbar Widget',
       click: () => {
-        const next = store.updateSettings({
+        store.updateSettings({
           widgetEnabled: !settings.widgetEnabled,
         });
         createOrUpdateWidgetWindow();
-        broadcastToAllWindows('settings:updated', next);
+        broadcastToAllWindows('settings:updated', store.getPublicSettings());
         updateTrayTooltipAndMenu();
       },
     },
@@ -1011,7 +1142,7 @@ function updateTrayTooltipAndMenu(): void {
       click: () => {
         isWidgetExpanded = false;
         collapsedBoundsBeforeExpand = null;
-        const next = store.updateSettings({
+        store.updateSettings({
           widgetPosition: undefined,
           widgetSize: undefined,
           widgetExpanded: false,
@@ -1022,7 +1153,7 @@ function updateTrayTooltipAndMenu(): void {
           widgetTargetSize = { width: b.width, height: b.height };
           widgetWindow.setBounds(b);
         }
-        broadcastToAllWindows('settings:updated', next);
+        broadcastToAllWindows('settings:updated', store.getPublicSettings());
       },
     },
     { type: 'separator' },
@@ -1041,11 +1172,11 @@ function updateTrayTooltipAndMenu(): void {
       checked: Boolean(settings.launchOnStartup),
       click: () => {
         const nextVal = !settings.launchOnStartup;
-        const next = store.updateSettings({
+        store.updateSettings({
           launchOnStartup: nextVal,
         });
         applyStartupRegistration(nextVal);
-        broadcastToAllWindows('settings:updated', next);
+        broadcastToAllWindows('settings:updated', store.getPublicSettings());
         updateTrayTooltipAndMenu();
       },
     },
@@ -1167,12 +1298,12 @@ function setupRefreshSchedule(): void {
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.on('window:minimize', (e) => {
+  onTrustedIpc('window:minimize', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     win?.minimize();
   });
 
-  ipcMain.on('window:maximize', (e) => {
+  onTrustedIpc('window:maximize', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return;
     if (win.isMaximized()) {
@@ -1182,17 +1313,17 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.on('window:close', (e) => {
+  onTrustedIpc('window:close', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     win?.close();
   });
 
-  ipcMain.handle('window:is-maximized', (e) => {
+  handleTrustedIpc('window:is-maximized', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     return win ? win.isMaximized() : false;
   });
 
-  ipcMain.on(
+  onTrustedIpc(
     'window:open-main',
     (_e, payload?: { focusModuleId?: string; focusMetric?: string }) => {
       showMainWindow(payload?.focusModuleId, payload?.focusMetric);
@@ -1200,20 +1331,21 @@ function registerIpcHandlers(): void {
   );
 
   // Taskbar Widget IPC
-  ipcMain.handle('widget:toggle', (_e, enabled?: boolean) => {
+  handleTrustedIpc('widget:toggle', (_e, enabled?: boolean) => {
     const current = store.getSettings().widgetEnabled;
     const nextVal = enabled !== undefined ? enabled : !current;
-    const updated = store.updateSettings({ widgetEnabled: nextVal });
+    store.updateSettings({ widgetEnabled: nextVal });
     createOrUpdateWidgetWindow();
-    broadcastToAllWindows('settings:updated', updated);
+    const publicSettings = store.getPublicSettings();
+    broadcastToAllWindows('settings:updated', publicSettings);
     updateTrayTooltipAndMenu();
-    return updated;
+    return publicSettings;
   });
 
-  ipcMain.handle('widget:reset-position', () => {
+  handleTrustedIpc('widget:reset-position', () => {
     isWidgetExpanded = false;
     collapsedBoundsBeforeExpand = null;
-    const updated = store.updateSettings({
+    store.updateSettings({
       widgetPosition: undefined,
       widgetSize: undefined,
       widgetExpanded: false,
@@ -1225,18 +1357,19 @@ function registerIpcHandlers(): void {
       widgetWindow.setContentSize(b.width, b.height);
       widgetWindow.setPosition(b.x, b.y);
     }
-    broadcastToAllWindows('settings:updated', updated);
-    return updated;
+    const publicSettings = store.getPublicSettings();
+    broadcastToAllWindows('settings:updated', publicSettings);
+    return publicSettings;
   });
 
-  ipcMain.handle('widget:get-expand-direction', (): 'up' | 'down' => {
+  handleTrustedIpc('widget:get-expand-direction', (): 'up' | 'down' => {
     if (!widgetWindow || widgetWindow.isDestroyed()) {
       return widgetExpandDirection;
     }
     return getOptimalExpandDirection(widgetWindow);
   });
 
-  ipcMain.handle('widget:set-expanded', (_e, expanded: boolean): 'up' | 'down' => {
+  handleTrustedIpc('widget:set-expanded', (_e, expanded: boolean): 'up' | 'down' => {
     if (!widgetWindow || widgetWindow.isDestroyed()) {
       isWidgetExpanded = expanded;
       store.updateSettings({ widgetExpanded: expanded });
@@ -1302,7 +1435,7 @@ function registerIpcHandlers(): void {
         height: expandedHeight,
       });
 
-      const updated = store.updateSettings({
+      store.updateSettings({
         widgetExpanded: true,
         widgetSize: collapsedBoundsBeforeExpand
           ? {
@@ -1312,7 +1445,7 @@ function registerIpcHandlers(): void {
           : curSettings.widgetSize,
         widgetExpandedSize: { width: targetWidth, height: expandedHeight },
       });
-      broadcastToAllWindows('settings:updated', updated);
+      broadcastToAllWindows('settings:updated', store.getPublicSettings());
     } else {
       // Closing charts: persist current expanded height while keeping X width unchanged
       const prevExpandedSize = isWidgetExpanded
@@ -1365,19 +1498,19 @@ function registerIpcHandlers(): void {
         width: targetWidth,
         height: collapsedH,
       });
-      const updated = store.updateSettings({
+      store.updateSettings({
         widgetExpanded: false,
         widgetExpandedSize: prevExpandedSize,
         widgetPosition: { x: newX, y: restoreY },
         widgetSize: { width: targetWidth, height: collapsedH },
       });
-      broadcastToAllWindows('settings:updated', updated);
+      broadcastToAllWindows('settings:updated', store.getPublicSettings());
     }
 
     return widgetExpandDirection;
   });
 
-  ipcMain.on('widget:move-by', (_e, delta: { dx: number; dy: number }) => {
+  onTrustedIpc('widget:move-by', (_e, delta: { dx: number; dy: number }) => {
     if (!widgetWindow || widgetWindow.isDestroyed()) return;
     if (store.getSettings().widgetLocked) return;
     const [curX, curY] = widgetWindow.getPosition();
@@ -1391,7 +1524,7 @@ function registerIpcHandlers(): void {
     });
   });
 
-  ipcMain.on(
+  onTrustedIpc(
     'widget:resize',
     (_e, size: { width: number; height: number }) => {
       if (!widgetWindow || widgetWindow.isDestroyed()) return;
@@ -1437,11 +1570,11 @@ function registerIpcHandlers(): void {
   );
 
   // Authentication IPC
-  ipcMain.handle('auth:get-account', () => {
+  handleTrustedIpc('auth:get-account', () => {
     return store.getAccountInfo();
   });
 
-  ipcMain.handle('auth:web-login', async () => {
+  handleTrustedIpc('auth:web-login', async () => {
     const res = await webAuth.startWebLogin(mainWindow || undefined);
     if (res.success) {
       client.resetApiCaches();
@@ -1456,7 +1589,7 @@ function registerIpcHandlers(): void {
     return res;
   });
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'auth:oauth-login',
     async (
       _e,
@@ -1476,7 +1609,7 @@ function registerIpcHandlers(): void {
         client.resetApiCaches();
         broadcastToAllWindows('stations:updated', store.getCachedStations());
         broadcastToAllWindows('account:updated', store.getAccountInfo());
-        broadcastToAllWindows('settings:updated', store.getSettings());
+        broadcastToAllWindows('settings:updated', store.getPublicSettings());
         updateTrayTooltipAndMenu();
         createOrUpdateWidgetWindow();
         client.syncHistoricalData().then(() => {
@@ -1487,7 +1620,7 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'auth:token-login',
     async (
       _e,
@@ -1512,7 +1645,7 @@ function registerIpcHandlers(): void {
         client.resetApiCaches();
         broadcastToAllWindows('stations:updated', store.getCachedStations());
         broadcastToAllWindows('account:updated', store.getAccountInfo());
-        broadcastToAllWindows('settings:updated', store.getSettings());
+        broadcastToAllWindows('settings:updated', store.getPublicSettings());
         updateTrayTooltipAndMenu();
         createOrUpdateWidgetWindow();
         client.syncHistoricalData().then(() => {
@@ -1524,13 +1657,13 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'auth:save-api-keys',
     async (
       _e,
       payload: {
         clientId: string;
-        clientSecret: string;
+        clientSecret?: string;
         accessToken?: string;
         refreshToken?: string;
         autoUpdate?: boolean;
@@ -1538,25 +1671,25 @@ function registerIpcHandlers(): void {
     ) => {
       const res = await store.saveApiKeys(payload);
       if (res.success) {
-        broadcastToAllWindows('settings:updated', store.getSettings());
+        broadcastToAllWindows('settings:updated', store.getPublicSettings());
         broadcastToAllWindows('account:updated', store.getAccountInfo());
       }
       return res;
     }
   );
 
-  ipcMain.handle('auth:get-stored-keys-info', () => {
+  handleTrustedIpc('auth:get-stored-keys-info', () => {
     return store.getStoredApiKeysInfo();
   });
 
-  ipcMain.handle('auth:clear-stored-keys', async () => {
+  handleTrustedIpc('auth:clear-stored-keys', async () => {
     await store.clearStoredApiKeys(true);
-    broadcastToAllWindows('settings:updated', store.getSettings());
+    broadcastToAllWindows('settings:updated', store.getPublicSettings());
     broadcastToAllWindows('account:updated', store.getAccountInfo());
     return { success: true };
   });
 
-  ipcMain.handle('auth:refresh-token-now', async () => {
+  handleTrustedIpc('auth:refresh-token-now', async () => {
     const res = await client.autoRefreshToken(true);
     if (res.refreshed) {
       broadcastToAllWindows('account:updated', store.getAccountInfo());
@@ -1565,16 +1698,16 @@ function registerIpcHandlers(): void {
     return res;
   });
 
-  ipcMain.handle('auth:demo-mode', async () => {
+  handleTrustedIpc('auth:demo-mode', async () => {
     const res = await client.enableDemoMode();
     broadcastToAllWindows('stations:updated', res.stations);
-    broadcastToAllWindows('settings:updated', store.getSettings());
+    broadcastToAllWindows('settings:updated', store.getPublicSettings());
     updateTrayTooltipAndMenu();
     createOrUpdateWidgetWindow();
     return res;
   });
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'auth:logout',
     async (
       _e,
@@ -1601,21 +1734,21 @@ function registerIpcHandlers(): void {
   );
 
   // Stations & History IPC
-  ipcMain.handle('stations:get-cached', () => {
+  handleTrustedIpc('stations:get-cached', () => {
     return {
       stations: store.getCachedStations(),
       lastSyncAt: store.getLastSyncAt(),
     };
   });
 
-  ipcMain.handle('stations:refresh', async () => {
+  handleTrustedIpc('stations:refresh', async () => {
     const stations = await client.fetchStations({ force: true });
     broadcastToAllWindows('stations:updated', stations);
     updateTrayTooltipAndMenu();
     return stations;
   });
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'history:sync',
     async (
       _e,
@@ -1632,16 +1765,16 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle('history:get-progress', () => {
+  handleTrustedIpc('history:get-progress', () => {
     return client.getSyncProgress();
   });
 
-  ipcMain.handle('history:query', async (_e, req: MeasureQueryRequest) => {
+  handleTrustedIpc('history:query', async (_e, req: MeasureQueryRequest) => {
     return client.queryMeasureSeries(req);
   });
 
   // Storage & CSV Export IPC
-  ipcMain.handle('storage:stats', async () => {
+  handleTrustedIpc('storage:stats', async () => {
     return new Promise((resolve) => {
       setImmediate(() => {
         try {
@@ -1664,23 +1797,23 @@ function registerIpcHandlers(): void {
     });
   });
 
-  ipcMain.handle('storage:clear', () => {
+  handleTrustedIpc('storage:clear', () => {
     client.resetApiCaches();
     return db.clearAllHistory();
   });
 
-  ipcMain.handle('storage:clear-security', () => {
+  handleTrustedIpc('storage:clear-security', () => {
     client.resetApiCaches();
     const stats = db.clearSecurityData();
     broadcastToAllWindows('security:cleared', true);
     return stats;
   });
 
-  ipcMain.handle('storage:optimize', () => {
+  handleTrustedIpc('storage:optimize', () => {
     return db.optimizeDatabase();
   });
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'storage:export-csv',
     async (
       _e,
@@ -1715,8 +1848,9 @@ function registerIpcHandlers(): void {
             map.set(p.ts, p.value);
           }
           return {
-            header: `"${s.stationName} - ${s.moduleName} (${s.metric})"`
-              .replace(/\r?\n/g, ' '),
+            header: escapeCsvCell(
+              `${s.stationName} - ${s.moduleName} (${s.metric})`
+            ),
             map,
           };
         });
@@ -1731,9 +1865,11 @@ function registerIpcHandlers(): void {
           const iso = new Date(ts * 1000).toISOString();
           const vals = seriesMaps.map((sm) => {
             const v = sm.map.get(ts);
-            return v !== undefined ? String(v) : '';
+            return v !== undefined && Number.isFinite(Number(v))
+              ? String(Number(v))
+              : '';
           });
-          lines.push([String(ts), iso, ...vals].join(','));
+          lines.push([String(Math.floor(ts)), iso, ...vals].join(','));
         }
 
         fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
@@ -1748,13 +1884,14 @@ function registerIpcHandlers(): void {
   );
 
   // Settings IPC
-  ipcMain.handle('settings:get', () => {
-    const s = store.getSettings();
+  handleTrustedIpc('settings:get', () => {
+    const s = store.getPublicSettings();
     applyNativeWindowTheme(s.theme);
     return s;
   });
 
-  ipcMain.handle('settings:update', async (_e, partial: Partial<UserSettings>) => {
+  handleTrustedIpc('settings:update', async (_e, rawPartial: Partial<UserSettings>) => {
+    const partial = sanitizePartialSettings(rawPartial);
     const prev = store.getSettings();
     const isThemeChange = Boolean(partial.theme && partial.theme !== prev.theme);
 
@@ -1764,9 +1901,10 @@ function registerIpcHandlers(): void {
       store.updateSettings({ widgetSize: undefined });
     }
 
-    const updated = store.updateSettings(partial);
+    store.updateSettings(partial);
+    const updatedPublic = store.getPublicSettings();
 
-    applyNativeWindowTheme(updated.theme);
+    applyNativeWindowTheme(updatedPublic.theme);
 
     if (
       isThemeChange ||
@@ -1790,14 +1928,14 @@ function registerIpcHandlers(): void {
       applyStartupRegistration(Boolean(partial.launchOnStartup));
     }
 
-    broadcastToAllWindows('settings:updated', updated);
+    broadcastToAllWindows('settings:updated', updatedPublic);
     updateTrayTooltipAndMenu();
 
     // If user increased historyDays or turned on historyMaxMode, trigger background sync automatically!
     const historyExpanded =
-      (updated.historyMaxMode && !prev.historyMaxMode) ||
-      (!updated.historyMaxMode && updated.historyDays > prev.historyDays) ||
-      updated.defaultScale !== prev.defaultScale;
+      (updatedPublic.historyMaxMode && !prev.historyMaxMode) ||
+      (!updatedPublic.historyMaxMode && updatedPublic.historyDays > prev.historyDays) ||
+      updatedPublic.defaultScale !== prev.defaultScale;
 
     if (historyExpanded && store.getSession().loggedIn) {
       client.syncHistoricalData().then(() => {
@@ -1805,10 +1943,10 @@ function registerIpcHandlers(): void {
       });
     }
 
-    return updated;
+    return updatedPublic;
   });
 
-  ipcMain.handle('shell:open-external', async (_e, url: string) => {
+  handleTrustedIpc('shell:open-external', async (_e, url: string) => {
     try {
       const parsed = new URL(url);
       if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
@@ -1818,14 +1956,14 @@ function registerIpcHandlers(): void {
   });
 
   // Netatmo Security (Cameras & Event List) IPC
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:get-cached',
     (_e, homeId?: string) => {
       return client.getCachedSecurityData(homeId);
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:get-data',
     async (
       _e,
@@ -1840,7 +1978,7 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:refresh-event-image',
     async (
       _e,
@@ -1856,7 +1994,7 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:get-event-video',
     async (
       _e,
@@ -1871,7 +2009,7 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:get-live-stream',
     async (
       _e,
@@ -1884,30 +2022,14 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
-    'security:fetch-media',
-    async (
-      _e,
-      req: {
-        url: string;
-        responseType?: 'text' | 'arraybuffer';
-        headers?: Record<string, string>;
-        rangeStart?: number;
-        rangeEnd?: number;
-      }
-    ) => {
-      return client.fetchSecurityMedia(req);
-    }
-  );
-
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:set-home-empty',
     async (_e, options: { homeIds: string[] }) => {
       return client.setHomeEmpty(options);
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:download-snapshot',
     async (
       _e,
@@ -1968,7 +2090,7 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:download-video',
     async (
       _e,
@@ -2016,7 +2138,7 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
+  handleTrustedIpc(
     'security:download-replay',
     async (
       _e,
@@ -2064,7 +2186,7 @@ function registerIpcHandlers(): void {
   );
 
   // Rain Radar Weather Map IPC
-  ipcMain.handle(
+  handleTrustedIpc(
     'radar:get-metadata',
     async (
       _e,
@@ -2076,26 +2198,76 @@ function registerIpcHandlers(): void {
       );
     }
   );
-  ipcMain.handle('radar:check-cached-urls', (_e, urls: string[]) => {
+  handleTrustedIpc('radar:check-cached-urls', (_e, urls: string[]) => {
     return checkCachedRadarUrls(Array.isArray(urls) ? urls : []);
   });
 
   // Debug Console Window & Telemetry IPC
-  ipcMain.on('debug:open-window', () => {
+  onTrustedIpc('debug:open-window', () => {
     createOrShowDebugWindow();
   });
 
-  ipcMain.handle('debug:get-snapshot', () => {
+  handleTrustedIpc('debug:get-snapshot', () => {
     return debugLogger.getSnapshot();
   });
 
-  ipcMain.handle('debug:clear', () => {
+  handleTrustedIpc('debug:clear', () => {
     debugLogger.clear();
     return debugLogger.getSnapshot();
   });
 }
 
 app.whenReady().then(async () => {
+  // Deny unneeded Chromium permission prompts & checks across default + Netatmo web auth partitions
+  for (const ses of [
+    session.defaultSession,
+    session.fromPartition(NETATMO_PARTITION),
+  ]) {
+    ses.setPermissionRequestHandler((_wc, _permission, callback) => {
+      callback(false);
+    });
+    ses.setPermissionCheckHandler(() => false);
+  }
+
+  // Enforce strict Content-Security-Policy on all main application HTML frames
+  const cspIsDev = getRendererEntryUrl().isDev;
+  const appCspPolicy = [
+    "default-src 'self'",
+    cspIsDev
+      ? "script-src 'self' 'unsafe-inline'"
+      : "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: http://127.0.0.1:* https://*.netatmo.com https://*.netatmo.net https://*.blob.core.windows.net https://tile.opentopomap.org https://*.tile.opentopomap.org https://tile.openstreetmap.org https://*.tile.openstreetmap.org https://server.arcgisonline.com https://services.arcgisonline.com https://maps.dwd.de https://*.rainviewer.com",
+    "media-src 'self' blob: http://127.0.0.1:*",
+    cspIsDev
+      ? "connect-src 'self' blob: http://127.0.0.1:* http://localhost:* ws://localhost:* ws://127.0.0.1:*"
+      : "connect-src 'self' blob: http://127.0.0.1:*",
+    "font-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'none'",
+  ].join('; ');
+
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ['file://*/*', 'http://localhost:*/*', 'http://127.0.0.1:*/*'] },
+    (details, callback) => {
+      if (
+        details.resourceType !== 'mainFrame' &&
+        details.resourceType !== 'subFrame'
+      ) {
+        callback({ responseHeaders: details.responseHeaders });
+        return;
+      }
+      callback({
+        responseHeaders: {
+          ...(details.responseHeaders || {}),
+          'Content-Security-Policy': [appCspPolicy],
+        },
+      });
+    }
+  );
+
   debugLogger.attachConsoleCapture();
   debugLogger.subscribe((event) => {
     broadcastToAllWindows('debug:stream', event);
@@ -2139,7 +2311,10 @@ app.whenReady().then(async () => {
   setupRefreshSchedule();
   setupTokenAutoUpdate();
 
-  if (process.env.WINATMO_CAPTURE_STORE_SCREENSHOTS === '1') {
+  if (
+    !app.isPackaged &&
+    process.env.WINATMO_CAPTURE_STORE_SCREENSHOTS === '1'
+  ) {
     setTimeout(async () => {
       try {
         console.log('[Store Screenshots] Enabling demo mode for screenshots...');

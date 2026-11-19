@@ -27,9 +27,14 @@ export async function initTaskbarIconRenderer(): Promise<void> {
       height: 64,
       webPreferences: {
         offscreen: true,
-        contextIsolation: false,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
       },
     });
+
+    iconRendererWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    iconRendererWindow.webContents.on('will-navigate', (e) => e.preventDefault());
 
     const html = `<!DOCTYPE html><html><body style="margin:0"><canvas id="c" width="32" height="32"></canvas></body></html>`;
     await iconRendererWindow.loadURL(

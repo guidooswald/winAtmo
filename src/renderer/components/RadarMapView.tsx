@@ -142,27 +142,35 @@ function getRadarFrameKey(provider: RadarProvider, frame: RadarFrame): string {
   return `${provider}:${frame.isoTime}`;
 }
 
-function toProxyTileUrl(rawUrl: string, cacheProxyUrl?: string): string {
+function toProxyTileUrl(
+  rawUrl: string,
+  cacheProxyUrl?: string,
+  cacheProxyToken?: string
+): string {
   if (!cacheProxyUrl) return rawUrl;
   if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
-    return `${cacheProxyUrl}/tile?u=${encodeURIComponent(rawUrl)}`;
+    const tokenPart = cacheProxyToken
+      ? `token=${encodeURIComponent(cacheProxyToken)}&`
+      : '';
+    return `${cacheProxyUrl}/tile?${tokenPart}u=${encodeURIComponent(rawUrl)}`;
   }
   return rawUrl;
 }
 
 let activeCacheProxyUrl: string | undefined;
+let activeCacheProxyToken: string | undefined;
 
 const ProxiedTileLayer = L.TileLayer.extend({
   getTileUrl(coords: L.Coords): string {
     const raw = L.TileLayer.prototype.getTileUrl.call(this, coords);
-    return toProxyTileUrl(raw, activeCacheProxyUrl);
+    return toProxyTileUrl(raw, activeCacheProxyUrl, activeCacheProxyToken);
   },
 });
 
 const ProxiedWmsTileLayer = L.TileLayer.WMS.extend({
   getTileUrl(coords: L.Coords): string {
     const raw = L.TileLayer.WMS.prototype.getTileUrl.call(this, coords);
-    return toProxyTileUrl(raw, activeCacheProxyUrl);
+    return toProxyTileUrl(raw, activeCacheProxyUrl, activeCacheProxyToken);
   },
 });
 
@@ -364,6 +372,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
   const radarLayerKeyRef = useRef<string>('');
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const cacheProxyUrlRef = useRef<string | undefined>(undefined);
+  const cacheProxyTokenRef = useRef<string | undefined>(undefined);
   const metadataRef = useRef<RadarMetadataPayload | null>(null);
   const abortPrefetchRef = useRef<AbortController | null>(null);
   const prefetchDoneKeyRef = useRef<string>('');
@@ -450,7 +459,9 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         });
         if (seq !== loadSeqRef.current) return;
         activeCacheProxyUrl = res.cacheProxyUrl;
+        activeCacheProxyToken = res.cacheProxyToken;
         cacheProxyUrlRef.current = res.cacheProxyUrl;
+        cacheProxyTokenRef.current = res.cacheProxyToken;
         metadataRef.current = res;
         setMetadata(res);
         if (res.error) {
@@ -510,6 +521,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     ) => {
       const map = mapRef.current;
       const proxyBase = meta.cacheProxyUrl || cacheProxyUrlRef.current;
+      const proxyToken = meta.cacheProxyToken || cacheProxyTokenRef.current;
       if (!map || !proxyBase || indices.length === 0) return;
 
       for (const idx of indices) {
@@ -554,7 +566,10 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
             if (i >= missingUrls.length) break;
             const url = missingUrls[i];
             try {
-              const resp = await fetch(toProxyTileUrl(url, proxyBase), { signal });
+              const resp = await fetch(
+                toProxyTileUrl(url, proxyBase, proxyToken),
+                { signal }
+              );
               if (!resp.ok) {
                 allSucceeded = false;
               }

@@ -52,6 +52,7 @@ export class NetatmoClient {
     string,
     { vpnUrl: string; localUrl?: string; isLocal: boolean; updatedAt: number }
   >();
+  private readonly allowedMediaOrigins = new Set<string>();
   private currentProgress: SyncProgress = {
     active: false,
     phase: 'idle',
@@ -77,6 +78,50 @@ export class NetatmoClient {
     this.lastSecurityFetchAt = 0;
     this.lastSecurityPayload = null;
     this.cameraUrlCache.clear();
+    this.allowedMediaOrigins.clear();
+  }
+
+  private isDisallowedLoopbackOrLinkLocal(hostname: string): boolean {
+    const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!h) return true;
+    if (h === 'localhost' || h.endsWith('.localhost')) return true;
+    if (h === '0.0.0.0' || h === '::' || h === '::1') return true;
+    if (h.startsWith('127.') || h.startsWith('169.254.')) return true;
+    if (h.startsWith('fe80:') || h.startsWith('::ffff:127.')) return true;
+    return false;
+  }
+
+  private registerAllowedMediaUrl(rawUrl?: string): void {
+    if (!rawUrl || typeof rawUrl !== 'string') return;
+    try {
+      const u = new URL(rawUrl);
+      if (
+        (u.protocol === 'http:' || u.protocol === 'https:') &&
+        !this.isDisallowedLoopbackOrLinkLocal(u.hostname)
+      ) {
+        this.allowedMediaOrigins.add(u.origin);
+      }
+    } catch {}
+  }
+
+  private isAllowedSecurityMediaUrl(rawUrl: string): boolean {
+    try {
+      const u = new URL(rawUrl);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+      const host = u.hostname.toLowerCase();
+      if (this.isDisallowedLoopbackOrLinkLocal(host)) return false;
+      if (this.allowedMediaOrigins.has(u.origin)) return true;
+      return (
+        host === 'netatmo.com' ||
+        host.endsWith('.netatmo.com') ||
+        host === 'netatmo.net' ||
+        host.endsWith('.netatmo.net') ||
+        host === 'netatmocameraimage.blob.core.windows.net' ||
+        host.endsWith('.blob.core.windows.net')
+      );
+    } catch {
+      return false;
+    }
   }
 
   public setAccountUpdatedHandler(cb: (account: AccountInfo) => void): void {
@@ -170,10 +215,12 @@ export class NetatmoClient {
               apiBase,
             });
 
-            if (clientId && clientSecret) {
+            const effectiveSecret =
+              clientSecret?.trim() || this.store.getSettings().oauthClientSecret;
+            if (clientId && effectiveSecret) {
               await this.store.saveApiKeys({
                 clientId,
-                clientSecret,
+                clientSecret: effectiveSecret,
                 accessToken: cleanToken,
                 refreshToken: refreshToken || undefined,
                 autoUpdate: true,
@@ -317,7 +364,9 @@ export class NetatmoClient {
               ok: res.ok && !!data?.access_token,
               durationMs: tokenDuration,
               bytesReceived: tokenBytes,
-              rawBody: rawText,
+              rawBody: res.ok
+                ? '{"status":"ok","tokens":"[REDACTED]"}'
+                : JSON.stringify({ error: data?.error || `HTTP ${res.status}` }),
               error: res.ok ? undefined : data?.error || `HTTP ${res.status}`,
               note: 'OAuth2 refresh_token',
             });
@@ -2073,7 +2122,9 @@ export class NetatmoClient {
   private resolvePictureUrl(pic: any): string | undefined {
     if (!pic || typeof pic !== 'object') return undefined;
     if (typeof pic.url === 'string' && pic.url.trim()) {
-      return pic.url.trim();
+      const url = pic.url.trim();
+      this.registerAllowedMediaUrl(url);
+      return url;
     }
     if (pic.id && pic.key) {
       return `https://api.netatmo.com/api/getcamerapicture?image_id=${encodeURIComponent(
@@ -2333,6 +2384,7 @@ export class NetatmoClient {
                   cam.sirenStatus = sm.siren_status;
                   if (sm.vpn_url) {
                     cam.vpnUrl = String(sm.vpn_url).replace(/\/+$/, '');
+                    this.registerAllowedMediaUrl(cam.vpnUrl);
                     const prevUrlCache = this.cameraUrlCache.get(cam.id);
                     this.cameraUrlCache.set(cam.id, {
                       vpnUrl: cam.vpnUrl,
@@ -2499,6 +2551,7 @@ export class NetatmoClient {
                   ? String(c.vpn_url).replace(/\/+$/, '')
                   : undefined;
                 if (vpnUrl) {
+                  this.registerAllowedMediaUrl(vpnUrl);
                   this.cameraUrlCache.set(cid, {
                     vpnUrl,
                     isLocal: Boolean(c.is_local),
@@ -2625,7 +2678,7 @@ export class NetatmoClient {
    * Fetches binary or text media (images, HLS playlists, TS segments) through Node so
    * Netatmo CDN URLs and local camera LAN URLs work without renderer CORS or mixed-content blocks.
    */
-  public async fetchSecurityMedia(req: {
+  private async fetchSecurityMedia(req: {
     url: string;
     responseType?: 'text' | 'arraybuffer';
     headers?: Record<string, string>;
@@ -2657,6 +2710,16 @@ export class NetatmoClient {
       };
     }
 
+    if (!this.isAllowedSecurityMediaUrl(parsed.toString())) {
+      return {
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden media target',
+        finalUrl: parsed.toString(),
+        error: 'Disallowed media host.',
+      };
+    }
+
     const headers: Record<string, string> = { ...(req.headers || {}) };
     if (req.rangeStart !== undefined) {
       headers['Range'] = `bytes=${req.rangeStart}-${
@@ -2676,10 +2739,12 @@ export class NetatmoClient {
       } catch {}
     }
 
+    const isTimelapse = parsed.pathname.includes('/dl/timelapse');
+    const maxBytes = isTimelapse ? 250 * 1024 * 1024 : 32 * 1024 * 1024;
     const endpointLabel =
       parsed.pathname.replace(/^\/api\//, '').replace(/^\/+/, '').slice(0, 64) ||
       'media';
-    const mediaNote = parsed.pathname.includes('/dl/timelapse')
+    const mediaNote = isTimelapse
       ? 'Security 24h timelapse'
       : parsed.pathname.includes('/vod/')
         ? 'Security VOD probe'
@@ -2699,14 +2764,48 @@ export class NetatmoClient {
         typeof req.timeoutMs === 'number' && req.timeoutMs > 0
           ? req.timeoutMs
           : 30000;
-      const res = await fetcher(parsed.toString(), {
-        method: 'GET',
-        headers,
-        redirect: 'follow',
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      let currentUrl = parsed.toString();
+      let currentHeaders: Record<string, string> = { ...headers };
+      let res: any = null;
+      for (let hop = 0; hop <= 3; hop++) {
+        if (!this.isAllowedSecurityMediaUrl(currentUrl)) {
+          return {
+            ok: false,
+            status: 403,
+            statusText: 'Forbidden redirect target',
+            finalUrl: currentUrl,
+            error: 'Disallowed redirect target.',
+          };
+        }
+        const candidateRes = await fetcher(currentUrl, {
+          method: 'GET',
+          headers: currentHeaders,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (candidateRes.status >= 300 && candidateRes.status < 400 && hop < 3) {
+          const loc = candidateRes.headers.get('location');
+          if (!loc) {
+            res = candidateRes;
+            break;
+          }
+          const nextUrlObj = new URL(loc, currentUrl);
+          if (nextUrlObj.origin !== new URL(currentUrl).origin) {
+            delete currentHeaders['Authorization'];
+            delete currentHeaders['authorization'];
+          }
+          currentUrl = nextUrlObj.toString();
+          continue;
+        }
+        res = candidateRes;
+        break;
+      }
 
-      const finalUrl = res.url || parsed.toString();
+      if (!res) {
+        throw new Error('Too many redirects');
+      }
+
+      const finalUrl = currentUrl;
       const contentType = res.headers.get('content-type') || undefined;
 
       if (!res.ok) {
@@ -2769,33 +2868,45 @@ export class NetatmoClient {
       let u8: Uint8Array;
       const contentLenRaw = res.headers.get('content-length');
       const totalBytes = contentLenRaw ? Number(contentLenRaw) || 0 : 0;
+      if (totalBytes > maxBytes) {
+        throw new Error(`Media payload exceeds ${maxBytes} byte limit`);
+      }
 
-      if (
-        req.onProgress &&
-        res.body &&
-        typeof res.body.getReader === 'function'
-      ) {
+      if (res.body && typeof res.body.getReader === 'function') {
         const reader = res.body.getReader();
         const chunks: Buffer[] = [];
         let receivedBytes = 0;
         let lastEmit = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value && value.byteLength > 0) {
-            chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
-            receivedBytes += value.byteLength;
-            const now = Date.now();
-            if (now - lastEmit >= 120) {
-              lastEmit = now;
-              req.onProgress(receivedBytes, totalBytes);
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value && value.byteLength > 0) {
+              receivedBytes += value.byteLength;
+              if (receivedBytes > maxBytes) {
+                await reader.cancel().catch(() => {});
+                throw new Error(`Media payload exceeds ${maxBytes} byte limit`);
+              }
+              chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+              if (req.onProgress) {
+                const now = Date.now();
+                if (now - lastEmit >= 120) {
+                  lastEmit = now;
+                  req.onProgress(receivedBytes, totalBytes);
+                }
+              }
             }
           }
+        } finally {
+          reader.releaseLock();
         }
-        req.onProgress(receivedBytes, totalBytes);
+        req.onProgress?.(receivedBytes, totalBytes);
         u8 = Buffer.concat(chunks);
       } else {
         const buf = await res.arrayBuffer();
+        if (buf.byteLength > maxBytes) {
+          throw new Error(`Media payload exceeds ${maxBytes} byte limit`);
+        }
         u8 = new Uint8Array(buf);
       }
       const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
@@ -2978,6 +3089,7 @@ export class NetatmoClient {
             pingJson.local_url.startsWith('http')
           ) {
             localUrl = pingJson.local_url.replace(/\/+$/, '');
+            this.registerAllowedMediaUrl(localUrl);
           }
         }
       } catch (pingErr: any) {
@@ -2999,6 +3111,7 @@ export class NetatmoClient {
     }
 
     if (vpnUrl) {
+      this.registerAllowedMediaUrl(vpnUrl);
       this.cameraUrlCache.set(cameraId, {
         vpnUrl,
         localUrl,
@@ -3027,7 +3140,13 @@ export class NetatmoClient {
     }
 
     if (session.authMethod === 'demo') {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><circle cx="320" cy="155" r="44" fill="#38bdf8" fill-opacity="0.18" stroke="#38bdf8" stroke-width="2"/><path d="M304 147h22l10-6v28l-10-6h-22z" fill="#38bdf8"/><text x="320" y="232" text-anchor="middle" fill="#f8fafc" font-family="Segoe UI,sans-serif" font-size="18" font-weight="600">Demo Camera Snapshot</text><text x="320" y="258" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI,sans-serif" font-size="13">Event ${options.eventId} • Refreshed preview</text></svg>`;
+      const safeEventId = String(options.eventId || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><circle cx="320" cy="155" r="44" fill="#38bdf8" fill-opacity="0.18" stroke="#38bdf8" stroke-width="2"/><path d="M304 147h22l10-6v28l-10-6h-22z" fill="#38bdf8"/><text x="320" y="232" text-anchor="middle" fill="#f8fafc" font-family="Segoe UI,sans-serif" font-size="18" font-weight="600">Demo Camera Snapshot</text><text x="320" y="258" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI,sans-serif" font-size="13">Event ${safeEventId} • Refreshed preview</text></svg>`;
       const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`;
       return { ok: true, imageUrl: dataUrl, vignetteUrl: dataUrl };
     }
@@ -3087,6 +3206,7 @@ export class NetatmoClient {
       if (
         trimmed &&
         (trimmed.startsWith('https://') || trimmed.startsWith('http://')) &&
+        this.isAllowedSecurityMediaUrl(trimmed) &&
         !initialHttpCandidates.includes(trimmed)
       ) {
         initialHttpCandidates.push(trimmed);
@@ -3515,9 +3635,6 @@ export class NetatmoClient {
     if (!discovered.ok || discovered.workingCandidates.length === 0) {
       return {
         ok: false,
-        vpnUrl: discovered.vpnUrl,
-        localUrl: discovered.localUrl,
-        fallbackHlsUrls: discovered.candidates,
         needsAccessScope: discovered.needsAccessScope,
         error: discovered.error || 'Video stream unavailable.',
       };
@@ -3533,13 +3650,7 @@ export class NetatmoClient {
     return {
       ok: true,
       hlsUrl: proxied[0],
-      localHlsUrl:
-        discovered.localUrl && discovered.localHintPath
-          ? `${discovered.localUrl}${discovered.localHintPath}`
-          : undefined,
       fallbackHlsUrls: proxied.slice(1),
-      vpnUrl: discovered.vpnUrl,
-      localUrl: discovered.localUrl,
       isLocalStream: Boolean(
         discovered.localUrl && primaryRaw.startsWith(discovered.localUrl)
       ),
@@ -3716,10 +3827,10 @@ export class NetatmoClient {
       const m = /^data:([^;]+);base64,(.+)$/i.exec(dataUri);
       if (!m) return null;
       const mime = m[1].toLowerCase();
+      if (mime.includes('svg')) return null;
       let ext = 'jpg';
       if (mime.includes('png')) ext = 'png';
       else if (mime.includes('webp')) ext = 'webp';
-      else if (mime.includes('svg')) ext = 'svg';
       return {
         buffer: Buffer.from(m[2], 'base64'),
         ext,

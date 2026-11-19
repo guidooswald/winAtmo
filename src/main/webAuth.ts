@@ -7,6 +7,44 @@ import { AccountInfo, StoredCookie } from '../renderer/types';
 
 export const NETATMO_PARTITION = 'persist:netatmo';
 
+function isAllowedNetatmoDomain(domain: string): boolean {
+  const d = domain.toLowerCase().replace(/^\.+/, '');
+  return (
+    d === 'netatmo.com' ||
+    d.endsWith('.netatmo.com') ||
+    d === 'netatmo.net' ||
+    d.endsWith('.netatmo.net')
+  );
+}
+
+function isAllowedAuthNavUrl(rawUrl: string, callbackOrigin?: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (callbackOrigin && u.origin === callbackOrigin) return true;
+    if (u.protocol !== 'https:') return false;
+    const h = u.hostname.toLowerCase();
+    return (
+      h === 'netatmo.com' ||
+      h.endsWith('.netatmo.com') ||
+      h === 'netatmo.net' ||
+      h.endsWith('.netatmo.net') ||
+      h === 'legrand.com' ||
+      h.endsWith('.legrand.com') ||
+      h === 'eliotbylegrand.com' ||
+      h.endsWith('.eliotbylegrand.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function safeEquals(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
 export class WebAuthManager {
   private store: AppStore;
   private client: NetatmoClient;
@@ -57,6 +95,19 @@ export class WebAuthManager {
 
       this.currentAuthWindow = authWin;
 
+      authWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      authWin.webContents.on('will-navigate', (event, targetUrl) => {
+        if (!isAllowedAuthNavUrl(targetUrl)) {
+          event.preventDefault();
+        }
+      });
+
+      const detachHeaderListener = () => {
+        try {
+          netatmoSession.webRequest.onBeforeSendHeaders(null);
+        } catch {}
+      };
+
       // Listen for Authorization: Bearer <token> headers sent by home.netatmo.com / settings.netatmo.com
       netatmoSession.webRequest.onBeforeSendHeaders(
         {
@@ -83,6 +134,7 @@ export class WebAuthManager {
         if (resolved) return;
         resolved = true;
         clearInterval(interval);
+        detachHeaderListener();
         try {
           authWin.close();
         } catch {}
@@ -97,10 +149,8 @@ export class WebAuthManager {
 
         try {
           const allCookies = await netatmoSession.cookies.get({});
-          const netatmoCookies = allCookies.filter(
-            (c) =>
-              (c.domain ?? '').includes('netatmo.com') ||
-              (c.domain ?? '').includes('netatmo.net')
+          const netatmoCookies = allCookies.filter((c) =>
+            isAllowedNetatmoDomain(c.domain || '')
           );
 
           const tokenCookie = netatmoCookies.find(
@@ -185,6 +235,7 @@ export class WebAuthManager {
 
       authWin.on('closed', async () => {
         clearInterval(interval);
+        detachHeaderListener();
         this.currentAuthWindow = null;
 
         if (!resolved) {
@@ -224,6 +275,13 @@ export class WebAuthManager {
         },
       });
 
+      hiddenWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      hiddenWin.webContents.on('will-navigate', (event, targetUrl) => {
+        if (!isAllowedAuthNavUrl(targetUrl)) {
+          event.preventDefault();
+        }
+      });
+
       const done = (token: string | null) => {
         if (finished) return;
         finished = true;
@@ -239,7 +297,9 @@ export class WebAuthManager {
         try {
           const cookies = await netatmoSession.cookies.get({});
           const tokenCookie = cookies.find(
-            (c) => c.name === 'netatmocomaccess_token'
+            (c) =>
+              c.name === 'netatmocomaccess_token' &&
+              isAllowedNetatmoDomain(c.domain || '')
           );
           if (tokenCookie?.value) {
             const token = decodeURIComponent(tokenCookie.value);
@@ -277,7 +337,10 @@ export class WebAuthManager {
     parentWindow?: BrowserWindow,
     storeLocally = true
   ): Promise<{ success: boolean; account?: AccountInfo; error?: string }> {
-    if (!clientId.trim() || !clientSecret.trim()) {
+    const cleanClientId = clientId.trim();
+    const cleanClientSecret =
+      clientSecret.trim() || this.store.getSettings().oauthClientSecret || '';
+    if (!cleanClientId || !cleanClientSecret) {
       return {
         success: false,
         error: 'Client ID and Client Secret are required for OAuth2 login.',
@@ -286,16 +349,13 @@ export class WebAuthManager {
 
     if (storeLocally) {
       this.store.updateSettings({
-        oauthClientId: clientId.trim(),
-        oauthClientSecret: clientSecret.trim(),
+        oauthClientId: cleanClientId,
+        oauthClientSecret: cleanClientSecret,
         storeApiKeysLocally: true,
         autoUpdateTokens: true,
       });
     } else {
-      this.store.updateSettings({
-        oauthClientId: clientId.trim(),
-        oauthClientSecret: clientSecret.trim(),
-      });
+      this.store.setTransientOAuthCredentials(cleanClientId, cleanClientSecret);
     }
 
     const state = crypto.randomBytes(16).toString('hex');
@@ -350,7 +410,7 @@ export class WebAuthManager {
           return;
         }
 
-        if (!code || returnedState !== state) {
+        if (!code || !returnedState || !safeEquals(returnedState, state)) {
           cleanup();
           if (!resolved) {
             resolved = true;
@@ -374,8 +434,8 @@ export class WebAuthManager {
             },
             body: new URLSearchParams({
               grant_type: 'authorization_code',
-              client_id: clientId.trim(),
-              client_secret: clientSecret.trim(),
+              client_id: cleanClientId,
+              client_secret: cleanClientSecret,
               code,
               redirect_uri: redirectUri,
               scope: scopes,
@@ -406,8 +466,8 @@ export class WebAuthManager {
 
           if (storeLocally) {
             await this.store.saveApiKeys({
-              clientId: clientId.trim(),
-              clientSecret: clientSecret.trim(),
+              clientId: cleanClientId,
+              clientSecret: cleanClientSecret,
               accessToken: tokenData.access_token,
               refreshToken: tokenData.refresh_token,
               autoUpdate: true,
@@ -445,7 +505,7 @@ export class WebAuthManager {
         const authUrl =
           `https://api.netatmo.com/oauth2/authorize?` +
           new URLSearchParams({
-            client_id: clientId.trim(),
+            client_id: cleanClientId,
             redirect_uri: redirectUri,
             scope: scopes,
             state,
@@ -462,7 +522,16 @@ export class WebAuthManager {
             partition: NETATMO_PARTITION,
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
           },
+        });
+
+        const callbackOrigin = `http://127.0.0.1:${port}`;
+        oauthWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        oauthWin.webContents.on('will-navigate', (event, targetUrl) => {
+          if (!isAllowedAuthNavUrl(targetUrl, callbackOrigin)) {
+            event.preventDefault();
+          }
         });
 
         oauthWin.on('closed', () => {

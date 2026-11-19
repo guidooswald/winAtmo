@@ -13,7 +13,6 @@ import {
   SecurityDownloadResult,
   SecurityEventImageRefreshResult,
   SecurityEventVideoResult,
-  SecurityMediaFetchResult,
   SecurityVideoDownloadProgress,
   SetPersonsAwayResult,
   StorageStats,
@@ -70,7 +69,7 @@ export interface WinAtmoAPI {
   }>;
   saveApiKeys: (payload: {
     clientId: string;
-    clientSecret: string;
+    clientSecret?: string;
     accessToken?: string;
     refreshToken?: string;
     autoUpdate?: boolean;
@@ -145,13 +144,6 @@ export interface WinAtmoAPI {
     homeId: string;
     cameraId: string;
   }) => Promise<SecurityEventVideoResult>;
-  fetchSecurityMedia: (req: {
-    url: string;
-    responseType?: 'text' | 'arraybuffer';
-    headers?: Record<string, string>;
-    rangeStart?: number;
-    rangeEnd?: number;
-  }) => Promise<SecurityMediaFetchResult>;
   setHomeEmpty: (options: { homeIds: string[] }) => Promise<SetPersonsAwayResult>;
   downloadSecuritySnapshot: (options: {
     homeId: string;
@@ -294,7 +286,6 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('security:get-event-video', options),
   getCameraLiveStream: (options) =>
     ipcRenderer.invoke('security:get-live-stream', options),
-  fetchSecurityMedia: (req) => ipcRenderer.invoke('security:fetch-media', req),
   setHomeEmpty: (options) =>
     ipcRenderer.invoke('security:set-home-empty', options),
   downloadSecuritySnapshot: (options) =>

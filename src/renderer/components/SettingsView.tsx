@@ -81,9 +81,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [oauthClientId, setOauthClientId] = useState<string>(
     settings.oauthClientId || ''
   );
-  const [oauthClientSecret, setOauthClientSecret] = useState<string>(
-    settings.oauthClientSecret || ''
-  );
+  const [oauthClientSecret, setOauthClientSecret] = useState<string>('');
   const [manualToken, setManualToken] = useState<string>('');
   const [manualRefresh, setManualRefresh] = useState<string>('');
   const [storedKeysInfo, setStoredKeysInfo] =
@@ -114,7 +112,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleSaveApiKeys = async () => {
-    if (!oauthClientId.trim() || !oauthClientSecret.trim()) {
+    const hasSecretAvailable = Boolean(
+      oauthClientSecret.trim() || storedKeysInfo?.hasClientSecret
+    );
+    if (!oauthClientId.trim() || !hasSecretAvailable) {
       setSaveFeedback('Please enter both Client ID and Client Secret.');
       return;
     }
@@ -123,12 +124,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       const res = await window.winatmo.saveApiKeys({
         clientId: oauthClientId.trim(),
-        clientSecret: oauthClientSecret.trim(),
+        clientSecret: oauthClientSecret.trim() || undefined,
         accessToken: manualToken.trim() || undefined,
         refreshToken: manualRefresh.trim() || undefined,
         autoUpdate: settings.autoUpdateTokens !== false,
       });
       if (res.success) {
+        setOauthClientSecret('');
         setSaveFeedback('API keys saved locally in encrypted file (DPAPI).');
         await loadKeysInfo();
         setTimeout(() => setSaveFeedback(null), 4000);
@@ -1552,7 +1554,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
               <input
                 type="password"
-                placeholder="Client Secret"
+                placeholder={
+                  storedKeysInfo?.hasClientSecret
+                    ? 'Stored securely (leave blank to keep)'
+                    : 'Client Secret'
+                }
                 value={oauthClientSecret}
                 onChange={(e) => setOauthClientSecret(e.target.value)}
                 className="text-input"
@@ -1563,7 +1569,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <button
                 className="action-btn primary"
                 onClick={handleSaveApiKeys}
-                disabled={savingKeys || !oauthClientId.trim() || !oauthClientSecret.trim()}
+                disabled={
+                  savingKeys ||
+                  !oauthClientId.trim() ||
+                  (!oauthClientSecret.trim() && !storedKeysInfo?.hasClientSecret)
+                }
               >
                 <Lock size={13} /> {savingKeys ? 'Encrypting & Saving...' : 'Save Encrypted API Keys'}
               </button>
@@ -1648,7 +1658,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     settings.storeApiKeysLocally
                   )
                 }
-                disabled={!oauthClientId.trim() || !oauthClientSecret.trim()}
+                disabled={
+                  !oauthClientId.trim() ||
+                  (!oauthClientSecret.trim() && !storedKeysInfo?.hasClientSecret)
+                }
               >
                 Authorize via OAuth2
               </button>

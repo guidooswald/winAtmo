@@ -39,22 +39,56 @@ async function encryptSecretAsync(plain?: string): Promise<string | undefined> {
         return DPAPI_PREFIX + buf.toString('base64');
       }
     }
-  } catch {}
-  return plain;
+    if (
+      typeof safeStorage.isEncryptionAvailable === 'function' &&
+      safeStorage.isEncryptionAvailable()
+    ) {
+      const buf = safeStorage.encryptString(plain);
+      return DPAPI_PREFIX + buf.toString('base64');
+    }
+  } catch (err) {
+    console.warn('[AppStore] Secret encryption failed; refusing plaintext fallback:', err);
+    return undefined;
+  }
+  console.warn('[AppStore] OS credential encryption unavailable; refusing plaintext storage.');
+  return undefined;
+}
+
+function encryptSecretSync(plain?: string): string | undefined {
+  if (!plain) return undefined;
+  if (plain.startsWith(DPAPI_PREFIX)) return plain;
+  try {
+    if (
+      typeof safeStorage.isEncryptionAvailable === 'function' &&
+      safeStorage.isEncryptionAvailable()
+    ) {
+      const buf = safeStorage.encryptString(plain);
+      return DPAPI_PREFIX + buf.toString('base64');
+    }
+  } catch (err) {
+    console.warn('[AppStore] Synchronous secret encryption failed:', err);
+  }
+  return undefined;
 }
 
 async function decryptSecretAsync(stored?: string): Promise<string | undefined> {
   if (!stored) return undefined;
   if (!stored.startsWith(DPAPI_PREFIX)) return stored;
   try {
+    const buf = Buffer.from(stored.slice(DPAPI_PREFIX.length), 'base64');
     if (typeof safeStorage.isAsyncEncryptionAvailable === 'function') {
       const isAvail = await safeStorage.isAsyncEncryptionAvailable();
       if (isAvail && typeof safeStorage.decryptStringAsync === 'function') {
-        const buf = Buffer.from(stored.slice(DPAPI_PREFIX.length), 'base64');
         const res = await safeStorage.decryptStringAsync(buf);
         if (typeof res === 'string') return res;
         if (res && typeof (res as any).result === 'string') return (res as any).result;
       }
+    }
+    if (
+      typeof safeStorage.isEncryptionAvailable === 'function' &&
+      safeStorage.isEncryptionAvailable()
+    ) {
+      return safeStorage.decryptString(buf);
     }
   } catch {}
   return undefined;
@@ -117,6 +151,8 @@ export class AppStore {
     encOauthSecret?: string;
   } = {};
   private cachedEncryptedCookies?: any[];
+  private transientOauthClientId?: string;
+  private transientOauthClientSecret?: string;
 
   constructor() {
     const userDataDir = app.getPath('userData');
@@ -376,29 +412,53 @@ export class AppStore {
     }
   }
 
+  private syncEncryptOrReuse(
+    plain: string | undefined,
+    cachedPlain: string | undefined,
+    cachedEnc: string | undefined
+  ): string | undefined {
+    if (!plain) return undefined;
+    if (plain === cachedPlain && cachedEnc) return cachedEnc;
+    return encryptSecretSync(plain);
+  }
+
   public flushSync(): void {
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
       this.saveTimeout = null;
     }
     try {
+      const encOauthSecret = this.syncEncryptOrReuse(
+        this.state.settings.oauthClientSecret,
+        this.cachedEncryptedSecrets.plainOauthSecret,
+        this.cachedEncryptedSecrets.encOauthSecret
+      );
+      const encAccessToken = this.syncEncryptOrReuse(
+        this.state.session.accessToken,
+        this.cachedEncryptedSecrets.plainAccessToken,
+        this.cachedEncryptedSecrets.encAccessToken
+      );
+      const encRefreshToken = this.syncEncryptOrReuse(
+        this.state.session.refreshToken,
+        this.cachedEncryptedSecrets.plainRefreshToken,
+        this.cachedEncryptedSecrets.encRefreshToken
+      );
+      const encCookies = (this.state.session.cookies || []).map((c) => ({
+        ...c,
+        value: encryptSecretSync(c.value) || '',
+      }));
+
       const diskState: PersistedState = {
         ...this.state,
         settings: {
           ...this.state.settings,
-          oauthClientSecret:
-            this.cachedEncryptedSecrets.encOauthSecret ||
-            this.state.settings.oauthClientSecret,
+          oauthClientSecret: encOauthSecret,
         },
         session: {
           ...this.state.session,
-          accessToken:
-            this.cachedEncryptedSecrets.encAccessToken ||
-            this.state.session.accessToken,
-          refreshToken:
-            this.cachedEncryptedSecrets.encRefreshToken ||
-            this.state.session.refreshToken,
-          cookies: this.cachedEncryptedCookies || this.state.session.cookies,
+          accessToken: encAccessToken,
+          refreshToken: encRefreshToken,
+          cookies: encCookies,
         },
       };
       fs.writeFileSync(
@@ -412,7 +472,31 @@ export class AppStore {
   }
 
   public getSettings(): UserSettings {
-    return { ...this.state.settings };
+    return {
+      ...this.state.settings,
+      oauthClientId:
+        this.state.settings.oauthClientId || this.transientOauthClientId,
+      oauthClientSecret:
+        this.state.settings.oauthClientSecret ||
+        this.transientOauthClientSecret,
+    };
+  }
+
+  public getPublicSettings(): UserSettings {
+    return {
+      ...this.state.settings,
+      oauthClientId:
+        this.state.settings.oauthClientId || this.transientOauthClientId,
+      oauthClientSecret: undefined,
+    };
+  }
+
+  public setTransientOAuthCredentials(
+    clientId: string,
+    clientSecret: string
+  ): void {
+    this.transientOauthClientId = clientId.trim() || undefined;
+    this.transientOauthClientSecret = clientSecret.trim() || undefined;
   }
 
   public updateSettings(partial: Partial<UserSettings>): UserSettings {
@@ -440,6 +524,8 @@ export class AppStore {
   public clearSession(clearStoredKeys = false): void {
     this.cachedEncryptedSecrets = {};
     this.cachedEncryptedCookies = undefined;
+    this.transientOauthClientId = undefined;
+    this.transientOauthClientSecret = undefined;
     this.state.session = { ...DEFAULT_SESSION };
     this.state.cachedStations = [];
     this.state.lastSyncAt = undefined;
@@ -460,7 +546,9 @@ export class AppStore {
       country: s.country,
       locale: s.locale,
       tokenExpiresAt: s.expiresAt,
-      hasStoredKeys: hasFile || Boolean(this.state.settings.oauthClientId),
+      hasStoredKeys:
+        hasFile ||
+        Boolean(this.state.settings.oauthClientId || this.transientOauthClientId),
       autoUpdateEnabled: Boolean(this.state.settings.autoUpdateTokens),
     };
   }
@@ -470,6 +558,11 @@ export class AppStore {
   ): Promise<void> {
     const plain = JSON.stringify(creds, null, 2);
     const cipher = await encryptSecretAsync(plain);
+    if (!cipher || !cipher.startsWith(DPAPI_PREFIX)) {
+      throw new Error(
+        'OS credential encryption (DPAPI/safeStorage) is unavailable; refusing to store plaintext API keys.'
+      );
+    }
     const fileContent = JSON.stringify(
       {
         format: 'winatmo-dpapi-encrypted-credentials',
@@ -487,19 +580,31 @@ export class AppStore {
 
   public async saveApiKeys(payload: {
     clientId: string;
-    clientSecret: string;
+    clientSecret?: string;
     accessToken?: string;
     refreshToken?: string;
     autoUpdate?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
     try {
       const cleanClientId = payload.clientId.trim();
-      const cleanClientSecret = payload.clientSecret.trim();
+      const cleanClientSecret =
+        payload.clientSecret?.trim() ||
+        this.state.settings.oauthClientSecret ||
+        this.transientOauthClientSecret ||
+        '';
+      if (!cleanClientId || !cleanClientSecret) {
+        return {
+          success: false,
+          error: 'Both Client ID and Client Secret are required.',
+        };
+      }
       const cleanAccessToken = payload.accessToken?.trim();
       const cleanRefreshToken = payload.refreshToken?.trim();
       const autoUpdate =
         payload.autoUpdate !== undefined ? payload.autoUpdate : true;
 
+      this.transientOauthClientId = undefined;
+      this.transientOauthClientSecret = undefined;
       this.state.settings.oauthClientId = cleanClientId;
       this.state.settings.oauthClientSecret = cleanClientSecret;
       this.state.settings.storeApiKeysLocally = true;
@@ -580,6 +685,8 @@ export class AppStore {
       console.warn('[AppStore] Failed to delete encrypted keys file:', err);
     }
     if (clearSettings) {
+      this.transientOauthClientId = undefined;
+      this.transientOauthClientSecret = undefined;
       this.state.settings.oauthClientId = undefined;
       this.state.settings.oauthClientSecret = undefined;
       this.state.settings.storeApiKeysLocally = false;
@@ -591,7 +698,7 @@ export class AppStore {
 
   public getStoredApiKeysInfo(): StoredApiKeysInfo {
     const hasFile = fs.existsSync(this.apiKeysPath);
-    const s = this.state.settings;
+    const s = this.getSettings();
     const sess = this.state.session;
     return {
       hasStoredKeys: hasFile || Boolean(s.oauthClientId && s.oauthClientSecret),

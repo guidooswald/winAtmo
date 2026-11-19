@@ -4,35 +4,90 @@ import { session, net } from 'electron';
 import { debugLogger } from './debugLogger';
 
 const NETATMO_PARTITION = 'persist:netatmo';
+const MAX_MEDIA_RESPONSE_BYTES = 32 * 1024 * 1024;
+const MAX_REDIRECT_HOPS = 3;
 
-function isPrivateOrLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
-  if (/^10\./.test(h) || /^192\.168\./.test(h)) return true;
-  const m172 = /^172\.(\d+)\./.exec(h);
-  if (m172) {
-    const second = Number(m172[1]);
-    if (second >= 16 && second <= 31) return true;
-  }
+function isDisallowedLoopbackOrLinkLocal(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h) return true;
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h === '0.0.0.0' || h === '::' || h === '::1') return true;
+  if (h.startsWith('127.') || h.startsWith('169.254.')) return true;
+  if (h.startsWith('fe80:') || h.startsWith('::ffff:127.')) return true;
   return false;
+}
+
+function isValidLocalCorsOrigin(origin?: string): boolean {
+  if (!origin) return false;
+  if (origin === 'null') return true; // Electron file:// renderer
+  return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+}
+
+function safeTokenEquals(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+async function readResponseBufferLimited(
+  resp: Response,
+  maxBytes: number
+): Promise<Buffer> {
+  const clHeader = resp.headers.get('content-length');
+  if (clHeader) {
+    const cl = Number(clHeader);
+    if (Number.isFinite(cl) && cl > maxBytes) {
+      throw new Error(`Upstream media response exceeds ${maxBytes} byte cap`);
+    }
+  }
+  const reader = resp.body?.getReader();
+  if (!reader) {
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.byteLength > maxBytes) {
+      throw new Error(`Upstream media response exceeds ${maxBytes} byte cap`);
+    }
+    return buf;
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => {});
+          throw new Error(`Upstream media response exceeds ${maxBytes} byte cap`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks);
 }
 
 /**
  * Resolves relative and absolute URIs inside an HLS `.m3u8` playlist against `baseUrl`
- * and rewrites every media/playlist/key URI to go through the local loopback proxy.
+ * and rewrites allowed media/playlist/key URIs to go through the local loopback proxy.
  */
 function rewriteM3u8Manifest(
   text: string,
   baseUrl: string,
-  makeProxyUrl: (absUrl: string) => string,
-  allowUrl: (absUrl: string) => void
+  isAllowed: (absUrl: string) => boolean,
+  makeProxyUrl: (absUrl: string) => string
 ): string {
   const resolveAndWrap = (rawUri: string): string => {
     const trimmed = rawUri.trim();
     if (!trimmed) return rawUri;
     try {
       const resolved = new URL(trimmed, baseUrl).toString();
-      allowUrl(resolved);
+      if (!isAllowed(resolved)) {
+        return '#EXT-X-DISALLOWED-URI';
+      }
       return makeProxyUrl(resolved);
     } catch {
       return rawUri;
@@ -70,7 +125,10 @@ export class SecurityMediaProxy {
   public allowUrlOrigin(targetUrl: string): void {
     try {
       const u = new URL(targetUrl);
-      if (u.protocol === 'http:' || u.protocol === 'https:') {
+      if (
+        (u.protocol === 'http:' || u.protocol === 'https:') &&
+        !isDisallowedLoopbackOrLinkLocal(u.hostname)
+      ) {
         this.allowedOrigins.add(u.origin);
       }
     } catch {}
@@ -80,13 +138,15 @@ export class SecurityMediaProxy {
     try {
       const u = new URL(targetUrl);
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-      if (this.allowedOrigins.has(u.origin)) return true;
       const host = u.hostname.toLowerCase();
+      if (isDisallowedLoopbackOrLinkLocal(host)) return false;
+      if (this.allowedOrigins.has(u.origin)) return true;
       if (
-        host.endsWith('.netatmo.com') ||
-        host.endsWith('.netatmo.net') ||
         host === 'api.netatmo.com' ||
-        isPrivateOrLoopbackHost(host)
+        host === 'netatmo.com' ||
+        host.endsWith('.netatmo.com') ||
+        host === 'netatmo.net' ||
+        host.endsWith('.netatmo.net')
       ) {
         return true;
       }
@@ -145,18 +205,29 @@ export class SecurityMediaProxy {
     )}`;
   }
 
-  private setCorsHeaders(res: http.ServerResponse): void {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Access-Control-Expose-Headers', '*');
+  private setCorsHeaders(
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): void {
+    const reqOrigin =
+      typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+    if (isValidLocalCorsOrigin(reqOrigin)) {
+      res.setHeader('Access-Control-Allow-Origin', reqOrigin!);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'Content-Length, Content-Range, Accept-Ranges'
+      );
+    }
   }
 
   private async handleRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse
   ): Promise<void> {
-    this.setCorsHeaders(res);
+    this.setCorsHeaders(req, res);
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -173,9 +244,10 @@ export class SecurityMediaProxy {
     let targetUrl = '';
     try {
       const reqUrl = new URL(req.url || '/', 'http://127.0.0.1');
+      const suppliedToken = reqUrl.searchParams.get('token') || '';
       if (
         reqUrl.pathname !== '/proxy' ||
-        reqUrl.searchParams.get('token') !== this.secret
+        !safeTokenEquals(suppliedToken, this.secret)
       ) {
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         res.end('Forbidden');
@@ -216,16 +288,42 @@ export class SecurityMediaProxy {
           ? (input: string, init: RequestInit) => netatmoSes.fetch(input, init)
           : (input: string, init: RequestInit) => net.fetch(input, init);
 
-      const upstream = await fetcher(targetUrl, {
-        method: req.method,
-        headers: forwardHeaders,
-        redirect: 'follow',
-        signal: AbortSignal.timeout(30000),
-      });
+      let currentUrl = targetUrl;
+      let upstream: Response | null = null;
+      for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+        if (!this.isAllowedTarget(currentUrl)) {
+          res.writeHead(403, { 'Content-Type': 'text/plain' });
+          res.end('Disallowed redirect target');
+          return;
+        }
+        const candidateRes = await fetcher(currentUrl, {
+          method: req.method,
+          headers: forwardHeaders,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(30000),
+        });
+        if (
+          candidateRes.status >= 300 &&
+          candidateRes.status < 400 &&
+          hop < MAX_REDIRECT_HOPS
+        ) {
+          const loc = candidateRes.headers.get('location');
+          if (!loc) {
+            upstream = candidateRes;
+            break;
+          }
+          currentUrl = new URL(loc, currentUrl).toString();
+          continue;
+        }
+        upstream = candidateRes;
+        break;
+      }
 
-      const finalUrl = upstream.url || targetUrl;
-      this.allowUrlOrigin(finalUrl);
+      if (!upstream) {
+        throw new Error('Too many upstream redirects');
+      }
 
+      const finalUrl = currentUrl;
       const contentType = upstream.headers.get('content-type') || '';
       const isPlaylistUrl = /\.m3u8(\?|$)/i.test(finalUrl) || isHlsPlaylistTarget;
       const isPlaylistMime =
@@ -278,7 +376,10 @@ export class SecurityMediaProxy {
         return;
       }
 
-      const rawBuf = Buffer.from(await upstream.arrayBuffer());
+      const rawBuf = await readResponseBufferLimited(
+        upstream,
+        MAX_MEDIA_RESPONSE_BYTES
+      );
       const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
 
       // Detect playlist even if server sends application/octet-stream or text/plain
@@ -295,14 +396,21 @@ export class SecurityMediaProxy {
           ok: true,
           durationMs,
           bytesReceived: rawBuf.byteLength,
-          rawBody: rawText,
+          rawBody: JSON.stringify(
+            {
+              lines: rawText.split(/\r?\n/).length,
+              bytes: rawBuf.byteLength,
+            },
+            null,
+            2
+          ),
           note: 'Security HLS manifest (.m3u8)',
         });
         const rewritten = rewriteM3u8Manifest(
           rawText,
           finalUrl,
-          (abs) => this.buildProxyUrl(abs),
-          (abs) => this.allowUrlOrigin(abs)
+          (abs) => this.isAllowedTarget(abs),
+          (abs) => this.buildProxyUrl(abs)
         );
         const outBuf = Buffer.from(rewritten, 'utf8');
         res.writeHead(upstream.status, {

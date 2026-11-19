@@ -131,6 +131,10 @@ export class TimeSeriesDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_security_events_home_time ON security_events (home_id, time DESC);
       CREATE INDEX IF NOT EXISTS idx_security_events_time ON security_events (time DESC);
+
+      UPDATE security_cameras
+      SET vpn_url = NULL, local_url = NULL
+      WHERE vpn_url IS NOT NULL OR local_url IS NOT NULL;
     `);
   }
 
@@ -527,8 +531,8 @@ export class TimeSeriesDatabase {
             cam.floodlight ?? null,
             cam.sirenStatus ?? null,
             cam.lastSetup !== undefined ? Number(cam.lastSetup) : null,
-            cam.vpnUrl ?? null,
-            cam.localUrl ?? null,
+            null,
+            null,
             now
           );
         }
@@ -739,8 +743,6 @@ export class TimeSeriesDatabase {
         floodlight: r.floodlight ?? undefined,
         sirenStatus: r.siren_status ?? undefined,
         lastSetup: r.last_setup !== null ? Number(r.last_setup) : undefined,
-        vpnUrl: r.vpn_url ?? undefined,
-        localUrl: r.local_url ?? undefined,
       });
       camerasByHome.set(String(r.home_id), list);
     }

@@ -18,6 +18,22 @@ const METADATA_CACHE_TTL_MS = 4 * 60 * 1000;
 const TILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours max
 const TILE_CACHE_MAX_DISK_BYTES = 250 * 1024 * 1024;
 const TILE_MEM_CACHE_MAX_ENTRIES = 320;
+const TILE_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const TILE_MAX_REDIRECT_HOPS = 2;
+const TILE_PROXY_SECRET = crypto.randomBytes(18).toString('hex');
+
+function safeTokenEquals(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+function isValidLocalCorsOrigin(origin?: string): boolean {
+  if (!origin) return false;
+  if (origin === 'null') return true;
+  return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+}
 
 const cachedByProvider = new Map<RadarProvider, RadarMetadataPayload>();
 const inFlightByProvider = new Map<RadarProvider, Promise<RadarMetadataPayload>>();
@@ -51,7 +67,7 @@ function hashUrl(targetUrl: string): string {
 function isAllowedRadarOrMapHost(rawUrl: string): boolean {
   try {
     const u = new URL(rawUrl);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    if (u.protocol !== 'https:') return false;
     const h = u.hostname.toLowerCase();
     return (
       h === 'maps.dwd.de' ||
@@ -203,23 +219,55 @@ async function fetchAndCacheTile(targetUrl: string): Promise<CachedTileEntry | n
 
   const req = (async (): Promise<CachedTileEntry | null> => {
     try {
-      const res = await fetch(targetUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'winAtmo/0.3.0 (Desktop Weather Studio)',
-        },
-        signal: AbortSignal.timeout(25000),
-      });
-      if (!res.ok) {
+      let currentUrl = targetUrl;
+      let res: Response | null = null;
+      for (let hop = 0; hop <= TILE_MAX_REDIRECT_HOPS; hop++) {
+        if (!isAllowedRadarOrMapHost(currentUrl)) {
+          return null;
+        }
+        const candidate = await fetch(currentUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'winAtmo/0.3.0 (Desktop Weather Studio)',
+          },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(25000),
+        });
+        if (
+          candidate.status >= 300 &&
+          candidate.status < 400 &&
+          hop < TILE_MAX_REDIRECT_HOPS
+        ) {
+          const loc = candidate.headers.get('location');
+          if (!loc) {
+            res = candidate;
+            break;
+          }
+          currentUrl = new URL(loc, currentUrl).toString();
+          continue;
+        }
+        res = candidate;
+        break;
+      }
+      if (!res || !res.ok) {
         return null;
       }
       const ct = (res.headers.get('content-type') || 'image/png').toLowerCase();
       if (!ct.startsWith('image/')) {
         return null;
       }
+      const clHeader = res.headers.get('content-length');
+      if (clHeader) {
+        const cl = Number(clHeader);
+        if (Number.isFinite(cl) && cl > TILE_MAX_RESPONSE_BYTES) {
+          return null;
+        }
+      }
       const ab = await res.arrayBuffer();
       const data = Buffer.from(ab);
-      if (data.byteLength === 0) return null;
+      if (data.byteLength === 0 || data.byteLength > TILE_MAX_RESPONSE_BYTES) {
+        return null;
+      }
 
       const entry: CachedTileEntry = {
         data,
@@ -256,6 +304,12 @@ export async function ensureRadarCacheServerStarted(): Promise<string> {
           res.end('Not found');
           return;
         }
+        const suppliedToken = parsed.searchParams.get('token') || '';
+        if (!safeTokenEquals(suppliedToken, TILE_PROXY_SECRET)) {
+          res.writeHead(403);
+          res.end('Forbidden');
+          return;
+        }
         const targetUrl = parsed.searchParams.get('u');
         if (!targetUrl || !isAllowedRadarOrMapHost(targetUrl)) {
           res.writeHead(403);
@@ -271,13 +325,19 @@ export async function ensureRadarCacheServerStarted(): Promise<string> {
           return;
         }
 
-        res.writeHead(200, {
+        const reqOrigin =
+          typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+        const headers: Record<string, string | number> = {
           'Content-Type': entry.contentType,
           'Content-Length': entry.data.byteLength,
           'Cache-Control': 'public, max-age=86400',
-          'Access-Control-Allow-Origin': '*',
           'X-WinAtmo-Cache': cachedBefore ? 'HIT' : 'MISS',
-        });
+        };
+        if (isValidLocalCorsOrigin(reqOrigin)) {
+          headers['Access-Control-Allow-Origin'] = reqOrigin!;
+          headers['Vary'] = 'Origin';
+        }
+        res.writeHead(200, headers);
         res.end(entry.data);
       } catch {
         if (!res.headersSent) {
@@ -436,6 +496,7 @@ async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPay
               provider: 'dwd',
               fetchedAt: Date.now(),
               cacheProxyUrl,
+              cacheProxyToken: TILE_PROXY_SECRET,
               wmsUrl: DWD_WMS_URL,
               wmsLayer: DWD_PAST_LAYER,
               maxNativeZoom: 12,
@@ -476,6 +537,7 @@ async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPay
       provider: 'dwd',
       fetchedAt: Date.now(),
       cacheProxyUrl,
+      cacheProxyToken: TILE_PROXY_SECRET,
       wmsUrl: DWD_WMS_URL,
       wmsLayer: DWD_PAST_LAYER,
       maxNativeZoom: 12,
@@ -555,6 +617,7 @@ async function fetchRainViewerMetadata(
       provider: 'rainviewer',
       fetchedAt: Date.now(),
       cacheProxyUrl,
+      cacheProxyToken: TILE_PROXY_SECRET,
       host,
       maxNativeZoom: 7,
       frames,
@@ -585,6 +648,7 @@ async function fetchRainViewerMetadata(
       provider: 'rainviewer',
       fetchedAt: Date.now(),
       cacheProxyUrl,
+      cacheProxyToken: TILE_PROXY_SECRET,
       maxNativeZoom: 7,
       frames: [],
       defaultFrameIndex: 0,
@@ -612,7 +676,7 @@ export async function getRadarMetadata(
       !cached.error &&
       Date.now() - cached.fetchedAt < METADATA_CACHE_TTL_MS
     ) {
-      return { ...cached, cacheProxyUrl };
+      return { ...cached, cacheProxyUrl, cacheProxyToken: TILE_PROXY_SECRET };
     }
   }
 
