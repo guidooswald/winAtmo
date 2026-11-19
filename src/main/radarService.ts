@@ -228,7 +228,7 @@ async function fetchAndCacheTile(targetUrl: string): Promise<CachedTileEntry | n
         const candidate = await fetch(currentUrl, {
           method: 'GET',
           headers: {
-            'User-Agent': 'winAtmo/0.3.0 (Desktop Weather Studio)',
+            'User-Agent': 'winAtmo/0.4.0 (Desktop Weather Studio)',
           },
           redirect: 'manual',
           signal: AbortSignal.timeout(25000),
