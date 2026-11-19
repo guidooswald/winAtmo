@@ -25,6 +25,7 @@ const EN = {
   // Navigation & General
   nav_sensors: 'Sensors',
   nav_charts: 'Charts',
+  nav_map: 'Radar Map',
   nav_security: 'Security',
   nav_settings: 'Settings',
   taskbar_widget: 'Taskbar Widget',
@@ -254,6 +255,7 @@ export type TranslationKey = keyof typeof EN;
 const DE: Record<TranslationKey, string> = {
   nav_sensors: 'Sensoren',
   nav_charts: 'Diagramme',
+  nav_map: 'Regenradar',
   nav_security: 'Sicherheit',
   nav_settings: 'Einstellungen',
   taskbar_widget: 'Taskleisten-Widget',
@@ -475,6 +477,7 @@ const DE: Record<TranslationKey, string> = {
 const FR: Record<TranslationKey, string> = {
   nav_sensors: 'Capteurs',
   nav_charts: 'Graphiques',
+  nav_map: 'Carte Radar',
   nav_security: 'Sécurité',
   nav_settings: 'Paramètres',
   taskbar_widget: 'Widget barre des tâches',
@@ -696,6 +699,7 @@ const FR: Record<TranslationKey, string> = {
 const ES: Record<TranslationKey, string> = {
   nav_sensors: 'Sensores',
   nav_charts: 'Gráficos',
+  nav_map: 'Mapa Radar',
   nav_security: 'Seguridad',
   nav_settings: 'Ajustes',
   taskbar_widget: 'Widget de barra de tareas',
@@ -917,6 +921,7 @@ const ES: Record<TranslationKey, string> = {
 const PT: Record<TranslationKey, string> = {
   nav_sensors: 'Sensores',
   nav_charts: 'Gráficos',
+  nav_map: 'Mapa Radar',
   nav_security: 'Segurança',
   nav_settings: 'Definições',
   taskbar_widget: 'Widget da barra de tarefas',
@@ -1138,6 +1143,7 @@ const PT: Record<TranslationKey, string> = {
 const IT: Record<TranslationKey, string> = {
   nav_sensors: 'Sensori',
   nav_charts: 'Grafici',
+  nav_map: 'Mappa Radar',
   nav_security: 'Sicurezza',
   nav_settings: 'Impostazioni',
   taskbar_widget: 'Widget barra delle applicazioni',
@@ -1359,6 +1365,7 @@ const IT: Record<TranslationKey, string> = {
 const PL: Record<TranslationKey, string> = {
   nav_sensors: 'Czujniki',
   nav_charts: 'Wykresy',
+  nav_map: 'Mapa Radaru',
   nav_security: 'Bezpieczeństwo',
   nav_settings: 'Ustawienia',
   taskbar_widget: 'Widżet paska zadań',
@@ -1580,6 +1587,7 @@ const PL: Record<TranslationKey, string> = {
 const CS: Record<TranslationKey, string> = {
   nav_sensors: 'Senzory',
   nav_charts: 'Grafy',
+  nav_map: 'Radarová mapa',
   nav_security: 'Zabezpečení',
   nav_settings: 'Nastavení',
   taskbar_widget: 'Widget hlavního panelu',
@@ -1801,6 +1809,7 @@ const CS: Record<TranslationKey, string> = {
 const EL: Record<TranslationKey, string> = {
   nav_sensors: 'Αισθητήρες',
   nav_charts: 'Διαγράμματα',
+  nav_map: 'Χάρτης Ραντάρ',
   nav_security: 'Ασφάλεια',
   nav_settings: 'Ρυθμίσεις',
   taskbar_widget: 'Widget γραμμής εργασιών',

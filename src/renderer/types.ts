@@ -523,3 +523,27 @@ export interface SecurityVideoDownloadProgress {
   percent: number;
   message?: string;
 }
+
+export type RadarProvider = 'dwd' | 'rainviewer';
+
+export interface RadarFrame {
+  timestampSec: number;
+  isoTime: string;
+  kind: 'past' | 'now' | 'forecast';
+  tilePath?: string;
+}
+
+export interface RadarMetadataPayload {
+  provider: RadarProvider;
+  fetchedAt: number;
+  host?: string;
+  wmsUrl?: string;
+  wmsLayer?: string;
+  maxNativeZoom: number;
+  frames: RadarFrame[];
+  defaultFrameIndex: number;
+  attribution: string;
+  coverageNote: string;
+  fallbackUsed?: boolean;
+  error?: string;
+}

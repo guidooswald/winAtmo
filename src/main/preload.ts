@@ -7,6 +7,8 @@ import {
   MeasureQueryStatus,
   MeasureSeries,
   NetatmoScale,
+  RadarMetadataPayload,
+  RadarProvider,
   SecurityDataPayload,
   SecurityDownloadResult,
   SecurityEventImageRefreshResult,
@@ -174,6 +176,12 @@ export interface WinAtmoAPI {
     defaultFileName?: string;
   }) => Promise<SecurityDownloadResult>;
 
+  // Rain Radar Weather Map
+  getRadarMetadata: (options?: {
+    provider?: RadarProvider;
+    force?: boolean;
+  }) => Promise<RadarMetadataPayload>;
+
   // Debug Console & Telemetry
   openDebugWindow: () => void;
   getDebugSnapshot: () => Promise<DebugTelemetrySnapshot>;
@@ -294,6 +302,9 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('security:download-video', options),
   downloadCameraReplay: (options) =>
     ipcRenderer.invoke('security:download-replay', options),
+
+  getRadarMetadata: (options) =>
+    ipcRenderer.invoke('radar:get-metadata', options),
 
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),

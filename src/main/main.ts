@@ -24,6 +24,7 @@ import {
   resolveTaskbarReading,
   generateTaskbarIcon,
 } from './taskbarIcon';
+import { getRadarMetadata } from './radarService';
 import {
   AccountInfo,
   MeasureQueryRequest,
@@ -2047,6 +2048,17 @@ function registerIpcHandlers(): void {
           broadcastToAllWindows('security:video-download-progress', progress);
         }
       );
+    }
+  );
+
+  // Rain Radar Weather Map IPC
+  ipcMain.handle(
+    'radar:get-metadata',
+    async (
+      _e,
+      options?: { provider?: 'dwd' | 'rainviewer'; force?: boolean }
+    ) => {
+      return getRadarMetadata(options?.provider || 'dwd', Boolean(options?.force));
     }
   );
 

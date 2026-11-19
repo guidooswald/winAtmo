@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  CloudRain,
   CloudSun,
   Database,
   ExternalLink,
@@ -30,6 +31,7 @@ import {
 } from './types';
 import { StationDashboard } from './components/StationDashboard';
 import { ChartStudio } from './components/ChartStudio';
+import { RadarMapView } from './components/RadarMapView';
 import { SecurityView } from './components/SecurityView';
 import { SettingsView } from './components/SettingsView';
 import { TaskbarWidget } from './components/TaskbarWidget';
@@ -65,7 +67,7 @@ export const App: React.FC = () => {
 
 const MainStudioApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'charts' | 'security' | 'settings'
+    'dashboard' | 'charts' | 'map' | 'security' | 'settings'
   >('dashboard');
   const [account, setAccount] = useState<AccountInfo>({ loggedIn: false });
   const [stations, setStations] = useState<WeatherStation[]>([]);
@@ -355,8 +357,8 @@ interface MainStudioShellProps {
   setWelcomeClientSecret: (val: string) => void;
   welcomeStoreLocally: boolean;
   setWelcomeStoreLocally: (val: boolean) => void;
-  activeTab: 'dashboard' | 'charts' | 'security' | 'settings';
-  setActiveTab: (tab: 'dashboard' | 'charts' | 'security' | 'settings') => void;
+  activeTab: 'dashboard' | 'charts' | 'map' | 'security' | 'settings';
+  setActiveTab: (tab: 'dashboard' | 'charts' | 'map' | 'security' | 'settings') => void;
   chartFocus: { moduleId: string; metric?: string } | null;
   setChartFocus: (focus: { moduleId: string; metric?: string } | null) => void;
   handleUpdateSettings: (partial: Partial<UserSettings>) => Promise<void>;
@@ -487,6 +489,13 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
           >
             <LineChart size={15} />
             <span>{t('nav_charts')}</span>
+          </button>
+          <button
+            className={`nav-tab-btn ${activeTab === 'map' ? 'active' : ''}`}
+            onClick={() => setActiveTab('map')}
+          >
+            <CloudRain size={15} />
+            <span>{t('nav_map')}</span>
           </button>
           <button
             className={`nav-tab-btn ${activeTab === 'security' ? 'active' : ''}`}
@@ -925,6 +934,17 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
                 settings={settings}
                 initialFocus={chartFocus}
                 onClearFocus={() => setChartFocus(null)}
+              />
+            )}
+
+            {activeTab === 'map' && (
+              <RadarMapView
+                stations={stations}
+                settings={settings}
+                onOpenInChart={(moduleId: string, metric: MetricType) => {
+                  setChartFocus({ moduleId, metric });
+                  setActiveTab('charts');
+                }}
               />
             )}
 
