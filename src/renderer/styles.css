@@ -5369,6 +5369,10 @@ body {
   height: 100%;
 }
 
+.leaflet-dark-osm-pane {
+  filter: invert(92%) hue-rotate(180deg) brightness(95%) contrast(90%) saturate(75%);
+}
+
 .radar-coverage-hint {
   position: absolute;
   top: 12px;

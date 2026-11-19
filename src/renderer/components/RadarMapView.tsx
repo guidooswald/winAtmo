@@ -28,7 +28,7 @@ interface RadarMapViewProps {
   onOpenInChart?: (moduleId: string, metric: MetricType) => void;
 }
 
-type BaseMapMode = 'auto' | 'dark' | 'light' | 'osm';
+type BaseMapMode = 'auto' | 'dark' | 'light' | 'osm-dark' | 'osm' | 'topo';
 
 // DWD Radar_rv_product_1x1km_ger footprint (Germany & Central European border regions)
 const DWD_BOUNDS = {
@@ -86,35 +86,48 @@ function formatFrameOffset(timestampSec: number): {
 
 function getBaseTileConfig(mode: BaseMapMode, themeId: string): {
   url: string;
+  labelsUrl?: string;
   attribution: string;
-  subdomains?: string;
+  maxZoom: number;
+  darkOsmFilter?: boolean;
 } {
-  const effectiveDark =
-    mode === 'dark'
-      ? true
-      : mode === 'light'
-        ? false
-        : mode === 'osm'
-          ? false
-          : getThemeDefinition(themeId).mode !== 'light';
+  const isLightTheme = getThemeDefinition(themeId).mode === 'light';
+  const resolvedMode =
+    mode === 'auto' ? (isLightTheme ? 'light' : 'dark') : mode;
 
-  if (mode === 'osm') {
+  if (resolvedMode === 'osm' || resolvedMode === 'osm-dark') {
     return {
       url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19,
+      darkOsmFilter: resolvedMode === 'osm-dark',
     };
   }
-  if (effectiveDark) {
+
+  if (resolvedMode === 'topo') {
     return {
-      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-      subdomains: 'abcd',
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap contributors &copy; OpenTopoMap (CC-BY-SA)',
+      maxZoom: 17,
     };
   }
+
+  if (resolvedMode === 'dark') {
+    return {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+      labelsUrl:
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+      maxZoom: 16,
+    };
+  }
+
   return {
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    subdomains: 'abcd',
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    labelsUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+    maxZoom: 16,
   };
 }
 
@@ -152,7 +165,9 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         saved === 'auto' ||
         saved === 'dark' ||
         saved === 'light' ||
-        saved === 'osm'
+        saved === 'osm-dark' ||
+        saved === 'osm' ||
+        saved === 'topo'
       ) {
         return saved;
       }
@@ -179,6 +194,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const baseLayerRef = useRef<L.TileLayer | null>(null);
+  const refLabelsLayerRef = useRef<L.TileLayer | null>(null);
   const radarLayerRef = useRef<L.TileLayer | L.TileLayer.WMS | null>(null);
   const radarLayerKeyRef = useRef<string>('');
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
@@ -257,6 +273,12 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     });
 
     const markersGroup = L.layerGroup().addTo(map);
+    const darkOsmPane = map.createPane('darkOsmPane');
+    darkOsmPane.style.zIndex = '201';
+    darkOsmPane.className = 'leaflet-dark-osm-pane';
+    const labelsPane = map.createPane('labelsOverlayPane');
+    labelsPane.style.zIndex = '450';
+    labelsPane.style.pointerEvents = 'none';
     mapRef.current = map;
     markersLayerRef.current = markersGroup;
 
@@ -275,6 +297,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       map.remove();
       mapRef.current = null;
       baseLayerRef.current = null;
+      refLabelsLayerRef.current = null;
       radarLayerRef.current = null;
       radarLayerKeyRef.current = '';
       markersLayerRef.current = null;
@@ -291,15 +314,30 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       map.removeLayer(baseLayerRef.current);
       baseLayerRef.current = null;
     }
+    if (refLabelsLayerRef.current) {
+      map.removeLayer(refLabelsLayerRef.current);
+      refLabelsLayerRef.current = null;
+    }
 
     const layer = L.tileLayer(cfg.url, {
-      ...(cfg.subdomains ? { subdomains: cfg.subdomains } : {}),
       attribution: cfg.attribution,
       maxZoom: 19,
+      maxNativeZoom: cfg.maxZoom,
       zIndex: 1,
+      ...(cfg.darkOsmFilter ? { pane: 'darkOsmPane' } : {}),
     });
     layer.addTo(map);
     baseLayerRef.current = layer;
+
+    if (cfg.labelsUrl) {
+      const labels = L.tileLayer(cfg.labelsUrl, {
+        pane: 'labelsOverlayPane',
+        maxZoom: 19,
+        maxNativeZoom: cfg.maxZoom,
+      });
+      labels.addTo(map);
+      refLabelsLayerRef.current = labels;
+    }
   }, [baseMapMode, settings.theme]);
 
   // Update Radar Overlay Layer cleanly when metadata, frameIndex, or opacity changes
@@ -578,9 +616,11 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
               onChange={(e) => setBaseMapMode(e.target.value as BaseMapMode)}
             >
               <option value="auto">Map: Auto (Theme)</option>
-              <option value="dark">Map: Dark</option>
-              <option value="light">Map: Light</option>
+              <option value="dark">Map: Dark Gray</option>
+              <option value="light">Map: Light Gray</option>
+              <option value="osm-dark">Map: OSM Dark</option>
               <option value="osm">Map: OpenStreetMap</option>
+              <option value="topo">Map: OpenTopoMap</option>
             </select>
           </div>
 
