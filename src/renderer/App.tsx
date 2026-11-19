@@ -48,6 +48,56 @@ declare global {
   }
 }
 
+interface TabErrorBoundaryProps {
+  resetKey: string;
+  children: React.ReactNode;
+}
+
+interface TabErrorBoundaryState {
+  errorMessage: string | null;
+}
+
+class TabErrorBoundary extends React.Component<
+  TabErrorBoundaryProps,
+  TabErrorBoundaryState
+> {
+  constructor(props: TabErrorBoundaryProps) {
+    super(props);
+    this.state = { errorMessage: null };
+  }
+
+  static getDerivedStateFromError(err: Error): TabErrorBoundaryState {
+    return { errorMessage: err?.message || 'Unexpected UI rendering error' };
+  }
+
+  componentDidUpdate(prevProps: TabErrorBoundaryProps): void {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.errorMessage) {
+      this.setState({ errorMessage: null });
+    }
+  }
+
+  componentDidCatch(err: Error): void {
+    console.error('[winAtmo] Tab render error:', err);
+  }
+
+  render(): React.ReactNode {
+    if (this.state.errorMessage) {
+      return (
+        <div className="error-banner" style={{ margin: '16px 0' }}>
+          <span>View error: {this.state.errorMessage}</span>
+          <button
+            type="button"
+            onClick={() => this.setState({ errorMessage: null })}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export const App: React.FC = () => {
   const mode =
     typeof window !== 'undefined'
@@ -938,14 +988,16 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
             )}
 
             {activeTab === 'map' && (
-              <RadarMapView
-                stations={stations}
-                settings={settings}
-                onOpenInChart={(moduleId: string, metric: MetricType) => {
-                  setChartFocus({ moduleId, metric });
-                  setActiveTab('charts');
-                }}
-              />
+              <TabErrorBoundary resetKey={activeTab}>
+                <RadarMapView
+                  stations={stations}
+                  settings={settings}
+                  onOpenInChart={(moduleId: string, metric: MetricType) => {
+                    setChartFocus({ moduleId, metric });
+                    setActiveTab('charts');
+                  }}
+                />
+              </TabErrorBoundary>
             )}
 
             {activeTab === 'security' && (

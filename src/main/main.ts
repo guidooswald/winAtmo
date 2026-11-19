@@ -446,6 +446,14 @@ function createMainWindow(shouldShow = true): void {
     mainWindow?.loadFile(entry.filePath);
   });
 
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    debugLogger.log(
+      'error',
+      'App',
+      `Main renderer process gone (${details.reason}, exitCode=${details.exitCode})`
+    );
+  });
+
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'F12' && input.type === 'keyDown') {
       mainWindow?.webContents.toggleDevTools();

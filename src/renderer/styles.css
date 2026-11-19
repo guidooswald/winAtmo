@@ -5369,7 +5369,7 @@ body {
   height: 100%;
 }
 
-.leaflet-dark-osm-pane {
+.radar-leaflet-container.is-osm-dark .leaflet-tile-pane {
   filter: invert(92%) hue-rotate(180deg) brightness(95%) contrast(90%) saturate(75%);
 }
 

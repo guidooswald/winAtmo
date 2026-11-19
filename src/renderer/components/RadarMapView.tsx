@@ -260,6 +260,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     const el = mapContainerRef.current;
     if (!el || mapRef.current) return;
 
+    let isDisposed = false;
     const initialCenter: [number, number] = primaryCoords || [50.1109, 8.6821];
     const initialZoom = primaryCoords ? 8 : 6;
 
@@ -273,28 +274,35 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     });
 
     const markersGroup = L.layerGroup().addTo(map);
-    const darkOsmPane = map.createPane('darkOsmPane');
-    darkOsmPane.style.zIndex = '201';
-    darkOsmPane.className = 'leaflet-dark-osm-pane';
+    const radarPane = map.createPane('radarPane');
+    radarPane.style.zIndex = '350';
+    radarPane.style.pointerEvents = 'none';
     const labelsPane = map.createPane('labelsOverlayPane');
-    labelsPane.style.zIndex = '450';
+    labelsPane.style.zIndex = '375';
     labelsPane.style.pointerEvents = 'none';
     mapRef.current = map;
     markersLayerRef.current = markersGroup;
 
     map.on('moveend', () => {
+      if (isDisposed || !mapRef.current) return;
       const c = map.getCenter();
       setMapCenter([c.lat, c.lng]);
     });
 
     const ro = new ResizeObserver(() => {
-      map.invalidateSize({ animate: false });
+      if (isDisposed || !mapRef.current) return;
+      try {
+        map.invalidateSize({ animate: false });
+      } catch {}
     });
     ro.observe(el);
 
     return () => {
+      isDisposed = true;
       ro.disconnect();
-      map.remove();
+      try {
+        map.remove();
+      } catch {}
       mapRef.current = null;
       baseLayerRef.current = null;
       refLabelsLayerRef.current = null;
@@ -304,41 +312,53 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     };
   }, []);
 
+  const baseTileConfig = useMemo(
+    () => getBaseTileConfig(baseMapMode, settings?.theme || 'fluent-dark'),
+    [baseMapMode, settings?.theme]
+  );
+
   // Sync Base Map Layer with app theme or explicit user selection
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    const cfg = getBaseTileConfig(baseMapMode, settings.theme);
-    if (baseLayerRef.current) {
-      map.removeLayer(baseLayerRef.current);
-      baseLayerRef.current = null;
-    }
-    if (refLabelsLayerRef.current) {
-      map.removeLayer(refLabelsLayerRef.current);
-      refLabelsLayerRef.current = null;
-    }
+    try {
+      if (baseLayerRef.current) {
+        if (map.hasLayer(baseLayerRef.current)) {
+          map.removeLayer(baseLayerRef.current);
+        }
+        baseLayerRef.current = null;
+      }
+      if (refLabelsLayerRef.current) {
+        if (map.hasLayer(refLabelsLayerRef.current)) {
+          map.removeLayer(refLabelsLayerRef.current);
+        }
+        refLabelsLayerRef.current = null;
+      }
 
-    const layer = L.tileLayer(cfg.url, {
-      attribution: cfg.attribution,
-      maxZoom: 19,
-      maxNativeZoom: cfg.maxZoom,
-      zIndex: 1,
-      ...(cfg.darkOsmFilter ? { pane: 'darkOsmPane' } : {}),
-    });
-    layer.addTo(map);
-    baseLayerRef.current = layer;
-
-    if (cfg.labelsUrl) {
-      const labels = L.tileLayer(cfg.labelsUrl, {
-        pane: 'labelsOverlayPane',
+      const layer = L.tileLayer(baseTileConfig.url, {
+        attribution: baseTileConfig.attribution,
         maxZoom: 19,
-        maxNativeZoom: cfg.maxZoom,
+        maxNativeZoom: baseTileConfig.maxZoom,
+        zIndex: 1,
       });
-      labels.addTo(map);
-      refLabelsLayerRef.current = labels;
+      layer.addTo(map);
+      baseLayerRef.current = layer;
+
+      if (baseTileConfig.labelsUrl) {
+        const labels = L.tileLayer(baseTileConfig.labelsUrl, {
+          pane: 'labelsOverlayPane',
+          maxZoom: 19,
+          maxNativeZoom: baseTileConfig.maxZoom,
+        });
+        labels.addTo(map);
+        refLabelsLayerRef.current = labels;
+      }
+    } catch (err: any) {
+      console.warn('[RadarMapView] Failed to switch base map layer:', err);
+      setErrorMsg(err?.message || 'Failed to switch map theme.');
     }
-  }, [baseMapMode, settings.theme]);
+  }, [baseTileConfig]);
 
   // Update Radar Overlay Layer cleanly when metadata, frameIndex, or opacity changes
   const activeFrame =
@@ -372,6 +392,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
           format: 'image/png',
           transparent: true,
           version: '1.3.0',
+          pane: 'radarPane',
           opacity,
           zIndex: 10,
           attribution: metadata.attribution,
@@ -403,6 +424,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
           tileSize: 256,
           maxNativeZoom: metadata.maxNativeZoom || 7,
           maxZoom: 16,
+          pane: 'radarPane',
           opacity,
           zIndex: 10,
           attribution: metadata.attribution,
@@ -667,7 +689,12 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
 
       {/* Map Viewport */}
       <div className="radar-map-stage">
-        <div ref={mapContainerRef} className="radar-leaflet-container" />
+        <div
+          ref={mapContainerRef}
+          className={`radar-leaflet-container ${
+            baseTileConfig.darkOsmFilter ? 'is-osm-dark' : ''
+          }`}
+        />
 
         {isOutsideDwd && (
           <div className="radar-coverage-hint">
