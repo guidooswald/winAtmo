@@ -133,7 +133,10 @@ function getBaseTileConfig(mode: BaseMapMode, themeId: string): {
 }
 
 const DWD_PREFETCH_STEPS = 6;
-const RAINVIEWER_DWD_WARM_STEPS = 4;
+const DWD_LATLNG_BOUNDS = L.latLngBounds(
+  [DWD_BOUNDS.minLat, DWD_BOUNDS.minLon],
+  [DWD_BOUNDS.maxLat, DWD_BOUNDS.maxLon]
+);
 
 function getRadarFrameKey(provider: RadarProvider, frame: RadarFrame): string {
   return `${provider}:${frame.isoTime}`;
@@ -180,7 +183,8 @@ function createProxiedWmsLayer(
 function getVisibleTileCoords(
   map: L.Map,
   maxNativeZoom: number,
-  tileSize = 256
+  tileSize = 256,
+  restrictBounds?: L.LatLngBounds
 ): L.Coords[] {
   const size = map.getSize();
   if (!size || size.x <= 0 || size.y <= 0) return [];
@@ -200,6 +204,16 @@ function getVisibleTileCoords(
     if (y < 0 || y >= maxIndex) continue;
     for (let x = minX; x <= maxX; x++) {
       const wrappedX = ((x % maxIndex) + maxIndex) % maxIndex;
+      if (restrictBounds) {
+        const nw = map.unproject(L.point(x * tileSize, y * tileSize), tileZoom);
+        const se = map.unproject(
+          L.point((x + 1) * tileSize, (y + 1) * tileSize),
+          tileZoom
+        );
+        if (!restrictBounds.overlaps(L.latLngBounds(se, nw))) {
+          continue;
+        }
+      }
       const c = new L.Point(wrappedX, y) as L.Coords;
       c.z = tileZoom;
       coords.push(c);
@@ -215,14 +229,16 @@ function getRawFrameTileUrls(
 ): string[] {
   const maxNative = meta.maxNativeZoom || (meta.provider === 'dwd' ? 12 : 7);
   const tileSizePx = meta.provider === 'dwd' ? 512 : 256;
-  const coords = getVisibleTileCoords(map, maxNative, tileSizePx);
+  const restrictBounds = meta.provider === 'dwd' ? DWD_LATLNG_BOUNDS : undefined;
+  const coords = getVisibleTileCoords(map, maxNative, tileSizePx, restrictBounds);
   if (coords.length === 0) return [];
 
-  if (meta.provider === 'dwd' && meta.wmsUrl && meta.wmsLayer) {
+  const layerName = frame.wmsLayer || meta.wmsLayer;
+  if (meta.provider === 'dwd' && meta.wmsUrl && layerName) {
     const crs = map.options.crs || L.CRS.EPSG3857;
     const tileSize = L.point(tileSizePx, tileSizePx);
     const scratchWms = L.tileLayer.wms(meta.wmsUrl, {
-      layers: meta.wmsLayer,
+      layers: layerName,
       format: 'image/png',
       transparent: true,
       version: '1.3.0',
@@ -589,48 +605,33 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       abortPrefetchRef.current = controller;
       prefetchDoneKeyRef.current = queueKey;
 
-      const surrounding =
-        meta.provider === 'dwd'
-          ? buildSurroundingIndices(
-              meta.frames.length,
-              loadedIdx,
-              DWD_PREFETCH_STEPS
-            )
-          : buildSurroundingIndices(
-              meta.frames.length,
-              loadedIdx,
-              meta.frames.length
-            );
+      let surrounding: number[];
+      if (meta.provider === 'dwd') {
+        // Load fast RADOLAN-RY past steps first (~250ms each), then forward forecast steps
+        const pastSteps: number[] = [];
+        const forwardSteps: number[] = [];
+        for (let step = 1; step <= DWD_PREFETCH_STEPS; step++) {
+          if (loadedIdx - step >= 0) pastSteps.push(loadedIdx - step);
+          if (loadedIdx + step < meta.frames.length) forwardSteps.push(loadedIdx + step);
+        }
+        surrounding =
+          loadedIdx <= meta.defaultFrameIndex
+            ? [...pastSteps, ...forwardSteps]
+            : buildSurroundingIndices(
+                meta.frames.length,
+                loadedIdx,
+                DWD_PREFETCH_STEPS
+              );
+      } else {
+        surrounding = buildSurroundingIndices(
+          meta.frames.length,
+          loadedIdx,
+          meta.frames.length
+        );
+      }
 
       try {
         await prefetchFramesForMeta(meta, surrounding, controller.signal);
-        if (controller.signal.aborted) return;
-
-        // Also warm a few DWD past & forward steps when inside Central Europe on RainViewer
-        if (
-          meta.provider === 'rainviewer' &&
-          isInsideDwdBounds(center.lat, center.lng) &&
-          typeof window.winatmo?.getRadarMetadata === 'function'
-        ) {
-          const dwdMeta = await window.winatmo.getRadarMetadata({
-            provider: 'dwd',
-            force: false,
-          });
-          if (controller.signal.aborted || !dwdMeta?.frames?.length) return;
-          const dwdCenterIdx = Math.max(
-            0,
-            Math.min(dwdMeta.frames.length - 1, dwdMeta.defaultFrameIndex)
-          );
-          const dwdOrder = [
-            dwdCenterIdx,
-            ...buildSurroundingIndices(
-              dwdMeta.frames.length,
-              dwdCenterIdx,
-              RAINVIEWER_DWD_WARM_STEPS
-            ),
-          ];
-          await prefetchFramesForMeta(dwdMeta, dwdOrder, controller.signal);
-        }
       } finally {
         if (abortPrefetchRef.current === controller) {
           setPrefetchingKey(null);
@@ -647,7 +648,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
 
     let isDisposed = false;
     const initialCenter: [number, number] = primaryCoords || [50.1109, 8.6821];
-    const initialZoom = primaryCoords ? 7 : 6;
+    const initialZoom = primaryCoords ? 9 : 7;
 
     const map = L.map(el, {
       center: initialCenter,
@@ -667,6 +668,13 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     labelsPane.style.pointerEvents = 'none';
     mapRef.current = map;
     markersLayerRef.current = markersGroup;
+
+    map.on('movestart zoomstart', () => {
+      if (isDisposed) return;
+      abortPrefetchRef.current?.abort();
+      prefetchDoneKeyRef.current = '';
+      setPrefetchingKey(null);
+    });
 
     map.on('moveend', () => {
       if (isDisposed || !mapRef.current) return;
@@ -732,6 +740,9 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         maxZoom: 19,
         maxNativeZoom: baseTileConfig.maxZoom,
         zIndex: 1,
+        keepBuffer: 0,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
       });
       layer.addTo(map);
       baseLayerRef.current = layer;
@@ -741,6 +752,9 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
           pane: 'labelsOverlayPane',
           maxZoom: 19,
           maxNativeZoom: baseTileConfig.maxZoom,
+          keepBuffer: 0,
+          updateWhenIdle: true,
+          updateWhenZooming: false,
         });
         labels.addTo(map);
         refLabelsLayerRef.current = labels;
@@ -779,24 +793,32 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       void handleActiveFrameLoaded(metadata, activeFrame, clampedFrameIndex);
     };
 
-    if (metadata.provider === 'dwd' && metadata.wmsUrl && metadata.wmsLayer) {
-      const key = `dwd:${metadata.wmsUrl}:${metadata.wmsLayer}`;
+    const activeWmsLayer = activeFrame.wmsLayer || metadata.wmsLayer;
+    if (metadata.provider === 'dwd' && metadata.wmsUrl && activeWmsLayer) {
+      const key = `dwd:${metadata.wmsUrl}`;
       if (radarLayerRef.current && radarLayerKeyRef.current === key) {
         const wms = radarLayerRef.current as L.TileLayer.WMS;
         activeLayer = wms;
         wms.on('load', onTilesLoaded);
         wms.setOpacity(opacityRef.current);
-        wms.setParams({ TIME: activeFrame.isoTime } as any, false);
+        wms.setParams(
+          { layers: activeWmsLayer, TIME: activeFrame.isoTime } as any,
+          false
+        );
       } else {
         if (radarLayerRef.current) {
           map.removeLayer(radarLayerRef.current);
         }
         const wms = createProxiedWmsLayer(metadata.wmsUrl, {
-          layers: metadata.wmsLayer,
+          layers: activeWmsLayer,
           format: 'image/png',
           transparent: true,
           version: '1.3.0',
           tileSize: 512,
+          keepBuffer: 0,
+          updateWhenIdle: true,
+          updateWhenZooming: false,
+          bounds: DWD_LATLNG_BOUNDS,
           pane: 'radarPane',
           opacity: opacityRef.current,
           zIndex: 10,
@@ -830,6 +852,9 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
           tileSize: 256,
           maxNativeZoom: metadata.maxNativeZoom || 7,
           maxZoom: 16,
+          keepBuffer: 0,
+          updateWhenIdle: true,
+          updateWhenZooming: false,
           pane: 'radarPane',
           opacity: opacityRef.current,
           zIndex: 10,
@@ -995,9 +1020,9 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     const map = mapRef.current;
     if (!map) return;
     if (primaryCoords) {
-      map.setView(primaryCoords, provider === 'dwd' ? 8 : 7, { animate: true });
+      map.setView(primaryCoords, 9, { animate: true });
     } else {
-      map.setView([50.1109, 8.6821], 6, { animate: true });
+      map.setView([50.1109, 8.6821], 7, { animate: true });
     }
   };
 

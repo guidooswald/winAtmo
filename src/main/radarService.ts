@@ -11,7 +11,8 @@ import {
 } from '../renderer/types';
 
 const DWD_WMS_URL = 'https://maps.dwd.de/geoserver/dwd/wms';
-const DWD_LAYER = 'Radar_rv_product_1x1km_ger';
+const DWD_PAST_LAYER = 'RADOLAN-RY';
+const DWD_FORECAST_LAYER = 'Radar_rv_product_1x1km_ger';
 const RAINVIEWER_API_URL = 'https://api.rainviewer.com/public/weather-maps.json';
 const METADATA_CACHE_TTL_MS = 4 * 60 * 1000;
 const TILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours max
@@ -336,8 +337,12 @@ function roundToFiveMinutesSec(sec: number): number {
   return Math.floor(sec / 300) * 300;
 }
 
-function buildDwdFrames(startSec: number, endSec: number): RadarFrame[] {
-  const nowBucketSec = roundToFiveMinutesSec(Math.floor(Date.now() / 1000));
+function buildDwdFrames(
+  startSec: number,
+  nowSec: number,
+  endSec: number
+): RadarFrame[] {
+  const nowBucketSec = roundToFiveMinutesSec(nowSec);
   const twoHoursAgo = nowBucketSec - 2 * 3600;
   const effectiveStart = roundToFiveMinutesSec(Math.max(startSec, twoHoursAgo));
   const effectiveEnd = roundToFiveMinutesSec(endSec);
@@ -350,6 +355,7 @@ function buildDwdFrames(startSec: number, endSec: number): RadarFrame[] {
       timestampSec: ts,
       isoTime: new Date(ts * 1000).toISOString(),
       kind,
+      wmsLayer: kind === 'forecast' ? DWD_FORECAST_LAYER : DWD_PAST_LAYER,
     });
   }
   return frames;
@@ -373,15 +379,16 @@ function findNowFrameIndex(frames: RadarFrame[]): number {
 }
 
 async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPayload> {
-  // Layer-scoped WMS GetCapabilities cuts payload from several MB to ~36 KB
-  const capUrl = `https://maps.dwd.de/geoserver/dwd/${DWD_LAYER.replace(/^dwd:/, '')}/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetCapabilities`;
+  // Fast RADOLAN-RY layer GetCapabilities (~11 KB, <200ms) gives live observation time up to NOW;
+  // past+now frames use fast RADOLAN-RY while future forecast steps use Radar_rv_product_1x1km_ger.
+  const capUrl = `https://maps.dwd.de/geoserver/dwd/${DWD_PAST_LAYER}/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetCapabilities`;
   const reqStart = performance.now();
-  const nowBucketSec = roundToFiveMinutesSec(Math.floor(Date.now() / 1000));
+  const fallbackNowSec = roundToFiveMinutesSec(Math.floor(Date.now() / 1000) - 300);
 
   try {
     const res = await fetch(capUrl, {
       method: 'GET',
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(12000),
     });
     const xml = await res.text();
     const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
@@ -397,14 +404,14 @@ async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPay
       durationMs,
       bytesReceived: Buffer.byteLength(xml, 'utf8'),
       error: res.ok ? undefined : `HTTP ${res.status}`,
-      note: `Radar metadata (${DWD_LAYER})`,
+      note: `Radar metadata (${DWD_PAST_LAYER})`,
     });
 
     if (!res.ok) {
       throw new Error(`DWD GeoServer returned HTTP ${res.status}`);
     }
 
-    const layerIdx = xml.indexOf(`<Name>${DWD_LAYER}</Name>`);
+    const layerIdx = xml.indexOf(`<Name>${DWD_PAST_LAYER}</Name>`);
     if (layerIdx >= 0) {
       const slice = xml.slice(layerIdx, layerIdx + 5000);
       const dimMatch = slice.match(
@@ -414,21 +421,29 @@ async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPay
         const parts = dimMatch[1].trim().split('/');
         if (parts.length >= 2) {
           const parsedStart = Math.floor(Date.parse(parts[0]) / 1000);
-          const parsedEnd = Math.floor(Date.parse(parts[1]) / 1000);
-          if (!Number.isNaN(parsedStart) && !Number.isNaN(parsedEnd) && parsedEnd >= parsedStart) {
-            const frames = buildDwdFrames(parsedStart, parsedEnd);
+          const parsedLatestObs = Math.floor(Date.parse(parts[1]) / 1000);
+          if (
+            !Number.isNaN(parsedStart) &&
+            !Number.isNaN(parsedLatestObs) &&
+            parsedLatestObs >= parsedStart
+          ) {
+            const frames = buildDwdFrames(
+              parsedStart,
+              parsedLatestObs,
+              parsedLatestObs + 2 * 3600
+            );
             return {
               provider: 'dwd',
               fetchedAt: Date.now(),
               cacheProxyUrl,
               wmsUrl: DWD_WMS_URL,
-              wmsLayer: DWD_LAYER,
+              wmsLayer: DWD_PAST_LAYER,
               maxNativeZoom: 12,
               frames,
               defaultFrameIndex: findNowFrameIndex(frames),
               attribution: 'Deutscher Wetterdienst (DWD • GeoNutzV)',
               coverageNote:
-                'Germany & Central Europe • 1 km resolution • Past 2h + 2h Nowcast (5-min steps • 24h cache)',
+                'Germany & Central Europe • Fast RADOLAN Past 2h + 2h Nowcast (5-min steps • 24h cache)',
             };
           }
         }
@@ -453,21 +468,22 @@ async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPay
     });
 
     const frames = buildDwdFrames(
-      nowBucketSec - 2 * 3600,
-      nowBucketSec + 115 * 60
+      fallbackNowSec - 2 * 3600,
+      fallbackNowSec,
+      fallbackNowSec + 115 * 60
     );
     return {
       provider: 'dwd',
       fetchedAt: Date.now(),
       cacheProxyUrl,
       wmsUrl: DWD_WMS_URL,
-      wmsLayer: DWD_LAYER,
+      wmsLayer: DWD_PAST_LAYER,
       maxNativeZoom: 12,
       frames,
       defaultFrameIndex: findNowFrameIndex(frames),
       attribution: 'Deutscher Wetterdienst (DWD • GeoNutzV)',
       coverageNote:
-        'Germany & Central Europe • 1 km resolution • Estimated 5-min schedule (24h cache)',
+        'Germany & Central Europe • Fast RADOLAN • Estimated 5-min schedule (24h cache)',
       fallbackUsed: true,
     };
   }

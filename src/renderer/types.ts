@@ -531,6 +531,7 @@ export interface RadarFrame {
   isoTime: string;
   kind: 'past' | 'now' | 'forecast';
   tilePath?: string;
+  wmsLayer?: string;
 }
 
 export interface RadarMetadataPayload {
