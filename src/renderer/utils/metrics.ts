@@ -235,24 +235,52 @@ export function extractLiveMetricValue(
   }
 }
 
+export type Co2Level = 'unknown' | 'excellent' | 'good' | 'moderate' | 'high';
+
 export function getCo2QualityBadge(co2?: number): {
+  level: Co2Level;
   label: string;
   color: string;
   bg: string;
 } {
   if (co2 === undefined) {
-    return { label: 'N/A', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
+    return {
+      level: 'unknown',
+      label: 'N/A',
+      color: '#94a3b8',
+      bg: 'rgba(148,163,184,0.15)',
+    };
   }
   if (co2 < 800) {
-    return { label: 'Excellent', color: '#10b981', bg: 'rgba(16,185,129,0.16)' };
+    return {
+      level: 'excellent',
+      label: 'Excellent',
+      color: '#10b981',
+      bg: 'rgba(16,185,129,0.16)',
+    };
   }
   if (co2 < 1150) {
-    return { label: 'Good', color: '#84cc16', bg: 'rgba(132,204,22,0.16)' };
+    return {
+      level: 'good',
+      label: 'Good',
+      color: '#84cc16',
+      bg: 'rgba(132,204,22,0.16)',
+    };
   }
   if (co2 < 1600) {
-    return { label: 'Ventilate', color: '#f59e0b', bg: 'rgba(245,158,11,0.18)' };
+    return {
+      level: 'moderate',
+      label: 'Ventilate',
+      color: '#f59e0b',
+      bg: 'rgba(245,158,11,0.18)',
+    };
   }
-  return { label: 'High CO₂', color: '#f43f5e', bg: 'rgba(244,63,94,0.2)' };
+  return {
+    level: 'high',
+    label: 'High CO₂',
+    color: '#f43f5e',
+    bg: 'rgba(244,63,94,0.2)',
+  };
 }
 
 export function getCompassDirection(angle?: number): string {

@@ -5714,3 +5714,85 @@ body {
 .radar-opacity-control input[type='range'] {
   width: 82px;
 }
+
+/* ==========================================
+   CO2 SENSOR LEVEL COLORIZATION (OVERVIEW)
+   ========================================== */
+.co2-level-unknown {
+  --co2-color: #94a3b8;
+  --co2-bg: rgba(148, 163, 184, 0.15);
+  --co2-border: rgba(148, 163, 184, 0.25);
+}
+
+.co2-level-excellent {
+  --co2-color: #10b981;
+  --co2-bg: rgba(16, 185, 129, 0.16);
+  --co2-border: rgba(16, 185, 129, 0.35);
+}
+
+.co2-level-good {
+  --co2-color: #84cc16;
+  --co2-bg: rgba(132, 204, 22, 0.16);
+  --co2-border: rgba(132, 204, 22, 0.35);
+}
+
+.co2-level-moderate {
+  --co2-color: #f59e0b;
+  --co2-bg: rgba(245, 158, 11, 0.18);
+  --co2-border: rgba(245, 158, 11, 0.42);
+}
+
+.co2-level-high {
+  --co2-color: #f43f5e;
+  --co2-bg: rgba(244, 63, 94, 0.2);
+  --co2-border: rgba(244, 63, 94, 0.48);
+}
+
+[data-theme-mode="light"] .co2-level-unknown {
+  --co2-color: #64748b;
+  --co2-bg: rgba(100, 116, 139, 0.12);
+  --co2-border: rgba(100, 116, 139, 0.28);
+}
+
+[data-theme-mode="light"] .co2-level-excellent {
+  --co2-color: #059669;
+  --co2-bg: rgba(5, 150, 105, 0.13);
+  --co2-border: rgba(5, 150, 105, 0.36);
+}
+
+[data-theme-mode="light"] .co2-level-good {
+  --co2-color: #4d7c0f;
+  --co2-bg: rgba(101, 163, 13, 0.14);
+  --co2-border: rgba(101, 163, 13, 0.36);
+}
+
+[data-theme-mode="light"] .co2-level-moderate {
+  --co2-color: #d97706;
+  --co2-bg: rgba(217, 119, 6, 0.15);
+  --co2-border: rgba(217, 119, 6, 0.42);
+}
+
+[data-theme-mode="light"] .co2-level-high {
+  --co2-color: #e11d48;
+  --co2-bg: rgba(225, 29, 72, 0.14);
+  --co2-border: rgba(225, 29, 72, 0.45);
+}
+
+.co2-quality-pill[class*="co2-level-"] {
+  color: var(--co2-color);
+  background-color: var(--co2-bg);
+}
+
+.metric-row-item.co2-metric-row {
+  border-color: var(--co2-border);
+  border-left: 3px solid var(--co2-color);
+}
+
+.metric-row-item.co2-metric-row .metric-icon-box {
+  color: var(--co2-color);
+  background-color: var(--co2-bg);
+}
+
+.metric-row-item.co2-metric-row .metric-primary-val {
+  color: var(--co2-color);
+}

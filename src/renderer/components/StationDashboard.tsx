@@ -373,11 +373,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                             <h3>{mod.moduleName}</h3>
                             {co2Badge && (
                               <span
-                                className="co2-quality-pill"
-                                style={{
-                                  color: co2Badge.color,
-                                  backgroundColor: co2Badge.bg,
-                                }}
+                                className={`co2-quality-pill co2-level-${co2Badge.level}`}
                               >
                                 {co2Badge.label}
                               </span>
@@ -422,17 +418,37 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                         {mod.availableMetrics.map((metric) => {
                           const liveVal = extractLiveMetricValue(d, metric);
                           const pinned = isPinned(station.id, mod.id, metric);
+                          const co2Level =
+                            metric === 'co2' && liveVal !== undefined
+                              ? getCo2QualityBadge(liveVal)
+                              : null;
 
                           return (
-                            <div key={metric} className="metric-row-item">
+                            <div
+                              key={metric}
+                              className={
+                                co2Level
+                                  ? `metric-row-item co2-metric-row co2-level-${co2Level.level}`
+                                  : 'metric-row-item'
+                              }
+                              title={
+                                co2Level
+                                  ? `CO₂: ${formatMetricValue(liveVal, 'co2', settings)} (${co2Level.label})`
+                                  : undefined
+                              }
+                            >
                               <div className="metric-row-left">
                                 <span
                                   className="metric-icon-box"
-                                  style={{
-                                    color:
-                                      METRIC_METADATA[metric]?.defaultColor,
-                                    backgroundColor: `${METRIC_METADATA[metric]?.defaultColor}18`,
-                                  }}
+                                  style={
+                                    co2Level
+                                      ? undefined
+                                      : {
+                                          color:
+                                            METRIC_METADATA[metric]?.defaultColor,
+                                          backgroundColor: `${METRIC_METADATA[metric]?.defaultColor}18`,
+                                        }
+                                  }
                                 >
                                   {renderMetricIcon(metric)}
                                 </span>
