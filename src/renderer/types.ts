@@ -536,6 +536,7 @@ export interface RadarFrame {
 export interface RadarMetadataPayload {
   provider: RadarProvider;
   fetchedAt: number;
+  cacheProxyUrl?: string;
   host?: string;
   wmsUrl?: string;
   wmsLayer?: string;

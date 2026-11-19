@@ -181,6 +181,7 @@ export interface WinAtmoAPI {
     provider?: RadarProvider;
     force?: boolean;
   }) => Promise<RadarMetadataPayload>;
+  checkCachedRadarUrls: (urls: string[]) => Promise<string[]>;
 
   // Debug Console & Telemetry
   openDebugWindow: () => void;
@@ -305,6 +306,8 @@ const api: WinAtmoAPI = {
 
   getRadarMetadata: (options) =>
     ipcRenderer.invoke('radar:get-metadata', options),
+  checkCachedRadarUrls: (urls: string[]) =>
+    ipcRenderer.invoke('radar:check-cached-urls', urls),
 
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),

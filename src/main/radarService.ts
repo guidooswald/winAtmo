@@ -1,3 +1,8 @@
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { app } from 'electron';
 import { debugLogger } from './debugLogger';
 import {
   RadarFrame,
@@ -9,9 +14,323 @@ const DWD_WMS_URL = 'https://maps.dwd.de/geoserver/dwd/wms';
 const DWD_LAYER = 'Radar_rv_product_1x1km_ger';
 const RAINVIEWER_API_URL = 'https://api.rainviewer.com/public/weather-maps.json';
 const METADATA_CACHE_TTL_MS = 4 * 60 * 1000;
+const TILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours max
+const TILE_CACHE_MAX_DISK_BYTES = 250 * 1024 * 1024;
+const TILE_MEM_CACHE_MAX_ENTRIES = 320;
 
 const cachedByProvider = new Map<RadarProvider, RadarMetadataPayload>();
 const inFlightByProvider = new Map<RadarProvider, Promise<RadarMetadataPayload>>();
+
+interface CachedTileEntry {
+  data: Buffer;
+  contentType: string;
+  cachedAt: number;
+}
+
+const memTileCache = new Map<string, CachedTileEntry>();
+const inFlightTileFetches = new Map<string, Promise<CachedTileEntry | null>>();
+
+let cacheServer: http.Server | null = null;
+let cacheServerPort: number | null = null;
+let cacheServerStartPromise: Promise<string> | null = null;
+let lastPruneAt = 0;
+
+function getTileCacheDir(): string {
+  const dir = path.join(app.getPath('userData'), 'radar-cache');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+function hashUrl(targetUrl: string): string {
+  return crypto.createHash('sha1').update(targetUrl).digest('hex');
+}
+
+function isAllowedRadarOrMapHost(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    const h = u.hostname.toLowerCase();
+    return (
+      h === 'maps.dwd.de' ||
+      h === 'api.rainviewer.com' ||
+      h === 'tilecache.rainviewer.com' ||
+      h.endsWith('.rainviewer.com') ||
+      h === 'tile.openstreetmap.org' ||
+      h.endsWith('.tile.openstreetmap.org') ||
+      h === 'tile.opentopomap.org' ||
+      h.endsWith('.tile.opentopomap.org') ||
+      h === 'server.arcgisonline.com' ||
+      h === 'services.arcgisonline.com'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function putMemTile(hash: string, entry: CachedTileEntry): void {
+  if (memTileCache.has(hash)) {
+    memTileCache.delete(hash);
+  }
+  memTileCache.set(hash, entry);
+  while (memTileCache.size > TILE_MEM_CACHE_MAX_ENTRIES) {
+    const oldestKey = memTileCache.keys().next().value;
+    if (!oldestKey) break;
+    memTileCache.delete(oldestKey);
+  }
+}
+
+function getFreshTileFromCache(targetUrl: string): CachedTileEntry | null {
+  const now = Date.now();
+  const hash = hashUrl(targetUrl);
+
+  const memHit = memTileCache.get(hash);
+  if (memHit) {
+    if (now - memHit.cachedAt < TILE_CACHE_MAX_AGE_MS) {
+      // Refresh LRU position
+      putMemTile(hash, memHit);
+      return memHit;
+    }
+    memTileCache.delete(hash);
+  }
+
+  try {
+    const dir = getTileCacheDir();
+    const metaPath = path.join(dir, `${hash}.json`);
+    const binPath = path.join(dir, `${hash}.bin`);
+    if (!fs.existsSync(metaPath) || !fs.existsSync(binPath)) {
+      return null;
+    }
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    const cachedAt = Number(meta?.cachedAt || 0);
+    if (!cachedAt || now - cachedAt >= TILE_CACHE_MAX_AGE_MS) {
+      try {
+        fs.unlinkSync(metaPath);
+        fs.unlinkSync(binPath);
+      } catch {}
+      return null;
+    }
+    const data = fs.readFileSync(binPath);
+    const entry: CachedTileEntry = {
+      data,
+      contentType: String(meta?.contentType || 'image/png'),
+      cachedAt,
+    };
+    putMemTile(hash, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function writeTileToCache(targetUrl: string, entry: CachedTileEntry): void {
+  const hash = hashUrl(targetUrl);
+  putMemTile(hash, entry);
+  try {
+    const dir = getTileCacheDir();
+    fs.writeFileSync(path.join(dir, `${hash}.bin`), entry.data);
+    fs.writeFileSync(
+      path.join(dir, `${hash}.json`),
+      JSON.stringify({
+        contentType: entry.contentType,
+        cachedAt: entry.cachedAt,
+      })
+    );
+  } catch {}
+  maybePruneDiskCache();
+}
+
+function maybePruneDiskCache(): void {
+  const now = Date.now();
+  if (now - lastPruneAt < 10 * 60 * 1000) return;
+  lastPruneAt = now;
+
+  setImmediate(() => {
+    try {
+      const dir = getTileCacheDir();
+      const entries = fs.readdirSync(dir);
+      const records: Array<{ hash: string; cachedAt: number; size: number }> = [];
+      let totalSize = 0;
+
+      for (const file of entries) {
+        if (!file.endsWith('.json')) continue;
+        const hash = file.slice(0, -5);
+        const metaPath = path.join(dir, file);
+        const binPath = path.join(dir, `${hash}.bin`);
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          const cachedAt = Number(meta?.cachedAt || 0);
+          if (!cachedAt || now - cachedAt >= TILE_CACHE_MAX_AGE_MS || !fs.existsSync(binPath)) {
+            fs.unlinkSync(metaPath);
+            if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
+            continue;
+          }
+          const st = fs.statSync(binPath);
+          totalSize += st.size;
+          records.push({ hash, cachedAt, size: st.size });
+        } catch {
+          try {
+            fs.unlinkSync(metaPath);
+            if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
+          } catch {}
+        }
+      }
+
+      if (totalSize > TILE_CACHE_MAX_DISK_BYTES) {
+        records.sort((a, b) => a.cachedAt - b.cachedAt);
+        for (const rec of records) {
+          if (totalSize <= TILE_CACHE_MAX_DISK_BYTES * 0.8) break;
+          try {
+            fs.unlinkSync(path.join(dir, `${rec.hash}.json`));
+            fs.unlinkSync(path.join(dir, `${rec.hash}.bin`));
+            memTileCache.delete(rec.hash);
+            totalSize -= rec.size;
+          } catch {}
+        }
+      }
+    } catch {}
+  });
+}
+
+async function fetchAndCacheTile(targetUrl: string): Promise<CachedTileEntry | null> {
+  const cached = getFreshTileFromCache(targetUrl);
+  if (cached) return cached;
+
+  const existing = inFlightTileFetches.get(targetUrl);
+  if (existing) return existing;
+
+  const req = (async (): Promise<CachedTileEntry | null> => {
+    try {
+      const res = await fetch(targetUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'winAtmo/0.3.0 (Desktop Weather Studio)',
+        },
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!res.ok) {
+        return null;
+      }
+      const ct = (res.headers.get('content-type') || 'image/png').toLowerCase();
+      if (!ct.startsWith('image/')) {
+        return null;
+      }
+      const ab = await res.arrayBuffer();
+      const data = Buffer.from(ab);
+      if (data.byteLength === 0) return null;
+
+      const entry: CachedTileEntry = {
+        data,
+        contentType: ct.split(';')[0].trim(),
+        cachedAt: Date.now(),
+      };
+      writeTileToCache(targetUrl, entry);
+      return entry;
+    } catch {
+      return null;
+    } finally {
+      inFlightTileFetches.delete(targetUrl);
+    }
+  })();
+
+  inFlightTileFetches.set(targetUrl, req);
+  return req;
+}
+
+export async function ensureRadarCacheServerStarted(): Promise<string> {
+  if (cacheServer && cacheServerPort) {
+    return `http://127.0.0.1:${cacheServerPort}`;
+  }
+  if (cacheServerStartPromise) {
+    return cacheServerStartPromise;
+  }
+
+  cacheServerStartPromise = new Promise<string>((resolve, reject) => {
+    const srv = http.createServer(async (req, res) => {
+      try {
+        const parsed = new URL(req.url || '/', 'http://127.0.0.1');
+        if (parsed.pathname !== '/tile') {
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        const targetUrl = parsed.searchParams.get('u');
+        if (!targetUrl || !isAllowedRadarOrMapHost(targetUrl)) {
+          res.writeHead(403);
+          res.end('Forbidden tile host');
+          return;
+        }
+
+        const cachedBefore = getFreshTileFromCache(targetUrl);
+        const entry = cachedBefore || (await fetchAndCacheTile(targetUrl));
+        if (!entry) {
+          res.writeHead(404);
+          res.end('Tile unavailable');
+          return;
+        }
+
+        res.writeHead(200, {
+          'Content-Type': entry.contentType,
+          'Content-Length': entry.data.byteLength,
+          'Cache-Control': 'public, max-age=86400',
+          'Access-Control-Allow-Origin': '*',
+          'X-WinAtmo-Cache': cachedBefore ? 'HIT' : 'MISS',
+        });
+        res.end(entry.data);
+      } catch {
+        if (!res.headersSent) {
+          res.writeHead(500);
+          res.end('Proxy error');
+        }
+      }
+    });
+
+    srv.on('error', (err) => {
+      cacheServerStartPromise = null;
+      reject(err);
+    });
+
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      if (!addr || typeof addr === 'string') {
+        cacheServerStartPromise = null;
+        reject(new Error('Failed to bind radar tile cache server'));
+        return;
+      }
+      cacheServer = srv;
+      cacheServerPort = addr.port;
+      maybePruneDiskCache();
+      resolve(`http://127.0.0.1:${addr.port}`);
+    });
+  });
+
+  return cacheServerStartPromise;
+}
+
+export function stopRadarCacheServer(): void {
+  if (cacheServer) {
+    try {
+      cacheServer.close();
+    } catch {}
+    cacheServer = null;
+    cacheServerPort = null;
+    cacheServerStartPromise = null;
+  }
+}
+
+/**
+ * Checks which of the supplied raw tile URLs already have a fresh (<24h) cached entry.
+ */
+export function checkCachedRadarUrls(rawUrls: string[]): string[] {
+  const hits: string[] = [];
+  for (const url of rawUrls) {
+    if (url && getFreshTileFromCache(url)) {
+      hits.push(url);
+    }
+  }
+  return hits;
+}
 
 function roundToFiveMinutesSec(sec: number): number {
   return Math.floor(sec / 300) * 300;
@@ -53,15 +372,16 @@ function findNowFrameIndex(frames: RadarFrame[]): number {
   return bestIdx;
 }
 
-async function fetchDwdMetadata(): Promise<RadarMetadataPayload> {
-  const capUrl = `${DWD_WMS_URL}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetCapabilities`;
+async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPayload> {
+  // Layer-scoped WMS GetCapabilities cuts payload from several MB to ~36 KB
+  const capUrl = `https://maps.dwd.de/geoserver/dwd/${DWD_LAYER.replace(/^dwd:/, '')}/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetCapabilities`;
   const reqStart = performance.now();
   const nowBucketSec = roundToFiveMinutesSec(Math.floor(Date.now() / 1000));
 
   try {
     const res = await fetch(capUrl, {
       method: 'GET',
-      signal: AbortSignal.timeout(14000),
+      signal: AbortSignal.timeout(20000),
     });
     const xml = await res.text();
     const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
@@ -100,6 +420,7 @@ async function fetchDwdMetadata(): Promise<RadarMetadataPayload> {
             return {
               provider: 'dwd',
               fetchedAt: Date.now(),
+              cacheProxyUrl,
               wmsUrl: DWD_WMS_URL,
               wmsLayer: DWD_LAYER,
               maxNativeZoom: 12,
@@ -107,7 +428,7 @@ async function fetchDwdMetadata(): Promise<RadarMetadataPayload> {
               defaultFrameIndex: findNowFrameIndex(frames),
               attribution: 'Deutscher Wetterdienst (DWD • GeoNutzV)',
               coverageNote:
-                'Germany & Central Europe • 1 km resolution • Past 2h + 2h Nowcast (5-min steps)',
+                'Germany & Central Europe • 1 km resolution • Past 2h + 2h Nowcast (5-min steps • 24h cache)',
             };
           }
         }
@@ -138,6 +459,7 @@ async function fetchDwdMetadata(): Promise<RadarMetadataPayload> {
     return {
       provider: 'dwd',
       fetchedAt: Date.now(),
+      cacheProxyUrl,
       wmsUrl: DWD_WMS_URL,
       wmsLayer: DWD_LAYER,
       maxNativeZoom: 12,
@@ -145,13 +467,15 @@ async function fetchDwdMetadata(): Promise<RadarMetadataPayload> {
       defaultFrameIndex: findNowFrameIndex(frames),
       attribution: 'Deutscher Wetterdienst (DWD • GeoNutzV)',
       coverageNote:
-        'Germany & Central Europe • 1 km resolution • Estimated 5-min schedule (fallback)',
+        'Germany & Central Europe • 1 km resolution • Estimated 5-min schedule (24h cache)',
       fallbackUsed: true,
     };
   }
 }
 
-async function fetchRainViewerMetadata(): Promise<RadarMetadataPayload> {
+async function fetchRainViewerMetadata(
+  cacheProxyUrl: string
+): Promise<RadarMetadataPayload> {
   const reqStart = performance.now();
   try {
     const res = await fetch(RAINVIEWER_API_URL, {
@@ -214,6 +538,7 @@ async function fetchRainViewerMetadata(): Promise<RadarMetadataPayload> {
     return {
       provider: 'rainviewer',
       fetchedAt: Date.now(),
+      cacheProxyUrl,
       host,
       maxNativeZoom: 7,
       frames,
@@ -221,8 +546,8 @@ async function fetchRainViewerMetadata(): Promise<RadarMetadataPayload> {
       attribution: 'RainViewer Public API (Personal / Non-Commercial)',
       coverageNote:
         nowcastRaw.length > 0
-          ? 'All Europe & Global • Past + Forecast • Max native zoom 7'
-          : 'All Europe & Global • Past 2h (10-min steps) • Max native zoom 7',
+          ? 'All Europe & Global • Past + Forecast • 24h image cache'
+          : 'All Europe & Global • Past 2h (10-min steps) • Max native zoom 7 • 24h cache',
     };
   } catch (err: any) {
     const durationMs = Math.max(1, Math.round(performance.now() - reqStart));
@@ -243,6 +568,7 @@ async function fetchRainViewerMetadata(): Promise<RadarMetadataPayload> {
     return {
       provider: 'rainviewer',
       fetchedAt: Date.now(),
+      cacheProxyUrl,
       maxNativeZoom: 7,
       frames: [],
       defaultFrameIndex: 0,
@@ -254,12 +580,15 @@ async function fetchRainViewerMetadata(): Promise<RadarMetadataPayload> {
 }
 
 /**
- * Fetches and caches live radar timestamps/layers for DWD GeoServer WMS or RainViewer.
+ * Fetches and caches live radar timestamps/layers for DWD GeoServer WMS or RainViewer,
+ * ensuring the local 24h tile cache HTTP proxy is active and returned as `cacheProxyUrl`.
  */
 export async function getRadarMetadata(
   provider: RadarProvider,
   force = false
 ): Promise<RadarMetadataPayload> {
+  const cacheProxyUrl = await ensureRadarCacheServerStarted();
+
   if (!force) {
     const cached = cachedByProvider.get(provider);
     if (
@@ -267,7 +596,7 @@ export async function getRadarMetadata(
       !cached.error &&
       Date.now() - cached.fetchedAt < METADATA_CACHE_TTL_MS
     ) {
-      return cached;
+      return { ...cached, cacheProxyUrl };
     }
   }
 
@@ -277,7 +606,9 @@ export async function getRadarMetadata(
   }
 
   const req = (
-    provider === 'rainviewer' ? fetchRainViewerMetadata() : fetchDwdMetadata()
+    provider === 'rainviewer'
+      ? fetchRainViewerMetadata(cacheProxyUrl)
+      : fetchDwdMetadata(cacheProxyUrl)
   )
     .then((payload) => {
       if (!payload.error) {

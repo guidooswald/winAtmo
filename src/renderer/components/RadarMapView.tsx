@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import {
   MetricType,
+  RadarFrame,
   RadarMetadataPayload,
   RadarProvider,
   UserSettings,
@@ -131,6 +132,159 @@ function getBaseTileConfig(mode: BaseMapMode, themeId: string): {
   };
 }
 
+const DWD_PREFETCH_STEPS = 6;
+const RAINVIEWER_DWD_WARM_STEPS = 4;
+
+function getRadarFrameKey(provider: RadarProvider, frame: RadarFrame): string {
+  return `${provider}:${frame.isoTime}`;
+}
+
+function toProxyTileUrl(rawUrl: string, cacheProxyUrl?: string): string {
+  if (!cacheProxyUrl) return rawUrl;
+  if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+    return `${cacheProxyUrl}/tile?u=${encodeURIComponent(rawUrl)}`;
+  }
+  return rawUrl;
+}
+
+let activeCacheProxyUrl: string | undefined;
+
+const ProxiedTileLayer = L.TileLayer.extend({
+  getTileUrl(coords: L.Coords): string {
+    const raw = L.TileLayer.prototype.getTileUrl.call(this, coords);
+    return toProxyTileUrl(raw, activeCacheProxyUrl);
+  },
+});
+
+const ProxiedWmsTileLayer = L.TileLayer.WMS.extend({
+  getTileUrl(coords: L.Coords): string {
+    const raw = L.TileLayer.WMS.prototype.getTileUrl.call(this, coords);
+    return toProxyTileUrl(raw, activeCacheProxyUrl);
+  },
+});
+
+function createProxiedTileLayer(
+  urlTemplate: string,
+  options: L.TileLayerOptions
+): L.TileLayer {
+  return new (ProxiedTileLayer as any)(urlTemplate, options);
+}
+
+function createProxiedWmsLayer(
+  baseUrl: string,
+  options: L.WMSOptions & Record<string, unknown>
+): L.TileLayer.WMS {
+  return new (ProxiedWmsTileLayer as any)(baseUrl, options);
+}
+
+function getVisibleTileCoords(
+  map: L.Map,
+  maxNativeZoom: number,
+  tileSize = 256
+): L.Coords[] {
+  const size = map.getSize();
+  if (!size || size.x <= 0 || size.y <= 0) return [];
+  const bounds = map.getPixelBounds();
+  if (!bounds?.min || !bounds?.max) return [];
+
+  const tileZoom = Math.max(0, Math.min(Math.round(map.getZoom()), maxNativeZoom));
+  const scale = Math.pow(2, tileZoom - map.getZoom());
+  const minX = Math.floor((bounds.min.x * scale) / tileSize);
+  const maxX = Math.ceil((bounds.max.x * scale) / tileSize) - 1;
+  const minY = Math.floor((bounds.min.y * scale) / tileSize);
+  const maxY = Math.ceil((bounds.max.y * scale) / tileSize) - 1;
+  const maxIndex = Math.max(1, Math.floor((256 * Math.pow(2, tileZoom)) / tileSize));
+
+  const coords: L.Coords[] = [];
+  for (let y = minY; y <= maxY; y++) {
+    if (y < 0 || y >= maxIndex) continue;
+    for (let x = minX; x <= maxX; x++) {
+      const wrappedX = ((x % maxIndex) + maxIndex) % maxIndex;
+      const c = new L.Point(wrappedX, y) as L.Coords;
+      c.z = tileZoom;
+      coords.push(c);
+    }
+  }
+  return coords;
+}
+
+function getRawFrameTileUrls(
+  map: L.Map,
+  meta: RadarMetadataPayload,
+  frame: RadarFrame
+): string[] {
+  const maxNative = meta.maxNativeZoom || (meta.provider === 'dwd' ? 12 : 7);
+  const tileSizePx = meta.provider === 'dwd' ? 512 : 256;
+  const coords = getVisibleTileCoords(map, maxNative, tileSizePx);
+  if (coords.length === 0) return [];
+
+  if (meta.provider === 'dwd' && meta.wmsUrl && meta.wmsLayer) {
+    const crs = map.options.crs || L.CRS.EPSG3857;
+    const tileSize = L.point(tileSizePx, tileSizePx);
+    const scratchWms = L.tileLayer.wms(meta.wmsUrl, {
+      layers: meta.wmsLayer,
+      format: 'image/png',
+      transparent: true,
+      version: '1.3.0',
+      tileSize: tileSizePx,
+      TIME: frame.isoTime,
+    } as L.WMSOptions & { TIME: string });
+    const wmsParams: Record<string, unknown> = {
+      ...(scratchWms as any).wmsParams,
+      crs: crs.code,
+    };
+    const paramStr = L.Util.getParamString(wmsParams, meta.wmsUrl, false);
+
+    return coords.map((c) => {
+      const nwPoint = c.scaleBy(tileSize);
+      const sePoint = nwPoint.add(tileSize);
+      const nw = map.unproject(nwPoint, c.z);
+      const se = map.unproject(sePoint, c.z);
+      const bounds = L.bounds(crs.project(nw), crs.project(se));
+      const min = bounds.min!;
+      const max = bounds.max!;
+      const bbox = (
+        crs === L.CRS.EPSG4326
+          ? [min.y, min.x, max.y, max.x]
+          : [min.x, min.y, max.x, max.y]
+      ).join(',');
+      return `${meta.wmsUrl}${paramStr}&bbox=${bbox}`;
+    });
+  }
+
+  if (meta.provider === 'rainviewer' && meta.host && frame.tilePath) {
+    return coords.map(
+      (c) =>
+        `${meta.host}${frame.tilePath}/256/${c.z}/${c.x}/${c.y}/2/1_1.png`
+    );
+  }
+
+  return [];
+}
+
+function buildSurroundingIndices(
+  total: number,
+  centerIndex: number,
+  maxSteps: number
+): number[] {
+  if (total <= 0) return [];
+  const seen = new Set<number>([centerIndex]);
+  const order: number[] = [];
+  for (let step = 1; step <= maxSteps; step++) {
+    const forward = centerIndex + step;
+    if (forward >= 0 && forward < total && !seen.has(forward)) {
+      seen.add(forward);
+      order.push(forward);
+    }
+    const past = centerIndex - step;
+    if (past >= 0 && past < total && !seen.has(past)) {
+      seen.add(past);
+      order.push(past);
+    }
+  }
+  return order;
+}
+
 export const RadarMapView: React.FC<RadarMapViewProps> = ({
   stations,
   settings,
@@ -142,25 +296,18 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     [primaryStation]
   );
 
-  const defaultProvider: RadarProvider = useMemo(() => {
+  const [provider, setProvider] = useState<RadarProvider>(() => {
     try {
-      const saved = localStorage.getItem('winatmo_radar_provider');
+      const saved = localStorage.getItem('winatmo_radar_provider_v2');
       if (saved === 'dwd' || saved === 'rainviewer') {
         return saved;
       }
     } catch {}
-    if (primaryCoords) {
-      return isInsideDwdBounds(primaryCoords[0], primaryCoords[1])
-        ? 'dwd'
-        : 'rainviewer';
-    }
-    return 'dwd';
-  }, [primaryCoords]);
-
-  const [provider, setProvider] = useState<RadarProvider>(defaultProvider);
+    return 'rainviewer';
+  });
   const [baseMapMode, setBaseMapMode] = useState<BaseMapMode>(() => {
     try {
-      const saved = localStorage.getItem('winatmo_radar_basemap');
+      const saved = localStorage.getItem('winatmo_radar_basemap_v2');
       if (
         saved === 'auto' ||
         saved === 'dark' ||
@@ -172,7 +319,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         return saved;
       }
     } catch {}
-    return 'auto';
+    return 'topo';
   });
   const [opacity, setOpacity] = useState<number>(() => {
     try {
@@ -190,6 +337,8 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
   const [mapCenter, setMapCenter] = useState<[number, number]>(
     primaryCoords || [50.1109, 8.6821]
   );
+  const [downloadedKeys, setDownloadedKeys] = useState<Record<string, true>>({});
+  const [prefetchingKey, setPrefetchingKey] = useState<string | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -198,6 +347,55 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
   const radarLayerRef = useRef<L.TileLayer | L.TileLayer.WMS | null>(null);
   const radarLayerKeyRef = useRef<string>('');
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const cacheProxyUrlRef = useRef<string | undefined>(undefined);
+  const metadataRef = useRef<RadarMetadataPayload | null>(null);
+  const abortPrefetchRef = useRef<AbortController | null>(null);
+  const prefetchDoneKeyRef = useRef<string>('');
+
+  const refreshDownloadedStatus = useCallback(
+    async (meta: RadarMetadataPayload | null) => {
+      const map = mapRef.current;
+      if (
+        !map ||
+        !meta ||
+        meta.frames.length === 0 ||
+        typeof window.winatmo?.checkCachedRadarUrls !== 'function'
+      ) {
+        return;
+      }
+      const frameUrlPairs = meta.frames.map((frame) => ({
+        key: getRadarFrameKey(meta.provider, frame),
+        urls: getRawFrameTileUrls(map, meta, frame),
+      }));
+      const uniqueUrls = Array.from(
+        new Set(frameUrlPairs.flatMap((pair) => pair.urls))
+      );
+      if (uniqueUrls.length === 0) return;
+
+      try {
+        const cachedList = await window.winatmo.checkCachedRadarUrls(uniqueUrls);
+        const cachedSet = new Set(cachedList);
+        setDownloadedKeys((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          for (const pair of frameUrlPairs) {
+            if (pair.urls.length > 0 && pair.urls.every((u) => cachedSet.has(u))) {
+              if (!next[pair.key]) {
+                next[pair.key] = true;
+                changed = true;
+              }
+            }
+          }
+          return changed ? next : prev;
+        });
+      } catch {
+        // Ignore transient cache check failures
+      }
+    },
+    []
+  );
+
+  const loadSeqRef = useRef<number>(0);
 
   const loadMetadata = useCallback(
     async (targetProvider: RadarProvider, force = false) => {
@@ -208,13 +406,36 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         setLoading(false);
         return;
       }
+      const seq = ++loadSeqRef.current;
+      abortPrefetchRef.current?.abort();
+      prefetchDoneKeyRef.current = '';
+      setPrefetchingKey(null);
       setLoading(true);
       setErrorMsg(null);
+      setMetadata((prev) =>
+        prev && prev.provider !== targetProvider
+          ? {
+              ...prev,
+              provider: targetProvider,
+              frames: [],
+              defaultFrameIndex: 0,
+              coverageNote:
+                targetProvider === 'dwd'
+                  ? 'Loading DWD radar composite & forecast timestamps...'
+                  : 'Loading RainViewer Europe radar timestamps...',
+              error: undefined,
+            }
+          : prev
+      );
       try {
         const res = await window.winatmo.getRadarMetadata({
           provider: targetProvider,
           force,
         });
+        if (seq !== loadSeqRef.current) return;
+        activeCacheProxyUrl = res.cacheProxyUrl;
+        cacheProxyUrlRef.current = res.cacheProxyUrl;
+        metadataRef.current = res;
         setMetadata(res);
         if (res.error) {
           setErrorMsg(res.error);
@@ -226,26 +447,30 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         } else {
           setFrameIndex(0);
         }
+        void refreshDownloadedStatus(res);
       } catch (err: any) {
+        if (seq !== loadSeqRef.current) return;
         setErrorMsg(err?.message || 'Failed to load radar frames.');
       } finally {
-        setLoading(false);
+        if (seq === loadSeqRef.current) {
+          setLoading(false);
+        }
       }
     },
-    []
+    [refreshDownloadedStatus]
   );
 
   useEffect(() => {
     setIsPlaying(false);
     void loadMetadata(provider, false);
     try {
-      localStorage.setItem('winatmo_radar_provider', provider);
+      localStorage.setItem('winatmo_radar_provider_v2', provider);
     } catch {}
   }, [provider, loadMetadata]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('winatmo_radar_basemap', baseMapMode);
+      localStorage.setItem('winatmo_radar_basemap_v2', baseMapMode);
     } catch {}
   }, [baseMapMode]);
 
@@ -255,6 +480,166 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     } catch {}
   }, [opacity]);
 
+  const isPlayingRef = useRef<boolean>(isPlaying);
+  isPlayingRef.current = isPlaying;
+
+  const opacityRef = useRef<number>(opacity);
+  opacityRef.current = opacity;
+
+  const prefetchFramesForMeta = useCallback(
+    async (
+      meta: RadarMetadataPayload,
+      indices: number[],
+      signal: AbortSignal
+    ) => {
+      const map = mapRef.current;
+      const proxyBase = meta.cacheProxyUrl || cacheProxyUrlRef.current;
+      if (!map || !proxyBase || indices.length === 0) return;
+
+      for (const idx of indices) {
+        if (signal.aborted) return;
+        const frame = meta.frames[idx];
+        if (!frame) continue;
+        const key = getRadarFrameKey(meta.provider, frame);
+        const rawUrls = getRawFrameTileUrls(map, meta, frame);
+        if (rawUrls.length === 0) continue;
+
+        let missingUrls = rawUrls;
+        if (typeof window.winatmo?.checkCachedRadarUrls === 'function') {
+          try {
+            const already = await window.winatmo.checkCachedRadarUrls(rawUrls);
+            const alreadySet = new Set(already);
+            if (rawUrls.every((u) => alreadySet.has(u))) {
+              setDownloadedKeys((prev) =>
+                prev[key] ? prev : { ...prev, [key]: true }
+              );
+              continue;
+            }
+            missingUrls = rawUrls.filter((u) => !alreadySet.has(u));
+          } catch {
+            // Proceed to fetch via local proxy cache
+          }
+        }
+
+        if (signal.aborted) return;
+        if (meta.provider === metadataRef.current?.provider) {
+          setPrefetchingKey(key);
+        }
+
+        let nextCursor = 0;
+        let allSucceeded = true;
+        const workerCount =
+          meta.provider === 'dwd'
+            ? Math.min(4, missingUrls.length)
+            : Math.min(2, missingUrls.length);
+        const workers = Array.from({ length: workerCount }, async () => {
+          while (!signal.aborted) {
+            const i = nextCursor++;
+            if (i >= missingUrls.length) break;
+            const url = missingUrls[i];
+            try {
+              const resp = await fetch(toProxyTileUrl(url, proxyBase), { signal });
+              if (!resp.ok) {
+                allSucceeded = false;
+              }
+            } catch {
+              allSucceeded = false;
+            }
+          }
+        });
+
+        await Promise.all(workers);
+
+        if (signal.aborted) return;
+        if (allSucceeded) {
+          setDownloadedKeys((prev) =>
+            prev[key] ? prev : { ...prev, [key]: true }
+          );
+        }
+      }
+    },
+    []
+  );
+
+  const handleActiveFrameLoaded = useCallback(
+    async (
+      meta: RadarMetadataPayload,
+      loadedFrame: RadarFrame,
+      loadedIdx: number
+    ) => {
+      const map = mapRef.current;
+      if (!map) return;
+
+      const loadedKey = getRadarFrameKey(meta.provider, loadedFrame);
+      setDownloadedKeys((prev) =>
+        prev[loadedKey] ? prev : { ...prev, [loadedKey]: true }
+      );
+      void refreshDownloadedStatus(meta);
+
+      if (isPlayingRef.current) return;
+
+      const center = map.getCenter();
+      const queueKey = `${meta.provider}:${meta.fetchedAt}:${loadedIdx}:${Math.round(
+        map.getZoom()
+      )}:${center.lat.toFixed(2)},${center.lng.toFixed(2)}`;
+      if (prefetchDoneKeyRef.current === queueKey) return;
+
+      abortPrefetchRef.current?.abort();
+      const controller = new AbortController();
+      abortPrefetchRef.current = controller;
+      prefetchDoneKeyRef.current = queueKey;
+
+      const surrounding =
+        meta.provider === 'dwd'
+          ? buildSurroundingIndices(
+              meta.frames.length,
+              loadedIdx,
+              DWD_PREFETCH_STEPS
+            )
+          : buildSurroundingIndices(
+              meta.frames.length,
+              loadedIdx,
+              meta.frames.length
+            );
+
+      try {
+        await prefetchFramesForMeta(meta, surrounding, controller.signal);
+        if (controller.signal.aborted) return;
+
+        // Also warm a few DWD past & forward steps when inside Central Europe on RainViewer
+        if (
+          meta.provider === 'rainviewer' &&
+          isInsideDwdBounds(center.lat, center.lng) &&
+          typeof window.winatmo?.getRadarMetadata === 'function'
+        ) {
+          const dwdMeta = await window.winatmo.getRadarMetadata({
+            provider: 'dwd',
+            force: false,
+          });
+          if (controller.signal.aborted || !dwdMeta?.frames?.length) return;
+          const dwdCenterIdx = Math.max(
+            0,
+            Math.min(dwdMeta.frames.length - 1, dwdMeta.defaultFrameIndex)
+          );
+          const dwdOrder = [
+            dwdCenterIdx,
+            ...buildSurroundingIndices(
+              dwdMeta.frames.length,
+              dwdCenterIdx,
+              RAINVIEWER_DWD_WARM_STEPS
+            ),
+          ];
+          await prefetchFramesForMeta(dwdMeta, dwdOrder, controller.signal);
+        }
+      } finally {
+        if (abortPrefetchRef.current === controller) {
+          setPrefetchingKey(null);
+        }
+      }
+    },
+    [prefetchFramesForMeta, refreshDownloadedStatus]
+  );
+
   // Initialize Leaflet Map instance once on mount
   useEffect(() => {
     const el = mapContainerRef.current;
@@ -262,7 +647,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
 
     let isDisposed = false;
     const initialCenter: [number, number] = primaryCoords || [50.1109, 8.6821];
-    const initialZoom = primaryCoords ? 8 : 6;
+    const initialZoom = primaryCoords ? 7 : 6;
 
     const map = L.map(el, {
       center: initialCenter,
@@ -287,6 +672,8 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       if (isDisposed || !mapRef.current) return;
       const c = map.getCenter();
       setMapCenter([c.lat, c.lng]);
+      prefetchDoneKeyRef.current = '';
+      void refreshDownloadedStatus(metadataRef.current);
     });
 
     const ro = new ResizeObserver(() => {
@@ -299,6 +686,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
 
     return () => {
       isDisposed = true;
+      abortPrefetchRef.current?.abort();
       ro.disconnect();
       try {
         map.remove();
@@ -310,17 +698,20 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       radarLayerKeyRef.current = '';
       markersLayerRef.current = null;
     };
-  }, []);
+  }, [refreshDownloadedStatus]);
 
   const baseTileConfig = useMemo(
     () => getBaseTileConfig(baseMapMode, settings?.theme || 'fluent-dark'),
     [baseMapMode, settings?.theme]
   );
 
-  // Sync Base Map Layer with app theme or explicit user selection
+  const cacheProxyUrl = metadata?.cacheProxyUrl;
+
+  // Sync Base Map Layer with app theme or explicit user selection (routed via 24h proxy cache)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    if (!cacheProxyUrl && loading) return;
 
     try {
       if (baseLayerRef.current) {
@@ -336,7 +727,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         refLabelsLayerRef.current = null;
       }
 
-      const layer = L.tileLayer(baseTileConfig.url, {
+      const layer = createProxiedTileLayer(baseTileConfig.url, {
         attribution: baseTileConfig.attribution,
         maxZoom: 19,
         maxNativeZoom: baseTileConfig.maxZoom,
@@ -346,7 +737,7 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       baseLayerRef.current = layer;
 
       if (baseTileConfig.labelsUrl) {
-        const labels = L.tileLayer(baseTileConfig.labelsUrl, {
+        const labels = createProxiedTileLayer(baseTileConfig.labelsUrl, {
           pane: 'labelsOverlayPane',
           maxZoom: 19,
           maxNativeZoom: baseTileConfig.maxZoom,
@@ -358,12 +749,16 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       console.warn('[RadarMapView] Failed to switch base map layer:', err);
       setErrorMsg(err?.message || 'Failed to switch map theme.');
     }
-  }, [baseTileConfig]);
+  }, [baseTileConfig, cacheProxyUrl, loading]);
 
-  // Update Radar Overlay Layer cleanly when metadata, frameIndex, or opacity changes
+  // Update Radar Overlay Layer cleanly when metadata or frameIndex changes
+  const clampedFrameIndex =
+    metadata && metadata.frames.length > 0
+      ? Math.min(frameIndex, metadata.frames.length - 1)
+      : 0;
   const activeFrame =
     metadata && metadata.frames.length > 0
-      ? metadata.frames[Math.min(frameIndex, metadata.frames.length - 1)]
+      ? metadata.frames[clampedFrameIndex]
       : null;
 
   useEffect(() => {
@@ -377,35 +772,44 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       return;
     }
 
+    let cancelled = false;
+    let activeLayer: L.TileLayer | L.TileLayer.WMS | null = null;
+    const onTilesLoaded = () => {
+      if (cancelled) return;
+      void handleActiveFrameLoaded(metadata, activeFrame, clampedFrameIndex);
+    };
+
     if (metadata.provider === 'dwd' && metadata.wmsUrl && metadata.wmsLayer) {
       const key = `dwd:${metadata.wmsUrl}:${metadata.wmsLayer}`;
       if (radarLayerRef.current && radarLayerKeyRef.current === key) {
         const wms = radarLayerRef.current as L.TileLayer.WMS;
-        wms.setOpacity(opacity);
+        activeLayer = wms;
+        wms.on('load', onTilesLoaded);
+        wms.setOpacity(opacityRef.current);
         wms.setParams({ TIME: activeFrame.isoTime } as any, false);
       } else {
         if (radarLayerRef.current) {
           map.removeLayer(radarLayerRef.current);
         }
-        const wms = L.tileLayer.wms(metadata.wmsUrl, {
+        const wms = createProxiedWmsLayer(metadata.wmsUrl, {
           layers: metadata.wmsLayer,
           format: 'image/png',
           transparent: true,
           version: '1.3.0',
+          tileSize: 512,
           pane: 'radarPane',
-          opacity,
+          opacity: opacityRef.current,
           zIndex: 10,
           attribution: metadata.attribution,
           TIME: activeFrame.isoTime,
-        } as L.WMSOptions & { TIME: string });
+        });
+        activeLayer = wms;
+        wms.on('load', onTilesLoaded);
         wms.addTo(map);
         radarLayerRef.current = wms;
         radarLayerKeyRef.current = key;
       }
-      return;
-    }
-
-    if (
+    } else if (
       metadata.provider === 'rainviewer' &&
       metadata.host &&
       activeFrame.tilePath
@@ -414,27 +818,48 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
       const key = `rainviewer:${metadata.host}`;
       if (radarLayerRef.current && radarLayerKeyRef.current === key) {
         const tl = radarLayerRef.current as L.TileLayer;
-        tl.setOpacity(opacity);
+        activeLayer = tl;
+        tl.on('load', onTilesLoaded);
+        tl.setOpacity(opacityRef.current);
         tl.setUrl(tileUrl, false);
       } else {
         if (radarLayerRef.current) {
           map.removeLayer(radarLayerRef.current);
         }
-        const tl = L.tileLayer(tileUrl, {
+        const tl = createProxiedTileLayer(tileUrl, {
           tileSize: 256,
           maxNativeZoom: metadata.maxNativeZoom || 7,
           maxZoom: 16,
           pane: 'radarPane',
-          opacity,
+          opacity: opacityRef.current,
           zIndex: 10,
           attribution: metadata.attribution,
         });
+        activeLayer = tl;
+        tl.on('load', onTilesLoaded);
         tl.addTo(map);
         radarLayerRef.current = tl;
         radarLayerKeyRef.current = key;
       }
     }
-  }, [metadata, activeFrame, opacity]);
+
+    if (activeLayer && !(activeLayer as any)._loading) {
+      onTilesLoaded();
+    }
+
+    return () => {
+      cancelled = true;
+      if (activeLayer) {
+        activeLayer.off('load', onTilesLoaded);
+      }
+    };
+  }, [metadata, activeFrame, clampedFrameIndex, handleActiveFrameLoaded]);
+
+  useEffect(() => {
+    if (radarLayerRef.current) {
+      radarLayerRef.current.setOpacity(opacity);
+    }
+  }, [opacity]);
 
   // Plot Weather Station Pins with live readings
   useEffect(() => {
@@ -592,6 +1017,15 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
     frames.length > 1 && metadata
       ? (metadata.defaultFrameIndex / (frames.length - 1)) * 100
       : 0;
+  const cachedFrameCount = frames.reduce((acc, frame) => {
+    const key = metadata ? getRadarFrameKey(metadata.provider, frame) : '';
+    return acc + (key && downloadedKeys[key] ? 1 : 0);
+  }, 0);
+  const isPrefetchingCurrentProvider = Boolean(
+    prefetchingKey &&
+      metadata &&
+      prefetchingKey.startsWith(`${metadata.provider}:`)
+  );
 
   return (
     <div className="radar-map-view">
@@ -612,19 +1046,19 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
           <div className="radar-provider-pills" role="group" aria-label="Radar Source">
             <button
               type="button"
-              className={`pill-btn ${provider === 'dwd' ? 'active' : ''}`}
-              onClick={() => setProvider('dwd')}
-              title="Deutscher Wetterdienst 1km Radar + 2h Future Forecast (Germany & Central Europe)"
-            >
-              DWD 1km + 2h Nowcast
-            </button>
-            <button
-              type="button"
               className={`pill-btn ${provider === 'rainviewer' ? 'active' : ''}`}
               onClick={() => setProvider('rainviewer')}
               title="RainViewer Public API (All of Europe, Past 2h, max native zoom 7)"
             >
               RainViewer Europe (2h Past)
+            </button>
+            <button
+              type="button"
+              className={`pill-btn ${provider === 'dwd' ? 'active' : ''}`}
+              onClick={() => setProvider('dwd')}
+              title="Deutscher Wetterdienst 1km Radar + 2h Future Forecast (Germany & Central Europe)"
+            >
+              DWD 1km + 2h Nowcast
             </button>
           </div>
         </div>
@@ -779,27 +1213,73 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
         </div>
 
         <div className="radar-timeline-track-wrap">
-          <div className="radar-timeline-slider-box">
-            {frames.length > 1 && metadata && metadata.defaultFrameIndex > 0 && (
-              <div
-                className="radar-now-tick"
-                style={{ left: `${nowMarkerPct}%` }}
-                title="Current time"
+          <div className="radar-timeline-slider-column">
+            <div className="radar-timeline-slider-box">
+              {frames.length > 1 && metadata && metadata.defaultFrameIndex > 0 && (
+                <div
+                  className="radar-now-tick"
+                  style={{ left: `${nowMarkerPct}%` }}
+                  title="Current time"
+                />
+              )}
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, frames.length - 1)}
+                step={1}
+                value={clampedFrameIndex}
+                onChange={(e) => {
+                  setIsPlaying(false);
+                  setFrameIndex(Number(e.target.value));
+                }}
+                disabled={frames.length <= 1}
+                className="radar-timeline-slider"
               />
+            </div>
+
+            {frames.length > 1 && metadata && (
+              <div
+                className="radar-timeline-ticks"
+                aria-label="Downloaded radar frames on timeline"
+              >
+                {frames.map((frame, idx) => {
+                  const key = getRadarFrameKey(metadata.provider, frame);
+                  const isCached = Boolean(downloadedKeys[key]);
+                  const isPrefetching = prefetchingKey === key;
+                  const isActive = idx === clampedFrameIndex;
+                  const isNow = idx === metadata.defaultFrameIndex;
+                  const timeText = new Date(
+                    frame.timestampSec * 1000
+                  ).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  });
+                  const statusLabel = isCached
+                    ? 'Cached (24h)'
+                    : isPrefetching
+                    ? 'Downloading...'
+                    : 'Not cached yet';
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`radar-timeline-tick ${
+                        isCached ? 'is-cached' : ''
+                      } ${isPrefetching ? 'is-prefetching' : ''} ${
+                        frame.kind === 'forecast' ? 'is-forecast' : ''
+                      } ${isNow ? 'is-now' : ''} ${
+                        isActive ? 'is-active' : ''
+                      }`}
+                      onClick={() => {
+                        setIsPlaying(false);
+                        setFrameIndex(idx);
+                      }}
+                      title={`${timeText} (${frame.kind === 'forecast' ? 'Forecast' : 'Past'}) — ${statusLabel}`}
+                    />
+                  );
+                })}
+              </div>
             )}
-            <input
-              type="range"
-              min={0}
-              max={Math.max(0, frames.length - 1)}
-              step={1}
-              value={Math.min(frameIndex, Math.max(0, frames.length - 1))}
-              onChange={(e) => {
-                setIsPlaying(false);
-                setFrameIndex(Number(e.target.value));
-              }}
-              disabled={frames.length <= 1}
-              className="radar-timeline-slider"
-            />
           </div>
           {activeFrame && offsetInfo && (
             <div className="radar-frame-status">
@@ -812,8 +1292,14 @@ export const RadarMapView: React.FC<RadarMapViewProps> = ({
               <span className={`radar-offset-pill ${offsetInfo.tone}`}>
                 {offsetInfo.label}
               </span>
-              <span className="radar-frame-counter">
-                {frameIndex + 1}/{frames.length}
+              <span
+                className={`radar-cache-pill ${
+                  isPrefetchingCurrentProvider ? 'is-downloading' : ''
+                }`}
+                title="Radar and map tiles are cached locally for up to 24 hours. Highlighted timeline bars show frames ready for instant playback."
+              >
+                {cachedFrameCount}/{frames.length} cached
+                {isPrefetchingCurrentProvider ? ' •' : ''}
               </span>
             </div>
           )}

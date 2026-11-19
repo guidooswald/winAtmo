@@ -24,7 +24,11 @@ import {
   resolveTaskbarReading,
   generateTaskbarIcon,
 } from './taskbarIcon';
-import { getRadarMetadata } from './radarService';
+import {
+  checkCachedRadarUrls,
+  getRadarMetadata,
+  stopRadarCacheServer,
+} from './radarService';
 import {
   AccountInfo,
   MeasureQueryRequest,
@@ -2066,9 +2070,15 @@ function registerIpcHandlers(): void {
       _e,
       options?: { provider?: 'dwd' | 'rainviewer'; force?: boolean }
     ) => {
-      return getRadarMetadata(options?.provider || 'dwd', Boolean(options?.force));
+      return getRadarMetadata(
+        options?.provider || 'rainviewer',
+        Boolean(options?.force)
+      );
     }
   );
+  ipcMain.handle('radar:check-cached-urls', (_e, urls: string[]) => {
+    return checkCachedRadarUrls(Array.isArray(urls) ? urls : []);
+  });
 
   // Debug Console Window & Telemetry IPC
   ipcMain.on('debug:open-window', () => {
@@ -2234,6 +2244,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true;
   securityMediaProxy.stop();
+  stopRadarCacheServer();
   saveMainWindowBounds();
   saveWidgetSize();
   store?.flushSync();
