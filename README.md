@@ -142,6 +142,7 @@ npm run dev
 
 - **License:** Released under the [MIT License](LICENSE) • Copyright © 2026 [Guido Oswald](https://guido.swiss)
 - **Privacy Policy:** See [PRIVACY.md](PRIVACY.md) for data handling and security disclosures.
+- **Security Audit:** See [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) for the security assessment, findings, and implemented remediations.
 
 ---
 
