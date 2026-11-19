@@ -19,6 +19,9 @@ Native Windows desktop application for **Netatmo Personal Weather Stations** (`N
 ### Flexible Multi-Curve Chart Studio
 ![Flexible Charts](docs/screenshots/charts.png)
 
+### Interactive European Rain Radar Map (RainViewer & DWD Nowcast)
+![European Rain Radar Map](docs/screenshots/radar.png)
+
 ### Netatmo Security, Cameras, Live Feeds & Events
 ![Netatmo Security & Cameras](docs/screenshots/security.png)
 
