@@ -400,7 +400,7 @@ export interface SecurityCamera {
   wifiState?: string;
   firmwareRevision?: number | string;
   isLocal?: boolean;
-  floodlight?: string; // 'on' | 'off' | 'auto'
+  floodlight?: SecurityFloodlightMode | string; // 'on' | 'off' | 'auto'
   sirenStatus?: string;
   lastSetup?: number;
   vpnUrl?: string;
@@ -495,6 +495,16 @@ export interface SecurityMediaFetchResult {
   dataText?: string;
   dataBuffer?: Uint8Array;
   error?: string;
+}
+
+export type SecurityFloodlightMode = 'auto' | 'on' | 'off';
+
+export interface SetCameraFloodlightResult {
+  ok: boolean;
+  mode?: SecurityFloodlightMode;
+  via?: 'setstate' | 'local' | 'vpn' | 'demo';
+  error?: string;
+  needsWriteScope?: boolean;
 }
 
 export interface SetPersonsAwayResult {

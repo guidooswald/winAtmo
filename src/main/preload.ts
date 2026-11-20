@@ -13,7 +13,9 @@ import {
   SecurityDownloadResult,
   SecurityEventImageRefreshResult,
   SecurityEventVideoResult,
+  SecurityFloodlightMode,
   SecurityVideoDownloadProgress,
+  SetCameraFloodlightResult,
   SetPersonsAwayResult,
   StorageStats,
   StoredApiKeysInfo,
@@ -145,6 +147,11 @@ export interface WinAtmoAPI {
     cameraId: string;
   }) => Promise<SecurityEventVideoResult>;
   setHomeEmpty: (options: { homeIds: string[] }) => Promise<SetPersonsAwayResult>;
+  setCameraFloodlight: (options: {
+    homeId: string;
+    cameraId: string;
+    mode: SecurityFloodlightMode;
+  }) => Promise<SetCameraFloodlightResult>;
   downloadSecuritySnapshot: (options: {
     homeId: string;
     eventId: string;
@@ -288,6 +295,8 @@ const api: WinAtmoAPI = {
     ipcRenderer.invoke('security:get-live-stream', options),
   setHomeEmpty: (options) =>
     ipcRenderer.invoke('security:set-home-empty', options),
+  setCameraFloodlight: (options) =>
+    ipcRenderer.invoke('security:set-floodlight', options),
   downloadSecuritySnapshot: (options) =>
     ipcRenderer.invoke('security:download-snapshot', options),
   downloadSecurityVideo: (options) =>

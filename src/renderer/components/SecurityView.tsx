@@ -37,6 +37,7 @@ import {
   SecurityDataPayload,
   SecurityEvent,
   SecurityEventVideoResult,
+  SecurityFloodlightMode,
   SecurityPerson,
   SecurityVideoDownloadProgress,
 } from '../types';
@@ -69,6 +70,16 @@ function isSupportedOutdoorCamera(type?: string): boolean {
   const t = type.toUpperCase();
   return t === 'NOC' || t === 'NOC2' || t.includes('PRESENCE') || t.includes('OUTDOOR');
 }
+
+function supportsFloodlight(cam: SecurityCamera): boolean {
+  return cam.floodlight !== undefined || isSupportedOutdoorCamera(cam.type);
+}
+
+const FLOODLIGHT_MODES: Array<{ mode: SecurityFloodlightMode; label: string }> = [
+  { mode: 'auto', label: 'Auto' },
+  { mode: 'on', label: 'On' },
+  { mode: 'off', label: 'Off' },
+];
 
 function formatSdStatus(sd: string | number | undefined): {
   label: string;
@@ -201,6 +212,9 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   const [videoState, setVideoState] = useState<SecurityEventVideoResult | null>(null);
   const streamReqIdRef = useRef(0);
   const [settingHomeEmpty, setSettingHomeEmpty] = useState<boolean>(false);
+  const [updatingFloodlight, setUpdatingFloodlight] = useState<
+    Record<string, SecurityFloodlightMode | null>
+  >({});
   const [homeEmptyNotice, setHomeEmptyNotice] = useState<{
     tone: 'ok' | 'err';
     text: string;
@@ -948,6 +962,74 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
     }
   }, [homes, selectedHomeId]);
 
+  const handleSetFloodlight = useCallback(
+    async (cam: SecurityCamera, mode: SecurityFloodlightMode) => {
+      if (typeof window.winatmo?.setCameraFloodlight !== 'function') {
+        setCameraNotice({
+          cameraId: cam.id,
+          tone: 'err',
+          text: 'Restart Electron (npm run dev) to enable floodlight control.',
+        });
+        return;
+      }
+
+      const current = String(cam.floodlight || '').toLowerCase();
+      if (current === mode || updatingFloodlight[cam.id]) return;
+
+      setUpdatingFloodlight((prev) => ({ ...prev, [cam.id]: mode }));
+      setCameraNotice((prev) => (prev?.cameraId === cam.id ? null : prev));
+
+      try {
+        const res = await window.winatmo.setCameraFloodlight({
+          homeId: cam.homeId,
+          cameraId: cam.id,
+          mode,
+        });
+        if (!res.ok) {
+          setCameraNotice({
+            cameraId: cam.id,
+            tone: 'err',
+            text: res.error || 'Failed to update floodlight mode.',
+          });
+          return;
+        }
+
+        const label = mode === 'on' ? 'On' : mode === 'off' ? 'Off' : 'Auto';
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                homes: prev.homes.map((h) =>
+                  h.id === cam.homeId
+                    ? {
+                        ...h,
+                        cameras: h.cameras.map((c) =>
+                          c.id === cam.id ? { ...c, floodlight: mode } : c
+                        ),
+                      }
+                    : h
+                ),
+              }
+            : prev
+        );
+        setCameraNotice({
+          cameraId: cam.id,
+          tone: 'ok',
+          text: `Floodlight switched to ${label}.`,
+        });
+      } catch (err: any) {
+        setCameraNotice({
+          cameraId: cam.id,
+          tone: 'err',
+          text: err?.message || 'Failed to update floodlight mode.',
+        });
+      } finally {
+        setUpdatingFloodlight((prev) => ({ ...prev, [cam.id]: null }));
+      }
+    },
+    [updatingFloodlight]
+  );
+
   const filteredEvents = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const selectedPerson =
@@ -1206,12 +1288,54 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
                       <span>{power.label}</span>
                     </div>
 
-                    {cam.floodlight !== undefined && (
-                      <div className="camera-health-item">
-                        <Lightbulb size={13} />
-                        <span>Floodlight: {cam.floodlight}</span>
-                      </div>
-                    )}
+                    {supportsFloodlight(cam) && (() => {
+                      const currentFloodlight = String(cam.floodlight || '').toLowerCase();
+                      const pendingMode = updatingFloodlight[cam.id];
+                      return (
+                        <div
+                          className="camera-floodlight-control"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="camera-floodlight-label">
+                            <Lightbulb
+                              size={13}
+                              className={`floodlight-icon mode-${currentFloodlight || 'unknown'}`}
+                            />
+                            <span>Floodlight</span>
+                          </div>
+                          <div
+                            className="camera-floodlight-group"
+                            role="group"
+                            aria-label={`Floodlight mode for ${cam.name}`}
+                          >
+                            {FLOODLIGHT_MODES.map(({ mode, label }) => {
+                              const isActive = currentFloodlight === mode;
+                              return (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  className={`camera-floodlight-btn mode-${mode} ${
+                                    isActive ? 'active' : ''
+                                  }`}
+                                  aria-pressed={isActive}
+                                  disabled={Boolean(pendingMode)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSetFloodlight(cam, mode);
+                                  }}
+                                  title={`Set ${cam.name} floodlight to ${label}`}
+                                >
+                                  {pendingMode === mode && (
+                                    <RefreshCw size={11} className="spin" />
+                                  )}
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="camera-card-footer">

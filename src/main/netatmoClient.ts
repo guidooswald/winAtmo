@@ -19,11 +19,13 @@ import {
   SecurityEvent,
   SecurityEventImageRefreshResult,
   SecurityEventVideoResult,
+  SecurityFloodlightMode,
   SecurityHome,
   SecurityMediaFetchResult,
   SecurityPerson,
   SecuritySubEvent,
   SecurityVideoDownloadProgress,
+  SetCameraFloodlightResult,
   SetPersonsAwayResult,
   StationModule,
   StoredCookie,
@@ -469,7 +471,8 @@ export class NetatmoClient {
     endpoint: string,
     params: Record<string, string | number | boolean | undefined> = {},
     retried = false,
-    requestNote?: string
+    requestNote?: string,
+    jsonBody?: unknown
   ): Promise<any> {
     const token = await this.ensureAccessToken(false);
     const session = this.store.getSession();
@@ -510,9 +513,14 @@ export class NetatmoClient {
           signal: AbortSignal.timeout(20000),
           headers,
         };
-        if (method === 'POST' && Object.keys(cleanParams).length > 0) {
-          headers['Content-Type'] = 'application/json';
-          fetchInit.body = JSON.stringify(cleanParams);
+        if (method === 'POST') {
+          if (jsonBody !== undefined) {
+            headers['Content-Type'] = 'application/json';
+            fetchInit.body = JSON.stringify(jsonBody);
+          } else if (Object.keys(cleanParams).length > 0) {
+            headers['Content-Type'] = 'application/json';
+            fetchInit.body = JSON.stringify(cleanParams);
+          }
         }
         res = await fetch(url, fetchInit);
       } catch (netErr: any) {
@@ -586,7 +594,7 @@ export class NetatmoClient {
           );
           try {
             await this.ensureAccessToken(true);
-            return this.apiRequest(method, endpoint, params, true, requestNote);
+            return this.apiRequest(method, endpoint, params, true, requestNote, jsonBody);
           } catch (refreshErr: any) {
             throw new Error(
               `Netatmo session expired: ${
@@ -623,7 +631,7 @@ export class NetatmoClient {
         // Rate limit hit - wait 2.5 seconds and retry once
         await new Promise((r) => setTimeout(r, 2500));
         if (!retried) {
-          return this.apiRequest(method, endpoint, params, true, requestNote);
+          return this.apiRequest(method, endpoint, params, true, requestNote, jsonBody);
         }
         throw new Error(
           'Netatmo API rate limit reached. Please wait a moment before syncing again.'
@@ -710,6 +718,15 @@ export class NetatmoClient {
     requestNote?: string
   ): Promise<any> {
     return this.apiRequest('POST', endpoint, params, retried, requestNote);
+  }
+
+  private async apiPostJson(
+    endpoint: string,
+    body: unknown,
+    retried = false,
+    requestNote?: string
+  ): Promise<any> {
+    return this.apiRequest('POST', endpoint, {}, retried, requestNote, body);
   }
 
   /**
@@ -3485,6 +3502,165 @@ export class NetatmoClient {
           : msg,
       };
     }
+  }
+
+  /**
+   * Switches the floodlight mode (`auto` | `on` | `off`) for a supported outdoor camera
+   * (`NOC` / `NOC2` Presence) via `POST /api/setstate` with automatic fallback to the
+   * camera's local/VPN `/command/floodlight_set_config` endpoint.
+   */
+  public async setCameraFloodlight(options: {
+    homeId: string;
+    cameraId: string;
+    mode: SecurityFloodlightMode;
+  }): Promise<SetCameraFloodlightResult> {
+    const sessionData = this.store.getSession();
+    if (!sessionData.loggedIn) {
+      return { ok: false, error: 'Not signed in to Netatmo.' };
+    }
+
+    const homeId = typeof options.homeId === 'string' ? options.homeId.trim() : '';
+    const cameraId =
+      typeof options.cameraId === 'string' ? options.cameraId.trim() : '';
+    const mode = options.mode;
+
+    if (!homeId || !cameraId) {
+      return { ok: false, error: 'Missing home ID or camera ID.' };
+    }
+
+    if (mode !== 'auto' && mode !== 'on' && mode !== 'off') {
+      return { ok: false, error: 'Invalid floodlight mode requested.' };
+    }
+
+    if (sessionData.authMethod === 'demo') {
+      return { ok: true, mode, via: 'demo' };
+    }
+
+    const shouldStore = this.store.getSettings().storeSecurityData !== false;
+    const errors: string[] = [];
+
+    // 1. Primary Cloud API: POST /api/setstate
+    try {
+      const resp = await this.apiPostJson(
+        'setstate',
+        {
+          home: {
+            id: homeId,
+            modules: [{ id: cameraId, floodlight: mode }],
+          },
+        },
+        false,
+        `Security: set floodlight ${mode} (${cameraId})`
+      );
+
+      const bodyErrors: any[] = Array.isArray(resp?.body?.errors)
+        ? resp.body.errors
+        : [];
+      const hasRespError = Boolean(resp?.error) || bodyErrors.length > 0;
+      const statusOk = resp?.status === 'ok' || resp?.status === undefined;
+
+      if (!hasRespError && statusOk) {
+        if (shouldStore) {
+          this.db.updateCameraFloodlight(homeId, cameraId, mode);
+        }
+        debugLogger.log(
+          'info',
+          'Security',
+          `Set camera ${cameraId} floodlight to ${mode} via /api/setstate`,
+          homeId,
+          'security'
+        );
+        return { ok: true, mode, via: 'setstate' };
+      }
+
+      const apiErrMsg =
+        resp?.error?.message ||
+        bodyErrors[0]?.message ||
+        (bodyErrors[0]?.code !== undefined
+          ? `Netatmo setstate error code ${bodyErrors[0].code}`
+          : 'Unexpected response from /api/setstate');
+      errors.push(`/api/setstate: ${apiErrMsg}`);
+    } catch (err: any) {
+      errors.push(`/api/setstate: ${err?.message || String(err)}`);
+    }
+
+    // 2. Fallback: Camera local/VPN command endpoint (/command/floodlight_set_config)
+    const { vpnUrl, localUrl } = await this.resolveCameraUrls(homeId, cameraId);
+    const bases: Array<{ base: string; label: 'local' | 'vpn' }> = [];
+    if (localUrl) bases.push({ base: localUrl, label: 'local' });
+    if (vpnUrl) bases.push({ base: vpnUrl, label: 'vpn' });
+
+    const encodedConfig = encodeURIComponent(JSON.stringify({ mode }));
+    for (const entry of bases) {
+      const cmdUrl = `${entry.base}/command/floodlight_set_config?config=${encodedConfig}`;
+      try {
+        const res = await this.fetchSecurityMedia({
+          url: cmdUrl,
+          responseType: 'text',
+          timeoutMs: 12_000,
+        });
+        if (res.ok) {
+          let cmdJson: any = null;
+          if (res.dataText && res.dataText.trim()) {
+            try {
+              cmdJson = JSON.parse(res.dataText);
+            } catch {}
+          }
+          const cmdOk =
+            !cmdJson?.error &&
+            (cmdJson === null ||
+              cmdJson?.status === 'ok' ||
+              cmdJson?.status === undefined);
+          if (cmdOk) {
+            if (shouldStore) {
+              this.db.updateCameraFloodlight(homeId, cameraId, mode);
+            }
+            debugLogger.log(
+              'info',
+              'Security',
+              `Set camera ${cameraId} floodlight to ${mode} via ${entry.label} /command/floodlight_set_config`,
+              homeId,
+              'security'
+            );
+            return { ok: true, mode, via: entry.label };
+          }
+          errors.push(
+            `${entry.label} command: ${
+              cmdJson?.error?.message ||
+              cmdJson?.error ||
+              'Camera rejected floodlight configuration'
+            }`
+          );
+        } else {
+          errors.push(`${entry.label} command: ${res.error || `HTTP ${res.status}`}`);
+        }
+      } catch (cmdErr: any) {
+        errors.push(`${entry.label} command: ${cmdErr?.message || String(cmdErr)}`);
+      }
+    }
+
+    const combined = errors.join(' | ') || 'Failed to update camera floodlight.';
+    const lower = combined.toLowerCase();
+    const needsWriteScope =
+      combined.includes('403') ||
+      lower.includes('scope') ||
+      lower.includes('forbidden');
+
+    debugLogger.log(
+      'error',
+      'Security',
+      `Failed to set floodlight (${mode}) on camera ${cameraId}: ${combined}`,
+      undefined,
+      'security'
+    );
+
+    return {
+      ok: false,
+      needsWriteScope,
+      error: needsWriteScope
+        ? 'Netatmo rejected floodlight change (requires write_presence / write_camera scope or Netatmo Web Sign-In).'
+        : combined,
+    };
   }
 
   /**

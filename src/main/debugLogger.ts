@@ -89,6 +89,7 @@ const SECURITY_ENDPOINTS = new Set([
   'getcamerapicture',
   'setpersonshome',
   'setpersonsaway',
+  'setstate',
 ]);
 
 function inferApiSource(endpoint: string, note?: string): DebugSourceDomain {
@@ -99,7 +100,8 @@ function inferApiSource(endpoint: string, note?: string): DebugSourceDomain {
     ep.startsWith('security/') ||
     ep.startsWith('hls/') ||
     ep.startsWith('vod/') ||
-    ep === 'command/ping' ||
+    ep.startsWith('command/') ||
+    ep.includes('/command/') ||
     n.startsWith('security')
   ) {
     return 'security';

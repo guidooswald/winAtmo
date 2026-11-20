@@ -822,6 +822,19 @@ export class TimeSeriesDatabase {
       .run(now, homeId);
   }
 
+  public updateCameraFloodlight(
+    homeId: string,
+    cameraId: string,
+    floodlight: string
+  ): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare(
+        'UPDATE security_cameras SET floodlight = ?, updated_at = ? WHERE home_id = ? AND id = ?'
+      )
+      .run(floodlight, now, homeId, cameraId);
+  }
+
   public clearSecurityData(): StorageStats {
     this.db.exec(`
       DELETE FROM security_events;

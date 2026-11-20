@@ -2030,6 +2030,34 @@ function registerIpcHandlers(): void {
   );
 
   handleTrustedIpc(
+    'security:set-floodlight',
+    async (
+      _e,
+      options: {
+        homeId: string;
+        cameraId: string;
+        mode: 'auto' | 'on' | 'off';
+      }
+    ) => {
+      if (
+        !options ||
+        typeof options.homeId !== 'string' ||
+        typeof options.cameraId !== 'string' ||
+        (options.mode !== 'auto' &&
+          options.mode !== 'on' &&
+          options.mode !== 'off')
+      ) {
+        return { ok: false, error: 'Invalid floodlight request parameters.' };
+      }
+      return client.setCameraFloodlight({
+        homeId: options.homeId,
+        cameraId: options.cameraId,
+        mode: options.mode,
+      });
+    }
+  );
+
+  handleTrustedIpc(
     'security:download-snapshot',
     async (
       _e,
