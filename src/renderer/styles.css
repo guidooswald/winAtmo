@@ -931,6 +931,10 @@ body {
   padding: var(--space-view-padding);
 }
 
+.app-main-content.sensors-view-active {
+  padding-bottom: 0;
+}
+
 .demo-mode-banner {
   display: flex;
   align-items: center;
@@ -1220,8 +1224,44 @@ body {
   font-size: 12px;
 }
 
+.dashboard-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reset-order-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reset-order-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.reset-order-btn.has-custom {
+  border-color: rgba(56, 189, 248, 0.45);
+  color: var(--accent-sky);
+}
+
+.reset-order-btn.has-custom:hover {
+  background: rgba(56, 189, 248, 0.14);
+}
+
 .station-section {
   margin-bottom: 26px;
+}
+
+.dashboard-container {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.station-section:last-of-type {
+  margin-bottom: 0;
 }
 
 .station-header-banner {
@@ -1346,6 +1386,38 @@ body {
 
 .module-card:hover {
   border-color: var(--border-strong);
+}
+
+.module-card.draggable-tile .module-card-header {
+  cursor: grab;
+}
+
+.module-card.draggable-tile.dragging {
+  opacity: 0.48;
+  border-style: dashed;
+  cursor: grabbing;
+}
+
+.module-card.draggable-tile.drag-over {
+  border-color: var(--accent-sky);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+  transform: translateY(-2px);
+}
+
+.module-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: 0.65;
+  cursor: grab;
+  flex-shrink: 0;
+  margin-left: -4px;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.module-card:hover .module-drag-handle {
+  opacity: 1;
+  color: var(--text-secondary);
 }
 
 .module-card-header {
@@ -1525,8 +1597,10 @@ body {
   justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 28px;
-  padding-top: 14px;
+  margin-top: 12px;
+  margin-bottom: 0;
+  padding-top: 8px;
+  padding-bottom: 0;
   border-top: 1px solid var(--border-subtle);
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
   font-size: 11px;
@@ -3371,6 +3445,10 @@ body {
   padding: 8px 12px 20px;
 }
 
+[data-theme-family="compact"] .app-main-content.sensors-view-active {
+  padding-bottom: 0;
+}
+
 [data-theme-family="compact"] .dashboard-topbar {
   margin-bottom: 8px;
   gap: 6px;
@@ -3383,6 +3461,16 @@ body {
 
 [data-theme-family="compact"] .station-section {
   margin-bottom: 12px;
+}
+
+[data-theme-family="compact"] .station-section:last-of-type {
+  margin-bottom: 0;
+}
+
+[data-theme-family="compact"] .dashboard-version-footer {
+  margin-top: 8px;
+  padding-top: 6px;
+  padding-bottom: 0;
 }
 
 [data-theme-family="compact"] .station-header-banner {

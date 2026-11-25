@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowDownRight,
@@ -11,10 +11,12 @@ import {
   Droplets,
   ExternalLink,
   Gauge,
+  GripVertical,
   LineChart,
   MapPin,
   Pin,
   Radio,
+  RotateCcw,
   Thermometer,
   Volume2,
   Wifi,
@@ -57,6 +59,34 @@ function getWeathermapUrl(station: WeatherStation): string {
   return 'https://weathermap.netatmo.com/';
 }
 
+function getOrderedModules(
+  modules: StationModule[],
+  savedOrder?: string[]
+): StationModule[] {
+  if (!savedOrder || savedOrder.length === 0) {
+    return modules;
+  }
+  const byId = new Map<string, StationModule>();
+  for (const mod of modules) {
+    byId.set(mod.id, mod);
+  }
+  const ordered: StationModule[] = [];
+  const used = new Set<string>();
+  for (const id of savedOrder) {
+    const mod = byId.get(id);
+    if (mod && !used.has(id)) {
+      ordered.push(mod);
+      used.add(id);
+    }
+  }
+  for (const mod of modules) {
+    if (!used.has(mod.id)) {
+      ordered.push(mod);
+    }
+  }
+  return ordered;
+}
+
 interface StationDashboardProps {
   stations: WeatherStation[];
   settings: UserSettings;
@@ -74,6 +104,21 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
   const [filterMode, setFilterMode] = useState<
     'all' | 'indoor' | 'outdoor' | 'diagnostics'
   >('all');
+  const [tileOrderByStation, setTileOrderByStation] = useState<
+    Record<string, string[]>
+  >({});
+  const [draggedTile, setDraggedTile] = useState<{
+    stationId: string;
+    moduleId: string;
+  } | null>(null);
+  const [dragOverTile, setDragOverTile] = useState<{
+    stationId: string;
+    moduleId: string;
+  } | null>(null);
+  const draggedTileRef = useRef<{
+    stationId: string;
+    moduleId: string;
+  } | null>(null);
   const [versionInfo, setVersionInfo] = useState<{
     version: string;
     build: number;
@@ -95,6 +140,85 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
         }
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (typeof window.winatmo?.getSensorTileOrder === 'function') {
+      window.winatmo
+        .getSensorTileOrder()
+        .then((order) => {
+          if (!cancelled && order && typeof order === 'object') {
+            setTileOrderByStation(order);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const hasCustomOrder = useMemo(() => {
+    if (stations.length === 0) {
+      return Object.values(tileOrderByStation).some((ids) => ids.length > 0);
+    }
+    return stations.some((st) => {
+      const saved = tileOrderByStation[st.id];
+      if (!saved || saved.length === 0) return false;
+      const defaultIds = st.modules.map((m) => m.id);
+      const orderedIds = getOrderedModules(st.modules, saved).map((m) => m.id);
+      return orderedIds.some((id, idx) => id !== defaultIds[idx]);
+    });
+  }, [stations, tileOrderByStation]);
+
+  const handleReorderModules = useCallback(
+    (
+      station: WeatherStation,
+      sourceModuleId: string,
+      targetModuleId: string
+    ) => {
+      const currentFullIds = getOrderedModules(
+        station.modules,
+        tileOrderByStation[station.id]
+      ).map((m) => m.id);
+      const fromIdx = currentFullIds.indexOf(sourceModuleId);
+      const toIdx = currentFullIds.indexOf(targetModuleId);
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+
+      const nextIds = [...currentFullIds];
+      nextIds.splice(fromIdx, 1);
+      nextIds.splice(toIdx, 0, sourceModuleId);
+
+      setTileOrderByStation((prev) => ({
+        ...prev,
+        [station.id]: nextIds,
+      }));
+
+      if (typeof window.winatmo?.setSensorTileOrder === 'function') {
+        window.winatmo
+          .setSensorTileOrder(station.id, nextIds)
+          .then((updated) => {
+            if (updated && typeof updated === 'object') {
+              setTileOrderByStation(updated);
+            }
+          })
+          .catch(() => {});
+      }
+    },
+    [tileOrderByStation]
+  );
+
+  const handleResetTileOrder = useCallback(async () => {
+    setTileOrderByStation({});
+    draggedTileRef.current = null;
+    setDraggedTile(null);
+    setDragOverTile(null);
+    if (typeof window.winatmo?.resetSensorTileOrder === 'function') {
+      try {
+        await window.winatmo.resetSensorTileOrder();
+      } catch {}
+    }
   }, []);
 
   const isPinned = (stationId: string, moduleId: string, metric: MetricType) => {
@@ -192,18 +316,36 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
           </button>
         </div>
 
-        <div className="pinned-summary-pill">
-          <Pin size={13} />
-          <span>
-            {settings.pinnedSensors.length === 1
-              ? t('pinned_summary_single')
-              : t('pinned_summary_plural', { count: settings.pinnedSensors.length })}
-          </span>
+        <div className="dashboard-topbar-right">
+          {filterMode !== 'diagnostics' && (
+            <button
+              type="button"
+              className={`pill-btn reset-order-btn ${hasCustomOrder ? 'has-custom' : ''}`}
+              onClick={handleResetTileOrder}
+              disabled={!hasCustomOrder}
+              title={t('reset_tile_order')}
+            >
+              <RotateCcw size={13} />
+              <span>{t('reset_tile_order')}</span>
+            </button>
+          )}
+          <div className="pinned-summary-pill">
+            <Pin size={13} />
+            <span>
+              {settings.pinnedSensors.length === 1
+                ? t('pinned_summary_single')
+                : t('pinned_summary_plural', { count: settings.pinnedSensors.length })}
+            </span>
+          </div>
         </div>
       </div>
 
       {stations.map((station) => {
-        const filteredModules = station.modules.filter((m) => {
+        const orderedModules = getOrderedModules(
+          station.modules,
+          tileOrderByStation[station.id]
+        );
+        const filteredModules = orderedModules.filter((m) => {
           if (filterMode === 'indoor') {
             return (
               m.type === 'NAMain' || m.type === 'NAModule4' || m.type === 'NHC'
@@ -364,12 +506,124 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
                   const d = mod.dashboard;
                   const co2Badge =
                     d?.CO2 !== undefined ? getCo2QualityBadge(d.CO2) : null;
+                  const isDragging =
+                    draggedTile?.stationId === station.id &&
+                    draggedTile?.moduleId === mod.id;
+                  const isDragOver =
+                    dragOverTile?.stationId === station.id &&
+                    dragOverTile?.moduleId === mod.id &&
+                    !isDragging;
 
                   return (
-                    <div key={mod.id} className="module-card">
+                    <div
+                      key={mod.id}
+                      data-module-id={mod.id}
+                      draggable
+                      className={`module-card draggable-tile${isDragging ? ' dragging' : ''}${isDragOver ? ' drag-over' : ''}`}
+                      onDragStart={(e) => {
+                        const targetEl = e.target as HTMLElement | null;
+                        if (targetEl?.closest('button, a, input, select')) {
+                          e.preventDefault();
+                          return;
+                        }
+                        const info = { stationId: station.id, moduleId: mod.id };
+                        draggedTileRef.current = info;
+                        setDraggedTile(info);
+                        if (e.dataTransfer) {
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData(
+                            'text/plain',
+                            JSON.stringify(info)
+                          );
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        const activeDrag = draggedTileRef.current || draggedTile;
+                        if (
+                          !activeDrag ||
+                          activeDrag.stationId !== station.id ||
+                          activeDrag.moduleId === mod.id
+                        ) {
+                          return;
+                        }
+                        e.preventDefault();
+                        if (e.dataTransfer) {
+                          e.dataTransfer.dropEffect = 'move';
+                        }
+                        if (
+                          dragOverTile?.stationId !== station.id ||
+                          dragOverTile?.moduleId !== mod.id
+                        ) {
+                          setDragOverTile({
+                            stationId: station.id,
+                            moduleId: mod.id,
+                          });
+                        }
+                      }}
+                      onDragLeave={(e) => {
+                        if (
+                          !e.currentTarget.contains(
+                            e.relatedTarget as Node | null
+                          )
+                        ) {
+                          setDragOverTile((prev) =>
+                            prev?.stationId === station.id &&
+                            prev?.moduleId === mod.id
+                              ? null
+                              : prev
+                          );
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        let activeDrag = draggedTileRef.current || draggedTile;
+                        if (!activeDrag && e.dataTransfer) {
+                          try {
+                            const raw = e.dataTransfer.getData('text/plain');
+                            const parsed = raw ? JSON.parse(raw) : null;
+                            if (
+                              parsed &&
+                              typeof parsed.stationId === 'string' &&
+                              typeof parsed.moduleId === 'string'
+                            ) {
+                              activeDrag = {
+                                stationId: parsed.stationId,
+                                moduleId: parsed.moduleId,
+                              };
+                            }
+                          } catch {}
+                        }
+                        if (
+                          activeDrag &&
+                          activeDrag.stationId === station.id &&
+                          activeDrag.moduleId !== mod.id
+                        ) {
+                          handleReorderModules(
+                            station,
+                            activeDrag.moduleId,
+                            mod.id
+                          );
+                        }
+                        draggedTileRef.current = null;
+                        setDraggedTile(null);
+                        setDragOverTile(null);
+                      }}
+                      onDragEnd={() => {
+                        draggedTileRef.current = null;
+                        setDraggedTile(null);
+                        setDragOverTile(null);
+                      }}
+                    >
                       <div className="module-card-header">
                         <div>
                           <div className="module-title-row">
+                            <span
+                              className="module-drag-handle"
+                              title={t('drag_to_rearrange')}
+                              aria-hidden="true"
+                            >
+                              <GripVertical size={14} />
+                            </span>
                             <h3>{mod.moduleName}</h3>
                             {co2Badge && (
                               <span

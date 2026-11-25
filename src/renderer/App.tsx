@@ -682,7 +682,13 @@ const MainStudioShell: React.FC<MainStudioShellProps> = ({
       )}
 
       {/* Main Content Area */}
-      <main className="app-main-content">
+      <main
+        className={`app-main-content${
+          activeTab === 'dashboard' && (account.loggedIn || stations.length > 0)
+            ? ' sensors-view-active'
+            : ''
+        }`}
+      >
         {activeTab === 'settings' ? (
           <SettingsView
             settings={settings}

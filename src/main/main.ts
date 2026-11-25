@@ -1748,6 +1748,41 @@ function registerIpcHandlers(): void {
     return stations;
   });
 
+  handleTrustedIpc('stations:get-tile-order', () => {
+    return db.getSensorTileOrder();
+  });
+
+  handleTrustedIpc(
+    'stations:set-tile-order',
+    (_e, payload: { stationId: string; moduleIds: string[] }) => {
+      if (
+        !payload ||
+        typeof payload.stationId !== 'string' ||
+        payload.stationId.trim().length === 0 ||
+        payload.stationId.length > 128 ||
+        !Array.isArray(payload.moduleIds) ||
+        payload.moduleIds.length > 200
+      ) {
+        return db.getSensorTileOrder();
+      }
+      const safeIds = payload.moduleIds.filter(
+        (id): id is string =>
+          typeof id === 'string' && id.trim().length > 0 && id.length <= 128
+      );
+      return db.setSensorTileOrder(payload.stationId, safeIds);
+    }
+  );
+
+  handleTrustedIpc('stations:reset-tile-order', (_e, stationId?: string) => {
+    if (
+      stationId !== undefined &&
+      (typeof stationId !== 'string' || stationId.length > 128)
+    ) {
+      return db.getSensorTileOrder();
+    }
+    return db.resetSensorTileOrder(stationId);
+  });
+
   handleTrustedIpc(
     'history:sync',
     async (

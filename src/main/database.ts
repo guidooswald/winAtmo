@@ -132,6 +132,14 @@ export class TimeSeriesDatabase {
       CREATE INDEX IF NOT EXISTS idx_security_events_home_time ON security_events (home_id, time DESC);
       CREATE INDEX IF NOT EXISTS idx_security_events_time ON security_events (time DESC);
 
+      CREATE TABLE IF NOT EXISTS sensor_tile_order (
+        station_id TEXT NOT NULL,
+        module_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (station_id, module_id)
+      ) WITHOUT ROWID;
+
       UPDATE security_cameras
       SET vpn_url = NULL, local_url = NULL
       WHERE vpn_url IS NOT NULL OR local_url IS NOT NULL;
@@ -835,6 +843,75 @@ export class TimeSeriesDatabase {
       .run(floodlight, now, homeId, cameraId);
   }
 
+  public getSensorTileOrder(): Record<string, string[]> {
+    const rows = this.db
+      .prepare(
+        'SELECT station_id, module_id FROM sensor_tile_order ORDER BY station_id ASC, position ASC'
+      )
+      .all() as Array<{ station_id: string; module_id: string }>;
+
+    const result: Record<string, string[]> = {};
+    for (const row of rows) {
+      const sid = String(row.station_id);
+      const mid = String(row.module_id);
+      if (!result[sid]) result[sid] = [];
+      result[sid].push(mid);
+    }
+    return result;
+  }
+
+  public setSensorTileOrder(
+    stationId: string,
+    moduleIds: string[]
+  ): Record<string, string[]> {
+    const sid = stationId.trim();
+    if (!sid) return this.getSensorTileOrder();
+
+    const seen = new Set<string>();
+    const cleanIds: string[] = [];
+    for (const rawId of moduleIds) {
+      if (typeof rawId !== 'string') continue;
+      const mid = rawId.trim();
+      if (!mid || seen.has(mid)) continue;
+      seen.add(mid);
+      cleanIds.push(mid);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const deleteStmt = this.db.prepare(
+      'DELETE FROM sensor_tile_order WHERE station_id = ?'
+    );
+    const insertStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO sensor_tile_order (station_id, module_id, position, updated_at)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      deleteStmt.run(sid);
+      for (let i = 0; i < cleanIds.length; i++) {
+        insertStmt.run(sid, cleanIds[i], i, now);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+
+    return this.getSensorTileOrder();
+  }
+
+  public resetSensorTileOrder(stationId?: string): Record<string, string[]> {
+    if (stationId && stationId.trim()) {
+      this.db
+        .prepare('DELETE FROM sensor_tile_order WHERE station_id = ?')
+        .run(stationId.trim());
+    } else {
+      this.db.exec('DELETE FROM sensor_tile_order');
+    }
+    return this.getSensorTileOrder();
+  }
+
   public clearSecurityData(): StorageStats {
     this.db.exec(`
       DELETE FROM security_events;
@@ -865,6 +942,7 @@ export class TimeSeriesDatabase {
       DELETE FROM security_cameras WHERE home_id LIKE 'demo-%';
       DELETE FROM security_persons WHERE home_id LIKE 'demo-%';
       DELETE FROM security_homes WHERE id LIKE 'demo-%';
+      DELETE FROM sensor_tile_order WHERE station_id LIKE '70:ee:50:de:m0:%';
     `);
   }
 

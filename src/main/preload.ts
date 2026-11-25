@@ -98,6 +98,14 @@ export interface WinAtmoAPI {
     lastSyncAt?: number;
   }>;
   refreshStations: () => Promise<WeatherStation[]>;
+  getSensorTileOrder: () => Promise<Record<string, string[]>>;
+  setSensorTileOrder: (
+    stationId: string,
+    moduleIds: string[]
+  ) => Promise<Record<string, string[]>>;
+  resetSensorTileOrder: (
+    stationId?: string
+  ) => Promise<Record<string, string[]>>;
   syncHistory: (options?: {
     forceFull?: boolean;
     customDays?: number;
@@ -267,6 +275,11 @@ const api: WinAtmoAPI = {
 
   getCachedStations: () => ipcRenderer.invoke('stations:get-cached'),
   refreshStations: () => ipcRenderer.invoke('stations:refresh'),
+  getSensorTileOrder: () => ipcRenderer.invoke('stations:get-tile-order'),
+  setSensorTileOrder: (stationId: string, moduleIds: string[]) =>
+    ipcRenderer.invoke('stations:set-tile-order', { stationId, moduleIds }),
+  resetSensorTileOrder: (stationId?: string) =>
+    ipcRenderer.invoke('stations:reset-tile-order', stationId),
   syncHistory: (options) => ipcRenderer.invoke('history:sync', options),
   getSyncProgress: () => ipcRenderer.invoke('history:get-progress'),
   queryMeasureSeries: (req: MeasureQueryRequest) =>
