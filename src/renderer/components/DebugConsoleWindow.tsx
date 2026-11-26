@@ -24,7 +24,7 @@ import {
   UserSettings,
 } from '../types';
 import { WindowTopBar } from './WindowTopBar';
-import { applyThemeToDocument } from '../utils/themes';
+import { applyThemeToDocument, setCustomThemes } from '../utils/themes';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -192,11 +192,15 @@ export const DebugConsoleWindow: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      const [s, prog, snap] = await Promise.all([
+      const [s, prog, snap, customList] = await Promise.all([
         window.winatmo.getSettings(),
         window.winatmo.getSyncProgress(),
         window.winatmo.getDebugSnapshot(),
+        window.winatmo.getCustomThemes?.().catch(() => []),
       ]);
+      if (Array.isArray(customList)) {
+        setCustomThemes(customList);
+      }
       setSettings(s);
       setSyncProgress(prog);
       setLogs(snap.logs);
@@ -232,10 +236,16 @@ export const DebugConsoleWindow: React.FC = () => {
       }
     });
 
+    const unsubCustomThemes = window.winatmo.onCustomThemesUpdated?.((themes) => {
+      setCustomThemes(themes);
+      setSettings((prev) => (prev ? { ...prev } : prev));
+    });
+
     return () => {
       unsubSettings();
       unsubProgress();
       unsubDebug();
+      unsubCustomThemes?.();
     };
   }, []);
 

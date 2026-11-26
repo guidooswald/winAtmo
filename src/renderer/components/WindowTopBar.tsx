@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { CloudSun, Palette } from 'lucide-react';
 import { ThemeId } from '../types';
-import { THEMES } from '../utils/themes';
+import {
+  getCustomThemes,
+  subscribeCustomThemes,
+  THEMES,
+  ThemeDefinition,
+} from '../utils/themes';
 
 interface WindowTopBarProps {
   title?: string;
@@ -66,6 +71,14 @@ export const WindowTopBar: React.FC<WindowTopBarProps> = ({
   onThemeChange,
 }) => {
   const [isMaximized, setIsMaximized] = useState(false);
+  const [customThemes, setCustomThemes] = useState<ThemeDefinition[]>(() =>
+    getCustomThemes()
+  );
+
+  useEffect(() => {
+    setCustomThemes(getCustomThemes());
+    return subscribeCustomThemes(setCustomThemes);
+  }, []);
 
   useEffect(() => {
     if (window.winatmo?.isMaximized) {
@@ -152,6 +165,15 @@ export const WindowTopBar: React.FC<WindowTopBarProps> = ({
                     </option>
                   ))}
                 </optgroup>
+                {customThemes.length > 0 && (
+                  <optgroup label="Custom Themes">
+                    {customThemes.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        🎨 {t.name} ({t.mode === 'light' ? 'Light' : 'Dark'})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
           )}

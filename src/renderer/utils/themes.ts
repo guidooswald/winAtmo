@@ -1,12 +1,6 @@
-import { ThemeId } from '../types';
+import { CustomThemeRecord, ThemeFamily, ThemeId } from '../types';
 
-export type ThemeFamily =
-  | 'fluent'
-  | 'compact'
-  | 'terminal'
-  | 'nord'
-  | 'brutal'
-  | 'soft';
+export type { ThemeFamily };
 
 export interface ThemeDefinition {
   id: ThemeId;
@@ -19,6 +13,9 @@ export interface ThemeDefinition {
   swatches: [string, string, string, string]; // [bgBase, bgCard, accentSky, accentEmerald]
   widgetBgRgb: string; // e.g. '13, 19, 33' for rgba(var(--widget-bg-rgb), alpha)
   vars: Record<string, string>;
+  isCustom?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export const THEMES: ThemeDefinition[] = [
@@ -806,8 +803,178 @@ const LEGACY_THEME_MAP: Record<string, ThemeId> = {
   'nord-light': 'nord-light',
 };
 
+let customThemesCache: ThemeDefinition[] = [];
+const customThemeListeners = new Set<(themes: ThemeDefinition[]) => void>();
+
+export function hexToRgbTriplet(color: string, fallback = '13, 19, 33'): string {
+  const s = (color || '').trim();
+  const hex6 = /^#([0-9a-fA-F]{6})$/.exec(s);
+  if (hex6) {
+    const n = parseInt(hex6[1], 16);
+    return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+  }
+  const hex3 = /^#([0-9a-fA-F]{3})$/.exec(s);
+  if (hex3) {
+    const r = parseInt(hex3[1][0] + hex3[1][0], 16);
+    const g = parseInt(hex3[1][1] + hex3[1][1], 16);
+    const b = parseInt(hex3[1][2] + hex3[1][2], 16);
+    return `${r}, ${g}, ${b}`;
+  }
+  const rgbMatch = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i.exec(s);
+  if (rgbMatch) {
+    const clamp = (v: string) => Math.max(0, Math.min(255, Number(v) || 0));
+    return `${clamp(rgbMatch[1])}, ${clamp(rgbMatch[2])}, ${clamp(rgbMatch[3])}`;
+  }
+  return fallback;
+}
+
+function normalizeColorForSwatch(color: string | undefined, fallback: string): string {
+  if (!color || typeof color !== 'string') return fallback;
+  const trimmed = color.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed;
+  const hex3 = /^#([0-9a-fA-F]{3})$/.exec(trimmed);
+  if (hex3) {
+    return `#${hex3[1][0]}${hex3[1][0]}${hex3[1][1]}${hex3[1][1]}${hex3[1][2]}${hex3[1][2]}`;
+  }
+  const rgbMatch = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i.exec(trimmed);
+  if (rgbMatch) {
+    const toHex = (v: string) =>
+      Math.max(0, Math.min(255, Number(v) || 0))
+        .toString(16)
+        .padStart(2, '0');
+    return `#${toHex(rgbMatch[1])}${toHex(rgbMatch[2])}${toHex(rgbMatch[3])}`;
+  }
+  return fallback;
+}
+
+export function deriveSwatches(
+  vars: Record<string, string>,
+  mode: 'dark' | 'light'
+): [string, string, string, string] {
+  const defaults: [string, string, string, string] =
+    mode === 'light'
+      ? ['#f1f5f9', '#ffffff', '#0284c7', '#059669']
+      : ['#090d16', '#161f33', '#38bdf8', '#10b981'];
+  return [
+    normalizeColorForSwatch(vars['--bg-base'], defaults[0]),
+    normalizeColorForSwatch(vars['--bg-card'], defaults[1]),
+    normalizeColorForSwatch(vars['--accent-sky'], defaults[2]),
+    normalizeColorForSwatch(vars['--accent-emerald'], defaults[3]),
+  ];
+}
+
+export function sanitizeThemeVars(
+  rawVars: Record<string, unknown> | undefined | null
+): Record<string, string> {
+  const clean: Record<string, string> = {};
+  if (!rawVars || typeof rawVars !== 'object') return clean;
+  let count = 0;
+  for (const [k, v] of Object.entries(rawVars)) {
+    if (count >= 80) break;
+    if (!/^--[a-z0-9-]{2,64}$/.test(k)) continue;
+    if (typeof v !== 'string') continue;
+    const val = v.trim();
+    if (!val || val.length > 200) continue;
+    const lower = val.toLowerCase();
+    if (
+      val.includes(';') ||
+      val.includes('{') ||
+      val.includes('}') ||
+      val.includes('<') ||
+      val.includes('>') ||
+      lower.includes('url(') ||
+      lower.includes('expression(') ||
+      lower.includes('@import')
+    ) {
+      continue;
+    }
+    clean[k] = val;
+    count++;
+  }
+  return clean;
+}
+
+export function cloneThemeAsDraft(
+  source: ThemeDefinition | CustomThemeRecord,
+  existingNames: string[] = []
+): CustomThemeRecord {
+  const baseName = `${source.name.replace(/\s*\(Copy(?:\s+\d+)?\)$/i, '')}`;
+  const existingSet = new Set(existingNames.map((n) => n.trim().toLowerCase()));
+  let candidateName = `${baseName} (Copy)`;
+  let counter = 2;
+  while (existingSet.has(candidateName.toLowerCase())) {
+    candidateName = `${baseName} (Copy ${counter})`;
+    counter++;
+  }
+
+  const vars = sanitizeThemeVars(source.vars);
+  if (!vars['--window-border-width']) {
+    vars['--window-border-width'] = '0px';
+  }
+  if (!vars['--window-border-color']) {
+    vars['--window-border-color'] =
+      vars['--border-strong'] || vars['--accent-sky'] || '#38bdf8';
+  }
+
+  const radius = vars['--radius-md'] || '14px';
+  const fontBase = vars['--font-size-base'] || '13px';
+  const now = Date.now();
+
+  return {
+    id: `custom-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: candidateName,
+    family: 'custom',
+    familyTitle: 'Custom Theme',
+    styleLabel: `${radius} Radius • ${fontBase} Font`,
+    subtitle: `Cloned from ${source.name}`,
+    mode: source.mode === 'light' ? 'light' : 'dark',
+    swatches: deriveSwatches(vars, source.mode === 'light' ? 'light' : 'dark'),
+    widgetBgRgb: source.widgetBgRgb || hexToRgbTriplet(vars['--bg-base'] || ''),
+    vars,
+    isCustom: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function setCustomThemes(themes: CustomThemeRecord[]): ThemeDefinition[] {
+  customThemesCache = Array.isArray(themes)
+    ? themes.map((t) => ({
+        ...t,
+        id: t.id as ThemeId,
+        isCustom: true,
+      }))
+    : [];
+  const snapshot = [...customThemesCache];
+  for (const listener of customThemeListeners) {
+    try {
+      listener(snapshot);
+    } catch {}
+  }
+  return snapshot;
+}
+
+export function getCustomThemes(): ThemeDefinition[] {
+  return [...customThemesCache];
+}
+
+export function getAllThemes(): ThemeDefinition[] {
+  return [...THEMES, ...customThemesCache];
+}
+
+export function subscribeCustomThemes(
+  listener: (themes: ThemeDefinition[]) => void
+): () => void {
+  customThemeListeners.add(listener);
+  return () => {
+    customThemeListeners.delete(listener);
+  };
+}
+
 export function getThemeDefinition(themeId?: string): ThemeDefinition {
   if (!themeId) return THEMES[0];
+  const customMatch = customThemesCache.find((t) => t.id === themeId);
+  if (customMatch) return customMatch;
   const targetId = LEGACY_THEME_MAP[themeId] || themeId;
   return THEMES.find((t) => t.id === targetId) || THEMES[0];
 }
@@ -820,6 +987,8 @@ export function applyThemeToDocument(themeId?: string): ThemeDefinition {
     root.setAttribute('data-theme-family', def.family);
     root.setAttribute('data-theme-mode', def.mode);
     root.style.colorScheme = def.mode;
+    root.style.setProperty('--window-border-width', '0px');
+    root.style.setProperty('--window-border-color', 'transparent');
     for (const [k, v] of Object.entries(def.vars)) {
       root.style.setProperty(k, v);
     }

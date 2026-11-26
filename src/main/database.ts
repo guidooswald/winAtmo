@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  CustomThemeRecord,
   MeasurePoint,
   MetricType,
   NetatmoScale,
@@ -138,6 +139,16 @@ export class TimeSeriesDatabase {
         position INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (station_id, module_id)
+      ) WITHOUT ROWID;
+
+      CREATE TABLE IF NOT EXISTS custom_themes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        family TEXT NOT NULL,
+        definition_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
       ) WITHOUT ROWID;
 
       UPDATE security_cameras
@@ -910,6 +921,116 @@ export class TimeSeriesDatabase {
       this.db.exec('DELETE FROM sensor_tile_order');
     }
     return this.getSensorTileOrder();
+  }
+
+  public getCustomThemes(): CustomThemeRecord[] {
+    const rows = this.db
+      .prepare(
+        'SELECT id, name, mode, family, definition_json, created_at, updated_at FROM custom_themes ORDER BY updated_at DESC, name ASC'
+      )
+      .all() as Array<{
+      id: string;
+      name: string;
+      mode: string;
+      family: string;
+      definition_json: string;
+      created_at: number;
+      updated_at: number;
+    }>;
+
+    const list: CustomThemeRecord[] = [];
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.definition_json) as CustomThemeRecord;
+        if (!parsed || typeof parsed !== 'object') continue;
+        list.push({
+          ...parsed,
+          id: String(row.id),
+          name: String(row.name || parsed.name || 'Custom Theme'),
+          mode: row.mode === 'light' ? 'light' : 'dark',
+          family: (row.family || parsed.family || 'custom') as CustomThemeRecord['family'],
+          isCustom: true,
+          createdAt: Number(row.created_at) || parsed.createdAt,
+          updatedAt: Number(row.updated_at) || parsed.updatedAt,
+        });
+      } catch {}
+    }
+    return list;
+  }
+
+  public getCustomThemeById(id: string): CustomThemeRecord | null {
+    const tid = id.trim();
+    if (!tid) return null;
+    const row = this.db
+      .prepare(
+        'SELECT id, name, mode, family, definition_json, created_at, updated_at FROM custom_themes WHERE id = ?'
+      )
+      .get(tid) as
+      | {
+          id: string;
+          name: string;
+          mode: string;
+          family: string;
+          definition_json: string;
+          created_at: number;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    try {
+      const parsed = JSON.parse(row.definition_json) as CustomThemeRecord;
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        ...parsed,
+        id: String(row.id),
+        name: String(row.name || parsed.name || 'Custom Theme'),
+        mode: row.mode === 'light' ? 'light' : 'dark',
+        family: (row.family || parsed.family || 'custom') as CustomThemeRecord['family'],
+        isCustom: true,
+        createdAt: Number(row.created_at) || parsed.createdAt,
+        updatedAt: Number(row.updated_at) || parsed.updatedAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  public upsertCustomTheme(theme: CustomThemeRecord): CustomThemeRecord[] {
+    const now = Date.now();
+    const existing = this.getCustomThemeById(theme.id);
+    const createdAt = existing?.createdAt || theme.createdAt || now;
+    const record: CustomThemeRecord = {
+      ...theme,
+      isCustom: true,
+      createdAt,
+      updatedAt: now,
+    };
+    this.db
+      .prepare(
+        `
+        INSERT OR REPLACE INTO custom_themes (
+          id, name, mode, family, definition_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `
+      )
+      .run(
+        record.id,
+        record.name,
+        record.mode,
+        record.family,
+        JSON.stringify(record),
+        createdAt,
+        now
+      );
+    return this.getCustomThemes();
+  }
+
+  public deleteCustomTheme(id: string): CustomThemeRecord[] {
+    const tid = id.trim();
+    if (tid) {
+      this.db.prepare('DELETE FROM custom_themes WHERE id = ?').run(tid);
+    }
+    return this.getCustomThemes();
   }
 
   public clearSecurityData(): StorageStats {

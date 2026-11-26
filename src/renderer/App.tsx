@@ -36,9 +36,10 @@ import { SecurityView } from './components/SecurityView';
 import { SettingsView } from './components/SettingsView';
 import { TaskbarWidget } from './components/TaskbarWidget';
 import { DebugConsoleWindow } from './components/DebugConsoleWindow';
+import { ThemeEditorWindow } from './components/ThemeEditorWindow';
 import { SyncOverlayWindow } from './components/SyncOverlayWindow';
 import { WindowTopBar } from './components/WindowTopBar';
-import { applyThemeToDocument, THEMES } from './utils/themes';
+import { applyThemeToDocument, setCustomThemes, THEMES } from './utils/themes';
 import { LanguageProvider, useI18n } from './utils/i18n';
 import { WinAtmoAPI } from '../main/preload';
 
@@ -112,6 +113,10 @@ export const App: React.FC = () => {
     return <DebugConsoleWindow />;
   }
 
+  if (mode === 'theme-editor') {
+    return <ThemeEditorWindow />;
+  }
+
   return <MainStudioApp />;
 };
 
@@ -152,16 +157,22 @@ const MainStudioApp: React.FC = () => {
     moduleId: string;
     metric?: string;
   } | null>(null);
+  const [customThemeRevision, setCustomThemeRevision] = useState(0);
 
   useEffect(() => {
     const init = async () => {
-      const [acc, cached, s, prog, debugSnap] = await Promise.all([
+      const [acc, cached, s, prog, debugSnap, customThemes] = await Promise.all([
         window.winatmo.getAccountInfo(),
         window.winatmo.getCachedStations(),
         window.winatmo.getSettings(),
         window.winatmo.getSyncProgress(),
         window.winatmo.getDebugSnapshot?.().catch(() => null),
+        window.winatmo.getCustomThemes?.().catch(() => []),
       ]);
+      if (Array.isArray(customThemes)) {
+        setCustomThemes(customThemes);
+        setCustomThemeRevision((r) => r + 1);
+      }
       setAccount(acc);
       setStations(cached.stations || []);
       setSettings(s);
@@ -196,6 +207,11 @@ const MainStudioApp: React.FC = () => {
       setSettings(next);
     });
 
+    const unsubCustomThemes = window.winatmo.onCustomThemesUpdated?.((themes) => {
+      setCustomThemes(themes);
+      setCustomThemeRevision((r) => r + 1);
+    });
+
     const unsubFocus = window.winatmo.onFocusSensor((payload) => {
       setChartFocus(payload);
       setActiveTab('charts');
@@ -206,6 +222,7 @@ const MainStudioApp: React.FC = () => {
       unsubAccount?.();
       unsubProgress();
       unsubSettings();
+      unsubCustomThemes?.();
       unsubFocus();
       unsubDebug?.();
     };
@@ -325,7 +342,7 @@ const MainStudioApp: React.FC = () => {
     if (settings?.theme) {
       applyThemeToDocument(settings.theme);
     }
-  }, [settings?.theme]);
+  }, [settings?.theme, customThemeRevision]);
 
   if (!settings) {
     return (

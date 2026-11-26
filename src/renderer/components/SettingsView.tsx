@@ -11,6 +11,7 @@ import {
   LayoutGrid,
   Lock,
   Moon,
+  Paintbrush,
   Palette,
   Pin,
   RefreshCw,
@@ -32,7 +33,13 @@ import {
   WeatherStation,
 } from '../types';
 import { METRIC_METADATA } from '../utils/metrics';
-import { getThemeDefinition, THEMES } from '../utils/themes';
+import {
+  getCustomThemes,
+  getThemeDefinition,
+  subscribeCustomThemes,
+  THEMES,
+  ThemeDefinition,
+} from '../utils/themes';
 import { useI18n, LANGUAGES } from '../utils/i18n';
 
 interface SettingsViewProps {
@@ -207,6 +214,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   useEffect(() => {
     setCustomDaysInput(settings.historyDays);
   }, [settings.historyDays]);
+
+  const [customThemes, setCustomThemes] = useState<ThemeDefinition[]>(() =>
+    getCustomThemes()
+  );
+
+  useEffect(() => {
+    setCustomThemes(getCustomThemes());
+    return subscribeCustomThemes(setCustomThemes);
+  }, []);
 
   const themeFamilies = useMemo(() => {
     const familyMap = new Map<
@@ -1300,10 +1316,82 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <p>{t('section_appearance_desc')}</p>
             </div>
           </div>
-          <span className="active-window-badge">
-            {getThemeDefinition(settings.theme).name} ({getThemeDefinition(settings.theme).styleLabel.split('•')[0].trim()})
-          </span>
+          <div className="settings-appearance-header-actions">
+            <button
+              type="button"
+              className="action-btn primary"
+              onClick={() => window.winatmo?.openThemeEditor?.(settings.theme)}
+              title="Launch the Theme Editor in a new window"
+            >
+              <Paintbrush size={14} /> {t('open_theme_editor')}
+            </button>
+            <span className="active-window-badge">
+              {getThemeDefinition(settings.theme).name} ({getThemeDefinition(settings.theme).styleLabel.split('•')[0].trim()})
+            </span>
+          </div>
         </div>
+
+        {customThemes.length > 0 && (
+          <div className="custom-themes-section">
+            <div className="theme-family-header">
+              <div className="theme-family-title-wrap">
+                <h4 className="theme-family-title">{t('custom_themes_title')}</h4>
+                <span className="theme-family-badge">{customThemes.length}</span>
+              </div>
+            </div>
+            <div className="theme-family-pair-grid">
+              {customThemes.map((ct) => (
+                <div
+                  key={ct.id}
+                  className={`theme-swatch-card custom-theme-card ${
+                    settings.theme === ct.id ? 'active' : ''
+                  }`}
+                  onClick={() => onUpdateSettings({ theme: ct.id })}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onUpdateSettings({ theme: ct.id });
+                    }
+                  }}
+                >
+                  <div className="theme-swatch-info">
+                    <div className="theme-mode-label">
+                      {ct.mode === 'light' ? <Sun size={12} /> : <Moon size={12} />}
+                      <span className="theme-swatch-title">{ct.name}</span>
+                    </div>
+                    <span className="theme-swatch-sub">
+                      {ct.subtitle || ct.styleLabel}
+                    </span>
+                  </div>
+                  <div className="custom-theme-card-right">
+                    <div className="theme-swatch-dots">
+                      {ct.swatches.map((hex, i) => (
+                        <span
+                          key={i}
+                          className="theme-swatch-dot"
+                          style={{ backgroundColor: hex }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="icon-action-btn"
+                      title={`Edit ${ct.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.winatmo?.openThemeEditor?.(ct.id);
+                      }}
+                    >
+                      <Paintbrush size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="theme-families-container">
           {themeFamilies.map((fam) => (

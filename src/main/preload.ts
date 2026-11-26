@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   AccountInfo,
+  CustomThemeRecord,
   DebugStreamEvent,
   DebugTelemetrySnapshot,
   MeasureQueryRequest,
@@ -195,6 +196,38 @@ export interface WinAtmoAPI {
   getDebugSnapshot: () => Promise<DebugTelemetrySnapshot>;
   clearDebugLogs: () => Promise<DebugTelemetrySnapshot>;
 
+  // Theme Editor & Custom Themes
+  openThemeEditor: (themeId?: string) => void;
+  getCustomThemes: () => Promise<CustomThemeRecord[]>;
+  saveCustomTheme: (theme: CustomThemeRecord) => Promise<{
+    ok: boolean;
+    theme?: CustomThemeRecord;
+    themes: CustomThemeRecord[];
+    error?: string;
+  }>;
+  deleteCustomTheme: (themeId: string) => Promise<{
+    ok: boolean;
+    themes: CustomThemeRecord[];
+    error?: string;
+  }>;
+  exportCustomTheme: (theme: CustomThemeRecord) => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    filePath?: string;
+    error?: string;
+  }>;
+  importCustomTheme: () => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    theme?: CustomThemeRecord;
+    themes?: CustomThemeRecord[];
+    error?: string;
+  }>;
+  onCustomThemesUpdated: (
+    cb: (themes: CustomThemeRecord[]) => void
+  ) => () => void;
+  onThemeEditorSelect: (cb: (themeId: string) => void) => () => void;
+
   // Event Subscriptions
   onAccountUpdated: (cb: (account: AccountInfo) => void) => () => void;
   onStationsUpdated: (cb: (stations: WeatherStation[]) => void) => () => void;
@@ -325,6 +358,24 @@ const api: WinAtmoAPI = {
   openDebugWindow: () => ipcRenderer.send('debug:open-window'),
   getDebugSnapshot: () => ipcRenderer.invoke('debug:get-snapshot'),
   clearDebugLogs: () => ipcRenderer.invoke('debug:clear'),
+
+  openThemeEditor: (themeId?: string) =>
+    ipcRenderer.send('themes:open-editor', themeId),
+  getCustomThemes: () => ipcRenderer.invoke('themes:list'),
+  saveCustomTheme: (theme) => ipcRenderer.invoke('themes:save', theme),
+  deleteCustomTheme: (themeId) => ipcRenderer.invoke('themes:delete', themeId),
+  exportCustomTheme: (theme) => ipcRenderer.invoke('themes:export', theme),
+  importCustomTheme: () => ipcRenderer.invoke('themes:import'),
+  onCustomThemesUpdated: (cb) => {
+    const handler = (_e: any, themes: CustomThemeRecord[]) => cb(themes);
+    ipcRenderer.on('themes:updated', handler);
+    return () => ipcRenderer.removeListener('themes:updated', handler);
+  },
+  onThemeEditorSelect: (cb) => {
+    const handler = (_e: any, themeId: string) => cb(themeId);
+    ipcRenderer.on('themes:editor-select', handler);
+    return () => ipcRenderer.removeListener('themes:editor-select', handler);
+  },
 
   onAccountUpdated: (cb) => {
     const handler = (_e: any, account: AccountInfo) => cb(account);

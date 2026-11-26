@@ -33,11 +33,14 @@ import {
 } from './radarService';
 import {
   AccountInfo,
+  CustomThemeRecord,
   MeasureQueryRequest,
   MeasureQueryStatus,
   MeasureSeries,
   NetatmoScale,
   SyncProgress,
+  ThemeFamily,
+  ThemeId,
   UserSettings,
   WeatherStation,
 } from '../renderer/types';
@@ -49,6 +52,7 @@ app.setAppUserModelId('guidooswald.winAtmo');
 let mainWindow: BrowserWindow | null = null;
 let widgetWindow: BrowserWindow | null = null;
 let debugWindow: BrowserWindow | null = null;
+let themeEditorWindow: BrowserWindow | null = null;
 let isWidgetExpanded = false;
 let widgetExpandDirection: 'up' | 'down' = 'up';
 let widgetTargetSize = { width: 420, height: 48 };
@@ -348,13 +352,158 @@ const THEME_BG_COLORS: Record<string, string> = {
   'github-light': '#f8fafc',
 };
 
-function applyNativeWindowTheme(themeId?: string): void {
+const ALLOWED_THEME_FAMILIES = new Set<ThemeFamily>([
+  'fluent',
+  'compact',
+  'terminal',
+  'nord',
+  'brutal',
+  'soft',
+  'custom',
+]);
+
+function normalizeHexColor(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s;
+  const hex3 = /^#([0-9a-fA-F]{3})$/.exec(s);
+  if (hex3) {
+    return `#${hex3[1][0]}${hex3[1][0]}${hex3[1][1]}${hex3[1][1]}${hex3[1][2]}${hex3[1][2]}`;
+  }
+  return null;
+}
+
+function sanitizeCustomThemeRecord(
+  raw: unknown,
+  forceNewId = false
+): CustomThemeRecord | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const src = raw as Record<string, any>;
+
+  const name = typeof src.name === 'string' ? src.name.trim().slice(0, 60) : '';
+  if (!name) return null;
+
+  const mode: 'dark' | 'light' = src.mode === 'light' ? 'light' : 'dark';
+  const family: ThemeFamily =
+    typeof src.family === 'string' && ALLOWED_THEME_FAMILIES.has(src.family as ThemeFamily)
+      ? (src.family as ThemeFamily)
+      : 'custom';
+
+  const rawId = typeof src.id === 'string' ? src.id.trim() : '';
+  const validId = /^custom-[a-z0-9_-]{3,64}$/.test(rawId) ? rawId : '';
+  const id =
+    forceNewId || !validId
+      ? `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+      : validId;
+
+  const cleanVars: Record<string, string> = {};
+  if (src.vars && typeof src.vars === 'object' && !Array.isArray(src.vars)) {
+    let count = 0;
+    for (const [k, v] of Object.entries(src.vars)) {
+      if (count >= 80) break;
+      if (!/^--[a-z0-9-]{2,64}$/.test(k)) continue;
+      if (typeof v !== 'string') continue;
+      const val = v.trim();
+      if (!val || val.length > 200) continue;
+      const lower = val.toLowerCase();
+      if (
+        val.includes(';') ||
+        val.includes('{') ||
+        val.includes('}') ||
+        val.includes('<') ||
+        val.includes('>') ||
+        lower.includes('url(') ||
+        lower.includes('expression(') ||
+        lower.includes('@import')
+      ) {
+        continue;
+      }
+      cleanVars[k] = val;
+      count++;
+    }
+  }
+
+  const defaultSwatches: [string, string, string, string] =
+    mode === 'light'
+      ? ['#f1f5f9', '#ffffff', '#0284c7', '#059669']
+      : ['#090d16', '#161f33', '#38bdf8', '#10b981'];
+  const rawSwatches = Array.isArray(src.swatches) ? src.swatches : [];
+  const swatches: [string, string, string, string] = [
+    typeof rawSwatches[0] === 'string' && rawSwatches[0].trim().length <= 40
+      ? rawSwatches[0].trim()
+      : normalizeHexColor(cleanVars['--bg-base']) || defaultSwatches[0],
+    typeof rawSwatches[1] === 'string' && rawSwatches[1].trim().length <= 40
+      ? rawSwatches[1].trim()
+      : normalizeHexColor(cleanVars['--bg-card']) || defaultSwatches[1],
+    typeof rawSwatches[2] === 'string' && rawSwatches[2].trim().length <= 40
+      ? rawSwatches[2].trim()
+      : normalizeHexColor(cleanVars['--accent-sky']) || defaultSwatches[2],
+    typeof rawSwatches[3] === 'string' && rawSwatches[3].trim().length <= 40
+      ? rawSwatches[3].trim()
+      : normalizeHexColor(cleanVars['--accent-emerald']) || defaultSwatches[3],
+  ];
+
+  const widgetBgRaw = typeof src.widgetBgRgb === 'string' ? src.widgetBgRgb.trim() : '';
+  const widgetBgRgb = /^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/.test(widgetBgRaw)
+    ? widgetBgRaw
+    : mode === 'light'
+      ? '255, 255, 255'
+      : '13, 19, 33';
+
+  return {
+    id,
+    name,
+    family,
+    familyTitle:
+      typeof src.familyTitle === 'string' && src.familyTitle.trim()
+        ? src.familyTitle.trim().slice(0, 60)
+        : 'Custom Theme',
+    styleLabel:
+      typeof src.styleLabel === 'string' && src.styleLabel.trim()
+        ? src.styleLabel.trim().slice(0, 90)
+        : `${cleanVars['--radius-md'] || '14px'} Radius • ${cleanVars['--font-size-base'] || '13px'} Font`,
+    subtitle:
+      typeof src.subtitle === 'string'
+        ? src.subtitle.trim().slice(0, 140)
+        : '',
+    mode,
+    swatches,
+    widgetBgRgb,
+    vars: cleanVars,
+    isCustom: true,
+    createdAt: typeof src.createdAt === 'number' ? src.createdAt : undefined,
+    updatedAt: typeof src.updatedAt === 'number' ? src.updatedAt : undefined,
+  };
+}
+
+function getThemeBgAndMode(themeId?: string): { isLight: boolean; bg: string } {
   const id = themeId || 'fluent-dark';
+  if (id.startsWith('custom-') && db) {
+    const custom = db.getCustomThemeById(id);
+    if (custom) {
+      const isLight = custom.mode === 'light';
+      const bg =
+        normalizeHexColor(custom.vars?.['--bg-base']) ||
+        (isLight ? '#f8fafc' : '#090d16');
+      return { isLight, bg };
+    }
+  }
   const isLight = LIGHT_THEME_IDS.has(id);
+  const bg = THEME_BG_COLORS[id] || (isLight ? '#f8fafc' : '#090d16');
+  return { isLight, bg };
+}
+
+function applyNativeWindowTheme(themeId?: string): void {
+  const { isLight, bg } = getThemeBgAndMode(themeId);
   nativeTheme.themeSource = isLight ? 'light' : 'dark';
   if (mainWindow && !mainWindow.isDestroyed()) {
-    const bg = THEME_BG_COLORS[id] || (isLight ? '#f8fafc' : '#090d16');
     mainWindow.setBackgroundColor(bg);
+  }
+  if (debugWindow && !debugWindow.isDestroyed()) {
+    debugWindow.setBackgroundColor(bg);
+  }
+  if (themeEditorWindow && !themeEditorWindow.isDestroyed()) {
+    themeEditorWindow.setBackgroundColor(bg);
   }
 }
 
@@ -608,6 +757,9 @@ function createMainWindow(shouldShow = true): void {
     mainWindow = null;
     if (!store?.getSettings()?.minimizeToTray && isQuitting) {
       if (debugWindow && !debugWindow.isDestroyed()) debugWindow.close();
+      if (themeEditorWindow && !themeEditorWindow.isDestroyed()) {
+        themeEditorWindow.close();
+      }
       if (widgetWindow && !widgetWindow.isDestroyed()) widgetWindow.close();
     }
   });
@@ -994,6 +1146,100 @@ function createOrShowDebugWindow(): void {
   });
 }
 
+function createOrShowThemeEditorWindow(initialThemeId?: string): void {
+  if (themeEditorWindow && !themeEditorWindow.isDestroyed()) {
+    if (themeEditorWindow.isMinimized()) themeEditorWindow.restore();
+    themeEditorWindow.show();
+    themeEditorWindow.focus();
+    if (initialThemeId) {
+      themeEditorWindow.webContents.send('themes:editor-select', initialThemeId);
+    }
+    return;
+  }
+
+  const settings = store ? store.getSettings() : null;
+  const currentTheme = settings ? settings.theme : 'fluent-dark';
+  const { isLight, bg: initialBg } = getThemeBgAndMode(currentTheme);
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+  const width = Math.min(1380, Math.max(960, workArea.width - 60));
+  const height = Math.min(880, Math.max(620, workArea.height - 60));
+
+  themeEditorWindow = new BrowserWindow({
+    width,
+    height,
+    minWidth: 940,
+    minHeight: 600,
+    center: true,
+    backgroundColor: initialBg,
+    darkTheme: !isLight,
+    autoHideMenuBar: true,
+    frame: false,
+    title: 'winAtmo • Theme Editor',
+    icon: createTrayNativeImage(),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+    show: true,
+  });
+
+  themeEditorWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  attachWindowSecurityGuards(themeEditorWindow);
+
+  themeEditorWindow.on('page-title-updated', (e) => {
+    e.preventDefault();
+  });
+
+  themeEditorWindow.on('maximize', () => {
+    themeEditorWindow?.webContents.send('window:maximized-change', true);
+  });
+
+  themeEditorWindow.on('unmaximize', () => {
+    themeEditorWindow?.webContents.send('window:maximized-change', false);
+  });
+
+  themeEditorWindow.on('closed', () => {
+    themeEditorWindow = null;
+  });
+
+  themeEditorWindow.once('ready-to-show', () => {
+    if (!themeEditorWindow || themeEditorWindow.isDestroyed()) return;
+    if (themeEditorWindow.isMinimized()) themeEditorWindow.restore();
+    themeEditorWindow.show();
+    themeEditorWindow.focus();
+  });
+
+  if (initialThemeId) {
+    themeEditorWindow.webContents.once('did-finish-load', () => {
+      if (themeEditorWindow && !themeEditorWindow.isDestroyed()) {
+        themeEditorWindow.webContents.send('themes:editor-select', initialThemeId);
+      }
+    });
+  }
+
+  const entry = getRendererEntryUrl('theme-editor');
+  if (entry.isDev) {
+    themeEditorWindow.loadURL(entry.url);
+  } else {
+    themeEditorWindow.loadFile(entry.filePath, { query: { mode: 'theme-editor' } });
+  }
+
+  themeEditorWindow.webContents.on('did-fail-load', () => {
+    themeEditorWindow?.loadFile(entry.filePath, { query: { mode: 'theme-editor' } });
+  });
+
+  themeEditorWindow.webContents.on('before-input-event', (event, input) => {
+    if (!app.isPackaged && input.key === 'F12' && input.type === 'keyDown') {
+      themeEditorWindow?.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+}
+
 function broadcastToAllWindows(channel: string, payload: any): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
@@ -1003,6 +1249,9 @@ function broadcastToAllWindows(channel: string, payload: any): void {
   }
   if (debugWindow && !debugWindow.isDestroyed()) {
     debugWindow.webContents.send(channel, payload);
+  }
+  if (themeEditorWindow && !themeEditorWindow.isDestroyed()) {
+    themeEditorWindow.webContents.send(channel, payload);
   }
 }
 
@@ -2277,6 +2526,122 @@ function registerIpcHandlers(): void {
   handleTrustedIpc('debug:clear', () => {
     debugLogger.clear();
     return debugLogger.getSnapshot();
+  });
+
+  // Theme Editor & Custom Themes IPC
+  onTrustedIpc('themes:open-editor', (_e, themeId?: string) => {
+    createOrShowThemeEditorWindow(
+      typeof themeId === 'string' ? themeId : undefined
+    );
+  });
+
+  handleTrustedIpc('themes:list', () => {
+    return db.getCustomThemes();
+  });
+
+  handleTrustedIpc('themes:save', (_e, rawTheme: unknown) => {
+    const clean = sanitizeCustomThemeRecord(rawTheme, false);
+    if (!clean) {
+      return { ok: false, themes: db.getCustomThemes(), error: 'Invalid theme definition.' };
+    }
+    const themes = db.upsertCustomTheme(clean);
+    const saved = themes.find((t) => t.id === clean.id) || clean;
+    broadcastToAllWindows('themes:updated', themes);
+    const curTheme = store.getSettings().theme;
+    if (curTheme === saved.id) {
+      applyNativeWindowTheme(saved.id);
+    }
+    return { ok: true, theme: saved, themes };
+  });
+
+  handleTrustedIpc('themes:delete', (_e, themeId: unknown) => {
+    if (typeof themeId !== 'string' || !/^custom-[a-z0-9_-]{3,64}$/.test(themeId.trim())) {
+      return { ok: false, themes: db.getCustomThemes(), error: 'Invalid custom theme ID.' };
+    }
+    const tid = themeId.trim();
+    const themes = db.deleteCustomTheme(tid);
+    broadcastToAllWindows('themes:updated', themes);
+
+    if (store.getSettings().theme === tid) {
+      store.updateSettings({ theme: 'fluent-dark' as ThemeId });
+      applyNativeWindowTheme('fluent-dark');
+      const updatedPublic = store.getPublicSettings();
+      broadcastToAllWindows('settings:updated', updatedPublic);
+      createOrUpdateWidgetWindow(true);
+    }
+    return { ok: true, themes };
+  });
+
+  handleTrustedIpc('themes:export', async (e, rawTheme: unknown) => {
+    const clean = sanitizeCustomThemeRecord(rawTheme, false);
+    if (!clean) {
+      return { success: false, error: 'Invalid theme definition.' };
+    }
+    const safeName = clean.name
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'winatmo-theme';
+    const parentWin =
+      BrowserWindow.fromWebContents(e.sender) || themeEditorWindow || mainWindow || undefined;
+    const { canceled, filePath } = await dialog.showSaveDialog(parentWin as any, {
+      title: 'Export winAtmo Theme',
+      defaultPath: `${safeName}.winatmo-theme.json`,
+      filters: [{ name: 'winAtmo Theme JSON', extensions: ['json'] }],
+    });
+    if (canceled || !filePath) {
+      return { success: false, canceled: true };
+    }
+    try {
+      const payload = {
+        format: 'winatmo-theme',
+        schemaVersion: 1,
+        theme: clean,
+      };
+      await fs.promises.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+      return { success: true, filePath };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to export theme file.' };
+    }
+  });
+
+  handleTrustedIpc('themes:import', async (e) => {
+    const parentWin =
+      BrowserWindow.fromWebContents(e.sender) || themeEditorWindow || mainWindow || undefined;
+    const { canceled, filePaths } = await dialog.showOpenDialog(parentWin as any, {
+      title: 'Import winAtmo Theme',
+      properties: ['openFile'],
+      filters: [{ name: 'winAtmo Theme JSON', extensions: ['json'] }],
+    });
+    if (canceled || !filePaths || filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+    const filePath = filePaths[0];
+    try {
+      const stat = await fs.promises.stat(filePath);
+      if (stat.size > 256 * 1024) {
+        return { success: false, error: 'Theme file exceeds 256 KB limit.' };
+      }
+      const rawText = await fs.promises.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(rawText);
+      const rawThemeObj =
+        parsed && typeof parsed === 'object' && parsed.format === 'winatmo-theme' && parsed.theme
+          ? parsed.theme
+          : parsed;
+      const existingCheck = sanitizeCustomThemeRecord(rawThemeObj, false);
+      if (!existingCheck) {
+        return { success: false, error: 'Invalid or unsupported winAtmo theme JSON format.' };
+      }
+      const alreadyExists = Boolean(db.getCustomThemeById(existingCheck.id));
+      const clean = alreadyExists
+        ? sanitizeCustomThemeRecord(rawThemeObj, true)!
+        : existingCheck;
+      const themes = db.upsertCustomTheme(clean);
+      const imported = themes.find((t) => t.id === clean.id) || clean;
+      broadcastToAllWindows('themes:updated', themes);
+      return { success: true, theme: imported, themes };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to import theme file.' };
+    }
   });
 }
 

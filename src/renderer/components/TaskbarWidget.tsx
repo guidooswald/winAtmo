@@ -25,7 +25,7 @@ import {
   METRIC_METADATA,
   SERIES_PALETTE,
 } from '../utils/metrics';
-import { applyThemeToDocument } from '../utils/themes';
+import { applyThemeToDocument, setCustomThemes } from '../utils/themes';
 import { LanguageProvider } from '../utils/i18n';
 
 export const TaskbarWidget: React.FC = () => {
@@ -58,11 +58,15 @@ export const TaskbarWidget: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      const [cached, s, dir] = await Promise.all([
+      const [cached, s, dir, customList] = await Promise.all([
         window.winatmo.getCachedStations(),
         window.winatmo.getSettings(),
         window.winatmo.getWidgetExpandDirection().catch(() => 'up' as const),
+        window.winatmo.getCustomThemes?.().catch(() => []),
       ]);
+      if (Array.isArray(customList)) {
+        setCustomThemes(customList);
+      }
       const initialExpanded = Boolean(s?.widgetExpanded);
       expandedRef.current = initialExpanded;
       setExpanded(initialExpanded);
@@ -88,11 +92,16 @@ export const TaskbarWidget: React.FC = () => {
     const unsubDirection = window.winatmo.onWidgetDirectionUpdated((dir) => {
       setExpandDirection(dir);
     });
+    const unsubCustomThemes = window.winatmo.onCustomThemesUpdated?.((themes) => {
+      setCustomThemes(themes);
+      setSettings((prev) => (prev ? { ...prev } : prev));
+    });
 
     return () => {
       unsubStations();
       unsubSettings();
       unsubDirection();
+      unsubCustomThemes?.();
     };
   }, []);
 

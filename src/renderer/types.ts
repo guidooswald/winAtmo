@@ -214,6 +214,31 @@ export interface StoredApiKeysInfo {
   updatedAt?: number;
 }
 
+export type ThemeFamily =
+  | 'fluent'
+  | 'compact'
+  | 'terminal'
+  | 'nord'
+  | 'brutal'
+  | 'soft'
+  | 'custom';
+
+export interface CustomThemeRecord {
+  id: string;
+  name: string;
+  family: ThemeFamily;
+  familyTitle: string;
+  styleLabel: string;
+  subtitle: string;
+  mode: 'dark' | 'light';
+  swatches: [string, string, string, string];
+  widgetBgRgb: string;
+  vars: Record<string, string>;
+  isCustom: true;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 export type ThemeId =
   // 1. Modern Fluent (14px Smooth Rounded • Segoe UI)
   | 'fluent-dark'
@@ -233,6 +258,8 @@ export type ThemeId =
   // 6. Soft Organic (20px Soft Pill • Quicksand / Rounded)
   | 'soft-dark'
   | 'soft-light'
+  // Custom user-defined themes stored in SQLite
+  | `custom-${string}`
   // Legacy aliases for backward compatibility:
   | 'dark'
   | 'light'
