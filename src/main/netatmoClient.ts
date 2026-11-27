@@ -1,3 +1,8 @@
+/**
+ * @module main/netatmoClient
+ * Core Netatmo API client for weather stations, historical backfill/querying,
+ * demo simulation, security cameras/events, floodlight control, and HLS downloads.
+ */
 import crypto from 'crypto';
 import { session, net } from 'electron';
 import { AppStore } from './store';
@@ -33,6 +38,10 @@ import {
   WeatherStation,
 } from '../renderer/types';
 
+/**
+ * Manages authenticated REST requests, caching, historical SQLite synchronization,
+ * and Netatmo Security camera operations across Web Login, OAuth 2.0, and Demo Mode.
+ */
 export class NetatmoClient {
   private store: AppStore;
   private db: TimeSeriesDatabase;
@@ -83,6 +92,7 @@ export class NetatmoClient {
     this.allowedMediaOrigins.clear();
   }
 
+  /** Checks whether a hostname resolves to a private, loopback, or link-local IP address. */
   private isDisallowedLoopbackOrLinkLocal(hostname: string): boolean {
     const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
     if (!h) return true;
@@ -93,6 +103,7 @@ export class NetatmoClient {
     return false;
   }
 
+  /** Registers a camera snapshot/stream URL origin so media proxying can safely allowlist it. */
   private registerAllowedMediaUrl(rawUrl?: string): void {
     if (!rawUrl || typeof rawUrl !== 'string') return;
     try {
@@ -106,6 +117,7 @@ export class NetatmoClient {
     } catch {}
   }
 
+  /** Validates that a remote security media URL uses HTTPS and targets a public allowed host. */
   private isAllowedSecurityMediaUrl(rawUrl: string): boolean {
     try {
       const u = new URL(rawUrl);
@@ -126,26 +138,32 @@ export class NetatmoClient {
     }
   }
 
+  /** Registers a callback invoked whenever account metadata changes. */
   public setAccountUpdatedHandler(cb: (account: AccountInfo) => void): void {
     this.onAccountUpdatedCallback = cb;
   }
 
+  /** Registers an external silent token-refresh handler (e.g. hidden web auth refresh). */
   public setSilentRefreshHandler(fn: () => Promise<string | null>): void {
     this.silentRefreshCallback = fn;
   }
 
+  /** Registers a callback that receives incremental sync progress updates. */
   public setProgressHandler(fn: (progress: SyncProgress) => void): void {
     this.onProgressCallback = fn;
   }
 
+  /** Registers a callback that receives historical measurement query status updates. */
   public setQueryStatusHandler(fn: (status: MeasureQueryStatus) => void): void {
     this.onQueryStatusCallback = fn;
   }
 
+  /** Returns a shallow copy of the current sync progress snapshot. */
   public getSyncProgress(): SyncProgress {
     return { ...this.currentProgress };
   }
 
+  /** Merges partial progress fields into current sync state and notifies listeners. */
   private emitProgress(partial: Partial<SyncProgress>): void {
     this.currentProgress = {
       ...this.currentProgress,
@@ -702,6 +720,7 @@ export class NetatmoClient {
     throw new Error(`Netatmo API request to /${endpoint} failed.`);
   }
 
+  /** Performs an authenticated GET request against a Netatmo API endpoint. */
   private async apiGet(
     endpoint: string,
     params: Record<string, string | number | boolean | undefined> = {},
@@ -711,6 +730,7 @@ export class NetatmoClient {
     return this.apiRequest('GET', endpoint, params, retried, requestNote);
   }
 
+  /** Performs an authenticated form-encoded POST request against a Netatmo API endpoint. */
   private async apiPost(
     endpoint: string,
     params: Record<string, string | number | boolean | undefined> = {},
@@ -720,6 +740,7 @@ export class NetatmoClient {
     return this.apiRequest('POST', endpoint, params, retried, requestNote);
   }
 
+  /** Performs an authenticated JSON POST request against a Netatmo API endpoint. */
   private async apiPostJson(
     endpoint: string,
     body: unknown,
@@ -1006,6 +1027,7 @@ export class NetatmoClient {
     }
   }
 
+  /** Coerces numeric and trend fields of a raw Netatmo `dashboard_data` object into `DashboardReadings`. */
   private normalizeDashboardData(
     raw: any
   ): DashboardReadings | undefined {
@@ -1058,6 +1080,7 @@ export class NetatmoClient {
     };
   }
 
+  /** Determines the supported sensor metric keys from advertised data types, module type, and payload fields. */
   private resolveAvailableMetrics(
     dataTypes: string[],
     moduleType: ModuleType,
@@ -1122,6 +1145,7 @@ export class NetatmoClient {
     return Array.from(set);
   }
 
+  /** Returns the localized fallback display label for a Netatmo module hardware type. */
   private getDefaultModuleName(type: ModuleType): string {
     switch (type) {
       case 'NAMain':
@@ -2121,6 +2145,7 @@ export class NetatmoClient {
     return raw.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
   }
 
+  /** Returns true if a Netatmo hardware type string identifies a security camera or doorbell. */
   private isCameraModuleType(type?: string): boolean {
     if (!type) return false;
     return (
@@ -2151,6 +2176,7 @@ export class NetatmoClient {
     return undefined;
   }
 
+  /** Converts a raw Netatmo security event object into the normalized `SecurityEvent` structure. */
   private normalizeSecurityEvent(
     raw: any,
     homeId: string,
@@ -4489,6 +4515,7 @@ export class NetatmoClient {
     };
   }
 
+  /** Fetches an HLS master or media playlist and resolves the highest-bandwidth media playlist variant. */
   private async resolveMediaPlaylist(playlistUrl: string): Promise<{
     ok: boolean;
     text?: string;
@@ -4552,6 +4579,7 @@ export class NetatmoClient {
     };
   }
 
+  /** Parses an HLS media playlist into initialization map, key/IV, byte-range, and segment entries. */
   private parseMediaPlaylist(
     text: string,
     baseUrl: string
@@ -4668,6 +4696,7 @@ export class NetatmoClient {
     };
   }
 
+  /** Builds synthetic demo cameras, persons, and timeline events when running in demo mode. */
   private getDemoSecurityData(): SecurityDataPayload {
     const now = Math.floor(Date.now() / 1000);
     const homeId = 'demo-home-zurich';

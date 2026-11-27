@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/WindowTopBar
+ * Reusable custom frameless titlebar with theme selector dropdown and window caption controls.
+ */
+
 import React, { useEffect, useState } from 'react';
 import { CloudSun, Palette } from 'lucide-react';
 import { ThemeId } from '../types';
@@ -8,6 +13,7 @@ import {
   ThemeDefinition,
 } from '../utils/themes';
 
+/** Props for {@link WindowTopBar}. */
 interface WindowTopBarProps {
   title?: string;
   subtitle?: string;
@@ -63,6 +69,7 @@ const CloseIcon: React.FC = () => (
   </svg>
 );
 
+/** Frameless window titlebar providing drag region, theme switcher dropdown, and custom caption buttons. */
 export const WindowTopBar: React.FC<WindowTopBarProps> = ({
   title = 'winAtmo',
   subtitle,

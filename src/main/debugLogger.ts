@@ -1,3 +1,7 @@
+/**
+ * @module main/debugLogger
+ * Main-process telemetry and sanitized diagnostic log collector streamed to the Debug Console window.
+ */
 import {
   ApiRequestLogEntry,
   DebugLogEntry,
@@ -12,6 +16,7 @@ const MAX_LOGS = 500;
 const MAX_API_REQUESTS = 250;
 const MAX_RAW_BODY_CHARS = 60000;
 
+/** Redacts tokens, secrets, JSON secret properties, and camera VPN/LAN secret URLs from diagnostic text. */
 function redactSensitiveText(input: string): string {
   return input
     .replace(
@@ -92,6 +97,7 @@ const SECURITY_ENDPOINTS = new Set([
   'setstate',
 ]);
 
+/** Infers whether an API request belongs to the security, auth, or weather telemetry domain. */
 function inferApiSource(endpoint: string, note?: string): DebugSourceDomain {
   const ep = endpoint.toLowerCase().replace(/^\/+/, '');
   const n = (note || '').toLowerCase();
@@ -110,6 +116,9 @@ function inferApiSource(endpoint: string, note?: string): DebugSourceDomain {
   return 'weather';
 }
 
+/**
+ * Ring-buffered in-memory logger and API telemetry tracker with live subscriber streaming.
+ */
 export class DebugLogger {
   private logs: DebugLogEntry[] = [];
   private apiRequests: ApiRequestLogEntry[] = [];
@@ -131,6 +140,7 @@ export class DebugLogger {
     startedAt: Date.now(),
   };
 
+  /** Subscribes to live log, API telemetry, and clear events. @returns Unsubscribe callback. */
   public subscribe(cb: (event: DebugStreamEvent) => void): () => void {
     this.listeners.push(cb);
     return () => {
@@ -148,10 +158,12 @@ export class DebugLogger {
     }
   }
 
+  /** Returns a shallow copy of cumulative API telemetry statistics. */
   public getStats(): DebugTelemetryStats {
     return { ...this.stats };
   }
 
+  /** Returns a snapshot of buffered logs, API request traces, and statistics. */
   public getSnapshot(): DebugTelemetrySnapshot {
     return {
       logs: [...this.logs],
@@ -160,6 +172,7 @@ export class DebugLogger {
     };
   }
 
+  /** Clears buffered logs and API requests and resets cumulative telemetry counters. */
   public clear(): void {
     this.logs = [];
     this.apiRequests = [];
@@ -181,6 +194,7 @@ export class DebugLogger {
     });
   }
 
+  /** Appends a secret-redacted diagnostic log entry to the ring buffer and notifies listeners. */
   public log(
     level: DebugLogLevel,
     category: string,
@@ -210,6 +224,7 @@ export class DebugLogger {
     });
   }
 
+  /** Records a completed Netatmo/media HTTP request, updating latency, throughput, and rate-limit metrics. */
   public recordApiRequest(input: {
     method: string;
     endpoint: string;
@@ -357,4 +372,5 @@ export class DebugLogger {
   }
 }
 
+/** Shared singleton debug logger instance for the Electron main process. */
 export const debugLogger = new DebugLogger();

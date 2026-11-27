@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/ChartStudio
+ * Interactive historical time-series charting workspace with multi-curve overlay, zoom, and CSV export.
+ */
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -36,6 +41,7 @@ import {
 } from '../utils/metrics';
 import { useI18n } from '../utils/i18n';
 
+/** Descriptor for an active sensor series plotted in the chart workspace. */
 export interface SelectedCurve {
   id: string; // `${stationId}::${moduleId}::${metric}`
   stationId: string;
@@ -46,6 +52,7 @@ export interface SelectedCurve {
   color: string;
 }
 
+/** Props for {@link ChartStudio}. */
 interface ChartStudioProps {
   stations: WeatherStation[];
   settings: UserSettings;
@@ -57,6 +64,7 @@ type ChartLayoutMode = 'overlay' | 'stacked';
 type ChartCurveStyle = 'area' | 'line' | 'bar' | 'step';
 type RangePreset = '24h' | '3d' | '7d' | '14d' | '30d' | '90d' | '1y' | 'max' | 'custom';
 
+/** Chooses the Netatmo sampling scale best suited for the selected preset or custom date span. */
 function getOptimalScale(
   preset: RangePreset,
   sDate?: string,
@@ -92,6 +100,7 @@ function getOptimalScale(
   return '30min';
 }
 
+/** Historical chart explorer supporting overlay/stacked subplots, cursor inspection, and CSV export. */
 export const ChartStudio: React.FC<ChartStudioProps> = ({
   stations,
   settings,
@@ -1574,6 +1583,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
   );
 };
 
+/** Renders multiple sensor series on a shared time axis with dual/multi-metric vertical scales. */
 function renderOverlayChart(params: {
   processedSeries: Array<{
     curve: SelectedCurve;
@@ -1782,6 +1792,7 @@ function renderOverlayChart(params: {
   );
 }
 
+/** Renders each selected sensor curve in its own stacked horizontal SVG lane. */
 function renderStackedChart(params: {
   processedSeries: Array<{
     curve: SelectedCurve;
@@ -1929,6 +1940,7 @@ function renderStackedChart(params: {
   );
 }
 
+/** Renders formatted timestamp tick marks along the horizontal X-axis. */
 function renderTimeAxis(params: {
   visibleTimeBounds: { minT: number; maxT: number };
   padLeft: number;
@@ -1982,6 +1994,7 @@ function renderTimeAxis(params: {
   );
 }
 
+/** Generates an SVG path data string for linear or step-interpolated curve segments. */
 function buildSvgPath(
   coords: Array<{ x: number; y: number }>,
   step = false

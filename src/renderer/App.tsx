@@ -1,3 +1,8 @@
+/**
+ * @module renderer/App
+ * Top-level renderer router, multi-window entry dispatcher, and main application state shell.
+ */
+
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
@@ -49,6 +54,7 @@ declare global {
   }
 }
 
+/** Props for {@link TabErrorBoundary}. */
 interface TabErrorBoundaryProps {
   resetKey: string;
   children: React.ReactNode;
@@ -99,6 +105,7 @@ class TabErrorBoundary extends React.Component<
   }
 }
 
+/** Root application router selecting between main studio, taskbar widget, debug console, and theme editor windows. */
 export const App: React.FC = () => {
   const mode =
     typeof window !== 'undefined'
@@ -120,6 +127,7 @@ export const App: React.FC = () => {
   return <MainStudioApp />;
 };
 
+/** Main stateful container managing Electron IPC subscriptions, auth flows, settings, stations, and sync state. */
 const MainStudioApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<
     'dashboard' | 'charts' | 'map' | 'security' | 'settings'
@@ -394,6 +402,7 @@ const MainStudioApp: React.FC = () => {
   );
 };
 
+/** Props for {@link MainStudioShell}. */
 interface MainStudioShellProps {
   settings: UserSettings;
   account: AccountInfo;
@@ -446,6 +455,7 @@ interface MainStudioShellProps {
   handleSyncNow: (forceFull?: boolean) => Promise<void>;
 }
 
+/** Primary window presentation shell hosting navigation tabs, banners, auth onboarding, and sync overlay. */
 const MainStudioShell: React.FC<MainStudioShellProps> = ({
   settings,
   account,

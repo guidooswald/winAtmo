@@ -1,12 +1,19 @@
+/**
+ * @module renderer/components/SyncOverlayWindow
+ * Floating status toast displaying live Netatmo synchronization progress and errors.
+ */
+
 import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCw, CheckCircle2, AlertCircle, X, Terminal } from 'lucide-react';
 import { SyncProgress } from '../types';
 
+/** Props for {@link SyncOverlayWindow}. */
 interface SyncOverlayWindowProps {
   progress: SyncProgress;
   onDismiss?: () => void;
 }
 
+/** Auto-hiding overlay panel that tracks active station/history sync progress and points stored. */
 export const SyncOverlayWindow: React.FC<SyncOverlayWindowProps> = ({
   progress,
   onDismiss,

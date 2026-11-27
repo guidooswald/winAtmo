@@ -1,3 +1,8 @@
+/**
+ * @module main/store
+ * Encrypted local configuration, session state, cached stations, and DPAPI API-key persistence.
+ * Never persists credentials in plaintext when OS encryption (`safeStorage` / DPAPI) is unavailable.
+ */
 import { app, safeStorage } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -13,6 +18,7 @@ import {
 
 const DPAPI_PREFIX = 'dpapi:';
 
+/** Detects a supported UI language from the host OS locale, defaulting to `'en'`. */
 function detectSystemLanguage(): LanguageId {
   try {
     const loc = (app.getLocale?.() || '').toLowerCase();
@@ -28,6 +34,7 @@ function detectSystemLanguage(): LanguageId {
   return 'en';
 }
 
+/** Encrypts a secret asynchronously via Electron `safeStorage`, failing closed (`undefined`) if unavailable. */
 async function encryptSecretAsync(plain?: string): Promise<string | undefined> {
   if (!plain) return undefined;
   if (plain.startsWith(DPAPI_PREFIX)) return plain;
@@ -54,6 +61,7 @@ async function encryptSecretAsync(plain?: string): Promise<string | undefined> {
   return undefined;
 }
 
+/** Synchronously encrypts a secret during `before-quit` flush, failing closed if DPAPI is unavailable. */
 function encryptSecretSync(plain?: string): string | undefined {
   if (!plain) return undefined;
   if (plain.startsWith(DPAPI_PREFIX)) return plain;
@@ -71,6 +79,7 @@ function encryptSecretSync(plain?: string): string | undefined {
   return undefined;
 }
 
+/** Decrypts a `dpapi:`-prefixed secret via `safeStorage`, returning `undefined` on error. */
 async function decryptSecretAsync(stored?: string): Promise<string | undefined> {
   if (!stored) return undefined;
   if (!stored.startsWith(DPAPI_PREFIX)) return stored;
@@ -135,6 +144,10 @@ const DEFAULT_SESSION: SessionData = {
   cookies: [],
 };
 
+/**
+ * Manages persisted user settings, Netatmo session tokens/cookies, transient OAuth credentials,
+ * and `netatmo-api-keys.enc.json` storage.
+ */
 export class AppStore {
   private filePath: string;
   private apiKeysPath: string;
@@ -164,11 +177,13 @@ export class AppStore {
     this.state = this.load();
   }
 
+  /** Decrypts persisted tokens/cookies and overlays any separately stored DPAPI API-key credentials. */
   public async init(): Promise<void> {
     await this.decryptLoadedState();
     await this.loadEncryptedApiKeysFile();
   }
 
+  /** Reads and decrypts optional `netatmo-api-keys.enc.json` credentials into memory. */
   private async loadEncryptedApiKeysFile(): Promise<void> {
     try {
       if (fs.existsSync(this.apiKeysPath)) {
@@ -208,6 +223,7 @@ export class AppStore {
     }
   }
 
+  /** Decrypts DPAPI-protected fields loaded synchronously during startup into in-memory state. */
   private async decryptLoadedState(): Promise<void> {
     try {
       if (this.state.settings.oauthClientSecret) {
@@ -340,6 +356,7 @@ export class AppStore {
     }, 50);
   }
 
+  /** Serializes and DPAPI-encrypts current settings and session state asynchronously to `winatmo-config.json`. */
   public async saveAsync(): Promise<void> {
     if (this.isSaving) {
       this.saveQueued = true;
@@ -422,6 +439,7 @@ export class AppStore {
     return encryptSecretSync(plain);
   }
 
+  /** Flushes current settings and DPAPI-encrypted secrets synchronously on app quit (`before-quit`). */
   public flushSync(): void {
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
@@ -471,6 +489,7 @@ export class AppStore {
     }
   }
 
+  /** Returns full settings (for main-process use only), including decrypted `oauthClientSecret`. */
   public getSettings(): UserSettings {
     return {
       ...this.state.settings,
@@ -482,6 +501,7 @@ export class AppStore {
     };
   }
 
+  /** Returns renderer-safe settings with `oauthClientSecret` stripped. */
   public getPublicSettings(): UserSettings {
     return {
       ...this.state.settings,
@@ -491,6 +511,7 @@ export class AppStore {
     };
   }
 
+  /** Holds OAuth credentials strictly in memory when the user opts out of local key persistence. */
   public setTransientOAuthCredentials(
     clientId: string,
     clientSecret: string
@@ -499,6 +520,7 @@ export class AppStore {
     this.transientOauthClientSecret = clientSecret.trim() || undefined;
   }
 
+  /** Merges partial settings into store state, schedules disk persistence, and returns updated settings. */
   public updateSettings(partial: Partial<UserSettings>): UserSettings {
     this.state.settings = {
       ...this.state.settings,
@@ -508,10 +530,12 @@ export class AppStore {
     return this.getSettings();
   }
 
+  /** Returns a shallow copy of current Netatmo authentication session state. */
   public getSession(): SessionData {
     return { ...this.state.session };
   }
 
+  /** Merges partial authentication session fields and schedules encrypted persistence. */
   public updateSession(partial: Partial<SessionData>): SessionData {
     this.state.session = {
       ...this.state.session,
@@ -521,6 +545,7 @@ export class AppStore {
     return this.getSession();
   }
 
+  /** Clears active session tokens, cached stations, and optionally unlinks persisted API keys. */
   public clearSession(clearStoredKeys = false): void {
     this.cachedEncryptedSecrets = {};
     this.cachedEncryptedCookies = undefined;
@@ -535,6 +560,7 @@ export class AppStore {
     this.save();
   }
 
+  /** Builds UI-safe account metadata summarizing login state, auth method, and credential storage. */
   public getAccountInfo(): AccountInfo {
     const s = this.state.session;
     const hasFile = fs.existsSync(this.apiKeysPath);
@@ -578,6 +604,7 @@ export class AppStore {
     await fs.promises.writeFile(this.apiKeysPath, fileContent, 'utf-8');
   }
 
+  /** Validates and encrypts OAuth client credentials and optional tokens into `netatmo-api-keys.enc.json`. */
   public async saveApiKeys(payload: {
     clientId: string;
     clientSecret?: string;
@@ -646,6 +673,7 @@ export class AppStore {
     }
   }
 
+  /** Refreshes the stored access/refresh tokens inside `netatmo-api-keys.enc.json` if enabled. */
   public async updateStoredApiKeysTokens(
     accessToken: string,
     refreshToken?: string,
@@ -676,6 +704,7 @@ export class AppStore {
     }
   }
 
+  /** Deletes `netatmo-api-keys.enc.json` and optionally clears in-memory OAuth credentials. */
   public async clearStoredApiKeys(clearSettings = true): Promise<void> {
     try {
       if (fs.existsSync(this.apiKeysPath)) {
@@ -696,6 +725,7 @@ export class AppStore {
     }
   }
 
+  /** Returns masked metadata about locally stored OAuth keys/tokens without exposing raw secrets. */
   public getStoredApiKeysInfo(): StoredApiKeysInfo {
     const hasFile = fs.existsSync(this.apiKeysPath);
     const s = this.getSettings();
@@ -780,10 +810,12 @@ export class AppStore {
     return result;
   }
 
+  /** Returns cached weather station topology and latest dashboard readings. */
   public getCachedStations(): WeatherStation[] {
     return this.state.cachedStations || [];
   }
 
+  /** Normalizes and caches stations locally and auto-pins initial default widget sensors when empty. */
   public setCachedStations(stations: WeatherStation[]): void {
     const normalized = this.normalizeStations(stations);
     this.state.cachedStations = normalized;
@@ -860,6 +892,7 @@ export class AppStore {
     this.save();
   }
 
+  /** Returns Unix epoch seconds of the last successful station cache update. */
   public getLastSyncAt(): number | undefined {
     return this.state.lastSyncAt;
   }

@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/SecurityView
+ * Netatmo Security dashboard featuring camera status cards, floodlight controls, household presence, and event playback.
+ */
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -44,11 +49,13 @@ import {
 import { useI18n } from '../utils/i18n';
 import { HlsVideoPlayer } from './HlsVideoPlayer';
 
+/** Props for {@link SecurityView}. */
 interface SecurityViewProps {
   account: AccountInfo;
   onOpenSettings: () => void;
 }
 
+/** Maps a Netatmo Security camera model identifier to its display product name. */
 function getCameraModelLabel(type: string): string {
   switch (type) {
     case 'NACamera':
@@ -65,12 +72,14 @@ function getCameraModelLabel(type: string): string {
   }
 }
 
+/** Returns true if a camera hardware type identifies a Netatmo Presence outdoor floodlight camera. */
 function isSupportedOutdoorCamera(type?: string): boolean {
   if (!type) return false;
   const t = type.toUpperCase();
   return t === 'NOC' || t === 'NOC2' || t.includes('PRESENCE') || t.includes('OUTDOOR');
 }
 
+/** Returns true if a camera exposes or supports floodlight control. */
 function supportsFloodlight(cam: SecurityCamera): boolean {
   return cam.floodlight !== undefined || isSupportedOutdoorCamera(cam.type);
 }
@@ -81,6 +90,7 @@ const FLOODLIGHT_MODES: Array<{ mode: SecurityFloodlightMode; label: string }> =
   { mode: 'off', label: 'Off' },
 ];
 
+/** Maps a raw camera SD-card status code to a badge label and status tone. */
 function formatSdStatus(sd: string | number | undefined): {
   label: string;
   tone: 'ok' | 'warn' | 'err';
@@ -96,6 +106,7 @@ function formatSdStatus(sd: string | number | undefined): {
   return { label: `SD (${sd})`, tone: 'ok' };
 }
 
+/** Maps a raw camera external power status code to a human-readable indicator. */
 function formatPowerStatus(alim: string | number | undefined): {
   label: string;
   ok: boolean;
@@ -107,6 +118,7 @@ function formatPowerStatus(alim: string | number | undefined): {
   return { label: `Power (${alim})`, ok: true };
 }
 
+/** Chooses a status color for a camera's Wi-Fi reception quality or RSSI strength. */
 function formatWifiColor(state?: string, strength?: number): string {
   if (state === 'full' || state === 'good' || (strength !== undefined && strength <= 58)) {
     return '#10b981';
@@ -117,6 +129,7 @@ function formatWifiColor(state?: string, strength?: number): string {
   return '#f43f5e';
 }
 
+/** Formats a Unix timestamp in seconds as a compact relative elapsed string (`12m ago`). */
 function formatRelativeTime(tsSec: number): string {
   const diff = Math.max(0, Math.floor(Date.now() / 1000) - tsSec);
   if (diff < 60) return `${diff}s ago`;
@@ -125,6 +138,7 @@ function formatRelativeTime(tsSec: number): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+/** Categorizes a security event or its sub-events into a UI filter bucket. */
 function classifyEventFilter(ev: SecurityEvent): string {
   const types = [
     ev.type,
@@ -161,6 +175,7 @@ const STATUS_ONLY_EVENT_TYPES = new Set([
   'daily_summary',
 ]);
 
+/** Determines whether a timeline event can carry a preview image rather than being status-only. */
 function canEventHaveImage(ev: SecurityEvent, imgUrl?: string): boolean {
   if (imgUrl) return true;
   if (ev.videoId || ev.videoStatus === 'available') return true;
@@ -169,6 +184,7 @@ function canEventHaveImage(ev: SecurityEvent, imgUrl?: string): boolean {
   return classifyEventFilter(ev) !== 'system';
 }
 
+/** Returns the Lucide icon matching a security event type string. */
 function renderEventTypeIcon(typeStr: string, size = 14) {
   const t = typeStr.toLowerCase();
   if (t.includes('vehicle') || t === 'car') return <Car size={size} />;
@@ -181,6 +197,7 @@ function renderEventTypeIcon(typeStr: string, size = 14) {
   return <Shield size={size} />;
 }
 
+/** Security management view displaying cameras, floodlight controls, known persons, event feed, and HLS player modal. */
 export const SecurityView: React.FC<SecurityViewProps> = ({
   account,
   onOpenSettings,

@@ -1,7 +1,13 @@
+/**
+ * @module renderer/components/HlsVideoPlayer
+ * Adaptive HLS video player wrapper for Netatmo live camera streams and recorded VOD clips.
+ */
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { AlertTriangle, Film, RefreshCw } from 'lucide-react';
 
+/** Props for {@link HlsVideoPlayer}. */
 interface HlsVideoPlayerProps {
   hlsUrl?: string;
   fallbackUrls?: string[];
@@ -11,6 +17,10 @@ interface HlsVideoPlayerProps {
   onRetryResolve?: () => void;
 }
 
+/**
+ * Plays HLS playlists via `hls.js` (or native HLS playback), rotating through fallback URLs
+ * and exposing retry actions when a stream fails.
+ */
 export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
   hlsUrl,
   fallbackUrls = [],

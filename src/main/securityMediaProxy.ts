@@ -1,3 +1,8 @@
+/**
+ * @module main/securityMediaProxy
+ * Authenticated `127.0.0.1` loopback HTTP proxy for Netatmo camera HLS manifests,
+ * video segments, and decryption keys with strict origin allowlisting and byte caps.
+ */
 import http from 'http';
 import crypto from 'crypto';
 import { session, net } from 'electron';
@@ -7,6 +12,7 @@ const NETATMO_PARTITION = 'persist:netatmo';
 const MAX_MEDIA_RESPONSE_BYTES = 32 * 1024 * 1024;
 const MAX_REDIRECT_HOPS = 3;
 
+/** Rejects localhost, wildcard, and link-local IPv4/IPv6 targets to block SSRF. */
 function isDisallowedLoopbackOrLinkLocal(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (!h) return true;
@@ -30,6 +36,7 @@ function safeTokenEquals(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ab, bb);
 }
 
+/** Streams a bounded upstream response body, aborting early if `maxBytes` is exceeded. */
 async function readResponseBufferLimited(
   resp: Response,
   maxBytes: number
@@ -122,6 +129,7 @@ export class SecurityMediaProxy {
   private readonly allowedOrigins = new Set<string>();
   private startPromise: Promise<string> | null = null;
 
+  /** Registers a camera origin obtained from Netatmo API responses if not loopback/link-local. */
   public allowUrlOrigin(targetUrl: string): void {
     try {
       const u = new URL(targetUrl);
@@ -134,6 +142,7 @@ export class SecurityMediaProxy {
     } catch {}
   }
 
+  /** Checks whether `targetUrl` matches an explicitly registered origin or trusted Netatmo host. */
   private isAllowedTarget(targetUrl: string): boolean {
     try {
       const u = new URL(targetUrl);
@@ -156,6 +165,7 @@ export class SecurityMediaProxy {
     }
   }
 
+  /** Starts (or reuses) the ephemeral-port `127.0.0.1` proxy HTTP server. */
   public async ensureStarted(): Promise<string> {
     if (this.server && this.port) {
       return `http://127.0.0.1:${this.port}`;
@@ -191,6 +201,7 @@ export class SecurityMediaProxy {
     return this.startPromise;
   }
 
+  /** Allowlists `targetUrl`'s origin and returns a tokenized `127.0.0.1` proxy URL for renderer playback. */
   public async toProxyUrl(targetUrl: string): Promise<string> {
     this.allowUrlOrigin(targetUrl);
     const base = await this.ensureStarted();
@@ -485,6 +496,7 @@ export class SecurityMediaProxy {
     }
   }
 
+  /** Stops the local HLS media proxy server. */
   public stop(): void {
     try {
       this.server?.close();
@@ -494,4 +506,5 @@ export class SecurityMediaProxy {
   }
 }
 
+/** Singleton HLS media proxy shared by live camera streams and recorded VOD playback. */
 export const securityMediaProxy = new SecurityMediaProxy();

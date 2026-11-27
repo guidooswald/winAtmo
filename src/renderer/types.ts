@@ -1,3 +1,9 @@
+/**
+ * @module renderer/types
+ * Shared TypeScript domain contracts used across the Electron main process, preload bridge, and React UI.
+ */
+
+/** Supported Netatmo weather telemetry metric identifiers. */
 export type MetricType =
   | 'temperature'
   | 'humidity'
@@ -11,6 +17,7 @@ export type MetricType =
   | 'guststrength'
   | 'gustangle';
 
+/** Time-aggregation bucket granularities supported by Netatmo `getmeasure` queries. */
 export type NetatmoScale =
   | 'max'
   | '30min'
@@ -20,6 +27,7 @@ export type NetatmoScale =
   | '1week'
   | '1month';
 
+/** Netatmo Weather Station and Healthy Home Coach hardware module type codes. */
 export type ModuleType =
   | 'NAMain'
   | 'NAModule1'
@@ -28,6 +36,7 @@ export type ModuleType =
   | 'NAModule4'
   | 'NHC';
 
+/** Live sensor readings snapshot reported on a station module's dashboard. */
 export interface DashboardReadings {
   time_utc: number;
   Temperature?: number;
@@ -55,6 +64,7 @@ export interface DashboardReadings {
   health_idx?: number;
 }
 
+/** Normalized weather station base unit or wireless add-on module descriptor. */
 export interface StationModule {
   id: string; // MAC address
   stationId: string; // Parent station MAC address
@@ -79,6 +89,7 @@ export interface StationModule {
   readOnly?: boolean;
 }
 
+/** Geographic metadata and coordinates associated with a weather station. */
 export interface PlaceInfo {
   timezone: string;
   country?: string;
@@ -87,6 +98,7 @@ export interface PlaceInfo {
   location?: [number, number]; // [lon, lat]
 }
 
+/** Weather station home grouping containing the base unit and all attached modules. */
 export interface WeatherStation {
   id: string; // Station MAC address
   stationName: string;
@@ -102,6 +114,7 @@ export interface WeatherStation {
   modules: StationModule[]; // Includes the main indoor station module first, followed by attached modules
 }
 
+/** Sensor metric item pinned to the taskbar widget or chart workspace. */
 export interface PinnedSensorItem {
   id: string; // `${stationId}::${moduleId}::${metric}`
   stationId: string;
@@ -113,11 +126,13 @@ export interface PinnedSensorItem {
   color?: string;
 }
 
+/** Single timestamped time-series sample in Unix seconds. */
 export interface MeasurePoint {
   ts: number; // Unix timestamp in seconds
   value: number;
 }
 
+/** Precomputed summary statistics for a queried sensor time series. */
 export interface SeriesStats {
   min: number;
   max: number;
@@ -128,6 +143,7 @@ export interface SeriesStats {
   count: number;
 }
 
+/** Historical measurement time series and statistics for a single module metric. */
 export interface MeasureSeries {
   seriesKey: string; // `${moduleId}::${metric}`
   stationId: string;
@@ -141,11 +157,13 @@ export interface MeasureSeries {
   source?: 'local_database' | 'netatmo_api';
 }
 
+/** Source indicator emitted when serving a measurement query from SQLite or Netatmo API. */
 export interface MeasureQueryStatus {
   source: 'local_database' | 'netatmo_api';
   scale: NetatmoScale;
 }
 
+/** Request parameters for fetching historical sensor series across one or more modules. */
 export interface MeasureQueryRequest {
   items: Array<{
     stationId: string;
@@ -160,6 +178,7 @@ export interface MeasureQueryRequest {
   forceRemoteFetch?: boolean;
 }
 
+/** SQLite database file size and per-scale record counts. */
 export interface StorageStats {
   dbPath: string;
   fileSizeBytes: number;
@@ -178,6 +197,7 @@ export interface StorageStats {
   }>;
 }
 
+/** Live background synchronization progress state broadcast to the UI overlay. */
 export interface SyncProgress {
   active: boolean;
   phase: 'idle' | 'stations' | 'history' | 'done' | 'error';
@@ -189,6 +209,7 @@ export interface SyncProgress {
   error?: string;
 }
 
+/** Authenticated Netatmo account metadata exposed to the renderer process. */
 export interface AccountInfo {
   loggedIn: boolean;
   email?: string;
@@ -201,6 +222,7 @@ export interface AccountInfo {
   autoUpdateEnabled?: boolean;
 }
 
+/** Non-secret summary of locally stored OAuth client credentials and refresh flags. */
 export interface StoredApiKeysInfo {
   hasStoredKeys: boolean;
   storeApiKeysLocally: boolean;
@@ -214,6 +236,7 @@ export interface StoredApiKeysInfo {
   updatedAt?: number;
 }
 
+/** Visual design family grouping built-in and custom UI themes. */
 export type ThemeFamily =
   | 'fluent'
   | 'compact'
@@ -223,6 +246,7 @@ export type ThemeFamily =
   | 'soft'
   | 'custom';
 
+/** Persisted user-created or imported theme definition stored in SQLite. */
 export interface CustomThemeRecord {
   id: string;
   name: string;
@@ -239,6 +263,7 @@ export interface CustomThemeRecord {
   updatedAt?: number;
 }
 
+/** Identifier of a built-in preset theme or dynamic custom theme ID. */
 export type ThemeId =
   // 1. Modern Fluent (14px Smooth Rounded • Segoe UI)
   | 'fluent-dark'
@@ -273,6 +298,7 @@ export type ThemeId =
   | 'rose-pine-dawn'
   | 'github-light';
 
+/** Saved main window geometry and maximization state. */
 export interface MainWindowBounds {
   width: number;
   height: number;
@@ -281,6 +307,7 @@ export interface MainWindowBounds {
   isMaximized?: boolean;
 }
 
+/** Supported UI display language codes. */
 export type LanguageId =
   | 'en'
   | 'de'
@@ -292,6 +319,7 @@ export type LanguageId =
   | 'cs'
   | 'el';
 
+/** Persisted user preferences for units, sync intervals, widget placement, layout, and theming. */
 export interface UserSettings {
   language: LanguageId; // Default 'en', supports de, fr, es, pt, it, pl, cs, el
   historyDays: number; // Default 14 days, up to 3650+ or max
@@ -326,6 +354,7 @@ export interface UserSettings {
   launchOnStartup: boolean;
 }
 
+/** Serialized session cookie captured during Netatmo web login. */
 export interface StoredCookie {
   name: string;
   value: string;
@@ -335,6 +364,7 @@ export interface StoredCookie {
   httpOnly?: boolean;
 }
 
+/** Encrypted authentication state persisted by `AppStore`. */
 export interface SessionData {
   loggedIn: boolean;
   authMethod: 'web' | 'oauth' | 'token' | 'demo';
@@ -349,9 +379,12 @@ export interface SessionData {
   apiBase?: 'app.netatmo.net' | 'api.netatmo.com';
 }
 
+/** Severity level for debug console log entries. */
 export type DebugLogLevel = 'info' | 'warn' | 'error' | 'debug';
+/** Functional domain tag assigned to debug logs and API request traces. */
 export type DebugSourceDomain = 'weather' | 'security' | 'auth';
 
+/** Structured application diagnostic log entry. */
 export interface DebugLogEntry {
   id: string;
   timestamp: number;
@@ -362,6 +395,7 @@ export interface DebugLogEntry {
   details?: string;
 }
 
+/** Captured HTTP API call trace including redacted headers, latency, and response body preview. */
 export interface ApiRequestLogEntry {
   id: string;
   timestamp: number;
@@ -381,6 +415,7 @@ export interface ApiRequestLogEntry {
   note?: string;
 }
 
+/** Aggregate request counts, transfer totals, and buffer sizes for the Debug Console. */
 export interface DebugTelemetryStats {
   totalRequests: number;
   successfulRequests: number;
@@ -397,12 +432,14 @@ export interface DebugTelemetryStats {
   startedAt: number;
 }
 
+/** Combined logs, API trace entries, and counters returned to the Debug Console on load. */
 export interface DebugTelemetrySnapshot {
   logs: DebugLogEntry[];
   apiRequests: ApiRequestLogEntry[];
   stats: DebugTelemetryStats;
 }
 
+/** Incremental real-time event pushed from the main process to open Debug Console windows. */
 export interface DebugStreamEvent {
   type: 'log' | 'api' | 'clear';
   logEntry?: DebugLogEntry;
@@ -410,8 +447,10 @@ export interface DebugStreamEvent {
   stats: DebugTelemetryStats;
 }
 
+/** Netatmo Security camera or doorbell hardware model identifier. */
 export type SecurityCameraType = 'NACamera' | 'NOC' | 'NDB' | string;
 
+/** Normalized Netatmo Security camera status, VPN stream endpoints, and floodlight state. */
 export interface SecurityCamera {
   id: string;
   homeId: string;
@@ -434,6 +473,7 @@ export interface SecurityCamera {
   localUrl?: string;
 }
 
+/** Registered household member tracked by Netatmo Welcome face recognition. */
 export interface SecurityPerson {
   id: string;
   homeId: string;
@@ -443,6 +483,7 @@ export interface SecurityPerson {
   faceUrl?: string;
 }
 
+/** Detailed sub-event belonging to a composite Netatmo camera timeline event. */
 export interface SecuritySubEvent {
   id?: string;
   type: string;
@@ -455,6 +496,7 @@ export interface SecuritySubEvent {
   personId?: string;
 }
 
+/** Normalized security camera or person timeline event with snapshot and video links. */
 export interface SecurityEvent {
   id: string;
   homeId: string;
@@ -476,6 +518,7 @@ export interface SecurityEvent {
   subEvents?: SecuritySubEvent[];
 }
 
+/** Netatmo Security home container grouping cameras and recognized persons. */
 export interface SecurityHome {
   id: string;
   name: string;
@@ -484,6 +527,7 @@ export interface SecurityHome {
   persons: SecurityPerson[];
 }
 
+/** Full normalized security snapshot combining homes and recent timeline events. */
 export interface SecurityDataPayload {
   homes: SecurityHome[];
   events: SecurityEvent[];
@@ -491,6 +535,7 @@ export interface SecurityDataPayload {
   scopeError?: string;
 }
 
+/** Fresh snapshot/vignette URLs returned when refreshing an expired event image. */
 export interface SecurityEventImageRefreshResult {
   ok: boolean;
   imageUrl?: string;
@@ -500,6 +545,7 @@ export interface SecurityEventImageRefreshResult {
   error?: string;
 }
 
+/** Resolved HLS playback URL and fallback candidates for a live camera or recorded event clip. */
 export interface SecurityEventVideoResult {
   ok: boolean;
   hlsUrl?: string;
@@ -513,6 +559,7 @@ export interface SecurityEventVideoResult {
   error?: string;
 }
 
+/** Result of an authenticated main-process fetch for camera snapshots, playlists, or segments. */
 export interface SecurityMediaFetchResult {
   ok: boolean;
   status: number;
@@ -524,8 +571,10 @@ export interface SecurityMediaFetchResult {
   error?: string;
 }
 
+/** Operating mode for Netatmo Presence outdoor camera floodlights. */
 export type SecurityFloodlightMode = 'auto' | 'on' | 'off';
 
+/** Response returned after updating a camera floodlight mode. */
 export interface SetCameraFloodlightResult {
   ok: boolean;
   mode?: SecurityFloodlightMode;
@@ -534,12 +583,14 @@ export interface SetCameraFloodlightResult {
   needsWriteScope?: boolean;
 }
 
+/** Response returned after marking household persons as away from home. */
 export interface SetPersonsAwayResult {
   ok: boolean;
   error?: string;
   needsWriteScope?: boolean;
 }
 
+/** Outcome and output file metrics of saving an HLS camera clip or live recording. */
 export interface SecurityDownloadResult {
   success: boolean;
   canceled?: boolean;
@@ -549,6 +600,7 @@ export interface SecurityDownloadResult {
   error?: string;
 }
 
+/** Incremental progress payload emitted while downloading an HLS camera video. */
 export interface SecurityVideoDownloadProgress {
   eventId?: string;
   videoId?: string;
@@ -561,8 +613,10 @@ export interface SecurityVideoDownloadProgress {
   message?: string;
 }
 
+/** Supported precipitation radar upstream source identifier. */
 export type RadarProvider = 'dwd' | 'rainviewer';
 
+/** Single past, current, or nowcast radar frame descriptor. */
 export interface RadarFrame {
   timestampSec: number;
   isoTime: string;
@@ -571,6 +625,7 @@ export interface RadarFrame {
   wmsLayer?: string;
 }
 
+/** Radar timeline metadata, proxy coordinates, and layer attribution for the map view. */
 export interface RadarMetadataPayload {
   provider: RadarProvider;
   fetchedAt: number;

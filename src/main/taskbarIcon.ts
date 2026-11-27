@@ -1,6 +1,12 @@
+/**
+ * @module main/taskbarIcon
+ * Renders crisp multi-DPI (`16/24/32px`) live sensor value tray icons using a sandboxed
+ * offscreen Chromium canvas with a pure-RGBA bitmap fallback.
+ */
 import { BrowserWindow, nativeImage } from 'electron';
 import { UserSettings, WeatherStation, StationModule } from '../renderer/types';
 
+/** Resolved taskbar tray text, tooltip label, semantic color, and originating sensor info. */
 export interface TaskbarReadingResult {
   text: string;
   fullLabel: string;

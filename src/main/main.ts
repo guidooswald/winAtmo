@@ -1,3 +1,8 @@
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import {
   app,
   BrowserWindow,
@@ -13,24 +18,79 @@ import {
 } from 'electron';
 import path from 'path';
 import fs from 'fs';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { execFile } from 'child_process';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { fileURLToPath } from 'url';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { AppStore } from './store';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { TimeSeriesDatabase } from './database';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { NetatmoClient } from './netatmoClient';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { NETATMO_PARTITION, WebAuthManager } from './webAuth';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { debugLogger } from './debugLogger';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import { securityMediaProxy } from './securityMediaProxy';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import {
   initTaskbarIconRenderer,
   resolveTaskbarReading,
   generateTaskbarIcon,
 } from './taskbarIcon';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import {
   checkCachedRadarUrls,
   getRadarMetadata,
   stopRadarCacheServer,
 } from './radarService';
+/**
+ * @module main/main
+ * Electron main-process entrypoint managing application lifecycle, BrowserWindows,
+ * Chromium security/CSP policies, trusted IPC handlers, background sync, and system tray.
+ */
 import {
   AccountInfo,
   CustomThemeRecord,
@@ -146,6 +206,7 @@ function applyStartupRegistration(enabled: boolean): void {
   }
 }
 
+/** Resolves the renderer HTML file or Vite dev server URL with optional `?mode=` query string. */
 function getRendererEntryUrl(queryMode?: string): {
   isDev: boolean;
   url: string;
@@ -165,6 +226,7 @@ function getRendererEntryUrl(queryMode?: string): {
   };
 }
 
+/** Verifies that an IPC sender or navigation URL points to this app's own built HTML or Vite dev origin. */
 function isTrustedAppUrl(rawUrl: string): boolean {
   if (!rawUrl || typeof rawUrl !== 'string') return false;
   try {
@@ -190,6 +252,7 @@ function isTrustedAppUrl(rawUrl: string): boolean {
   }
 }
 
+/** Attaches `will-navigate` and `will-redirect` blocks preventing off-origin navigation in app windows. */
 function attachWindowSecurityGuards(win: BrowserWindow): void {
   win.webContents.on('will-navigate', (event, targetUrl) => {
     if (!isTrustedAppUrl(targetUrl)) {
@@ -208,6 +271,7 @@ function assertTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMa
   return Boolean(url && isTrustedAppUrl(url));
 }
 
+/** Wraps `ipcMain.handle` so only trusted renderer frames can invoke privileged main-process handlers. */
 function handleTrustedIpc(
   channel: string,
   listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any
@@ -265,6 +329,7 @@ const ALLOWED_SETTINGS_KEYS = new Set<string>([
   'launchOnStartup',
 ]);
 
+/** Filters incoming renderer settings updates through an explicit key allowlist (excluding secrets/prototypes). */
 function sanitizePartialSettings(input: unknown): Partial<UserSettings> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return {};
@@ -284,6 +349,7 @@ function sanitizePartialSettings(input: unknown): Partial<UserSettings> {
   return clean as Partial<UserSettings>;
 }
 
+/** Neutralizes spreadsheet formula prefixes and escapes quotes for RFC 4180 CSV export cells. */
 function escapeCsvCell(raw: string): string {
   const flat = raw.replace(/\r?\n/g, ' ');
   const neutralized = /^[=+\-@\t]/.test(flat) ? `'${flat}` : flat;
@@ -373,6 +439,7 @@ function normalizeHexColor(raw: unknown): string | null {
   return null;
 }
 
+/** Validates and normalizes an imported or edited custom theme record and strips unsafe CSS token values. */
 function sanitizeCustomThemeRecord(
   raw: unknown,
   forceNewId = false
@@ -493,6 +560,7 @@ function getThemeBgAndMode(themeId?: string): { isLight: boolean; bg: string } {
   return { isLight, bg };
 }
 
+/** Syncs Electron `nativeTheme` and window background colors to the active built-in or custom theme. */
 function applyNativeWindowTheme(themeId?: string): void {
   const { isLight, bg } = getThemeBgAndMode(themeId);
   nativeTheme.themeSource = isLight ? 'light' : 'dark';
@@ -578,6 +646,12 @@ function debouncedSaveWidgetSize(): void {
   }, 250);
 }
 
+/**
+ * Creates the primary application window or brings the existing window to focus,
+ * applying saved window bounds, theme background color, and security guards.
+ *
+ * @param shouldShow - Whether to show and focus the window immediately after creation.
+ */
 function createMainWindow(shouldShow = true): void {
   const settings = store ? store.getSettings() : null;
   const currentTheme = settings ? settings.theme : 'fluent-dark';
@@ -893,6 +967,12 @@ function ExpandedYAdjustment(
   return savedY;
 }
 
+/**
+ * Creates, repositions, or refreshes the floating desktop taskbar widget window
+ * according to the current widget settings and pinned sensor layout.
+ *
+ * @param autoSizeForSensors - Whether to recompute widget width/height to fit active sensors.
+ */
 function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
   const settings = store.getSettings();
 
@@ -1063,6 +1143,7 @@ function createOrUpdateWidgetWindow(autoSizeForSensors = false): void {
   });
 }
 
+/** Opens (or focuses) the frameless API & Sync Debug Console window. */
 function createOrShowDebugWindow(): void {
   if (debugWindow && !debugWindow.isDestroyed()) {
     if (debugWindow.isMinimized()) debugWindow.restore();
@@ -1146,6 +1227,7 @@ function createOrShowDebugWindow(): void {
   });
 }
 
+/** Opens (or focuses) the dedicated frameless Theme Editor window, optionally preselecting `initialThemeId`. */
 function createOrShowThemeEditorWindow(initialThemeId?: string): void {
   if (themeEditorWindow && !themeEditorWindow.isDestroyed()) {
     if (themeEditorWindow.isMinimized()) themeEditorWindow.restore();
@@ -1240,6 +1322,7 @@ function createOrShowThemeEditorWindow(initialThemeId?: string): void {
   });
 }
 
+/** Sends an IPC push event to all currently alive main, widget, debug, and theme editor windows. */
 function broadcastToAllWindows(channel: string, payload: any): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
@@ -1478,6 +1561,10 @@ function formatPinnedReadingForTray(
 
 let tokenAutoUpdateTimer: NodeJS.Timeout | null = null;
 
+/**
+ * Schedules periodic background token refreshes and scheduled full data syncs
+ * based on the user's configured sync interval.
+ */
 function setupTokenAutoUpdate(): void {
   if (tokenAutoUpdateTimer) {
     clearInterval(tokenAutoUpdateTimer);
@@ -1505,6 +1592,12 @@ function setupTokenAutoUpdate(): void {
   }, 3 * 60 * 1000);
 }
 
+/**
+ * Executes a full weather, security, and historical measurement synchronization
+ * cycle and broadcasts updated data and taskbar icons.
+ *
+ * @param trigger - Whether the sync was initiated on startup or by the background timer.
+ */
 async function runFullSync(trigger: 'startup' | 'scheduled'): Promise<void> {
   const session = store.getSession();
   if (!session.loggedIn) return;
@@ -1546,6 +1639,10 @@ function setupRefreshSchedule(): void {
   }, minutes * 60 * 1000);
 }
 
+/**
+ * Registers all trusted IPC request/invoke handlers bridging renderer UI actions
+ * to window controls, storage, Netatmo API calls, media downloads, and radar metadata.
+ */
 function registerIpcHandlers(): void {
   onTrustedIpc('window:minimize', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);

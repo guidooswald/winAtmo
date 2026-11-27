@@ -1,6 +1,12 @@
+/**
+ * @module renderer/utils/i18n
+ * Multi-language internationalization context, dictionaries, and locale formatters.
+ */
+
 import React, { createContext, useContext, useMemo } from 'react';
 import { LanguageId } from '../types';
 
+/** Metadata describing a supported UI language and its Intl formatting locale. */
 export interface LanguageDefinition {
   id: LanguageId;
   name: string;
@@ -9,6 +15,7 @@ export interface LanguageDefinition {
   locale: string;
 }
 
+/** Ordered list of languages selectable in the winAtmo UI. */
 export const LANGUAGES: LanguageDefinition[] = [
   { id: 'en', name: 'English', nativeName: 'English', flag: '🇬🇧', locale: 'en-US' },
   { id: 'de', name: 'German', nativeName: 'Deutsch', flag: '🇩🇪', locale: 'de-DE' },
@@ -254,6 +261,7 @@ const EN = {
   widget_refresh: 'Refresh Now',
 };
 
+/** Union of all valid translation message keys derived from the English base dictionary. */
 export type TranslationKey = keyof typeof EN;
 
 const DE: Record<TranslationKey, string> = {
@@ -2076,6 +2084,7 @@ export const TRANSLATIONS: Record<LanguageId, Record<TranslationKey, string>> = 
   el: EL,
 };
 
+/** Context value providing translation lookup and locale-aware number/date formatters. */
 export interface I18nContextValue {
   language: LanguageId;
   definition: LanguageDefinition;
@@ -2102,6 +2111,7 @@ const LanguageContext = createContext<I18nContextValue>({
   formatTime: (d: Date | number) => new Date(typeof d === 'number' && d < 1e11 ? d * 1000 : d).toLocaleTimeString(),
 });
 
+/** React context provider supplying translations and locale formatters for the active language. */
 export const LanguageProvider: React.FC<{
   language?: LanguageId;
   children: React.ReactNode;
@@ -2168,6 +2178,7 @@ export const LanguageProvider: React.FC<{
   );
 };
 
+/** Hook returning the active translation function `t` and locale-aware formatters. */
 export function useI18n(): I18nContextValue {
   return useContext(LanguageContext);
 }

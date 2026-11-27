@@ -1,3 +1,8 @@
+/**
+ * @module renderer/utils/metrics
+ * Sensor metric metadata, unit conversion, formatting, and signal-quality helpers.
+ */
+
 import {
   DashboardReadings,
   MetricType,
@@ -5,6 +10,7 @@ import {
   UserSettings,
 } from '../types';
 
+/** Display metadata, palette default color, and precision rules for a sensor metric. */
 export interface MetricMeta {
   key: MetricType;
   label: string;
@@ -14,6 +20,7 @@ export interface MetricMeta {
   isBarPreferred?: boolean;
 }
 
+/** Static lookup table mapping every supported `MetricType` to display metadata. */
 export const METRIC_METADATA: Record<MetricType, MetricMeta> = {
   temperature: {
     key: 'temperature',
@@ -96,6 +103,7 @@ export const METRIC_METADATA: Record<MetricType, MetricMeta> = {
   },
 };
 
+/** Default distinct color palette cycled when charting multiple sensor series. */
 export const SERIES_PALETTE = [
   '#38bdf8', // Sky blue
   '#f59e0b', // Amber
@@ -109,6 +117,13 @@ export const SERIES_PALETTE = [
   '#ec4899', // Pink
 ];
 
+/**
+ * Returns the display unit symbol for a metric under the active user unit settings.
+ *
+ * @param metric - Metric identifier.
+ * @param settings - Active user unit preferences.
+ * @returns Unit string such as `°C`, `%`, `ppm`, `hPa`, `mm`, or `km/h`.
+ */
 export function getMetricUnit(
   metric: MetricType,
   settings: UserSettings
@@ -142,6 +157,14 @@ export function getMetricUnit(
   }
 }
 
+/**
+ * Converts a raw metric measurement (stored in SI/Netatmo units) into the user's configured unit.
+ *
+ * @param value - Raw measurement value from the station or database.
+ * @param metric - Metric identifier governing conversion rules.
+ * @param settings - Active user unit preferences.
+ * @returns Converted numeric value rounded to display precision.
+ */
 export function convertMetricValue(
   value: number,
   metric: MetricType,
@@ -184,6 +207,15 @@ export function convertMetricValue(
   }
 }
 
+/**
+ * Converts and formats a metric reading for UI display, returning `'--'` when missing.
+ *
+ * @param value - Raw measurement value, or `undefined` if unavailable.
+ * @param metric - Metric identifier.
+ * @param settings - Active user unit preferences.
+ * @param includeUnit - Whether to append the unit symbol.
+ * @returns Formatted reading string.
+ */
 export function formatMetricValue(
   value: number | undefined,
   metric: MetricType,
@@ -204,6 +236,13 @@ export function formatMetricValue(
   return unit.startsWith('°') ? `${formatted}${unit}` : `${formatted} ${unit}`;
 }
 
+/**
+ * Extracts the latest reading for a given metric from a module's live dashboard payload.
+ *
+ * @param dashboard - Module dashboard readings object.
+ * @param metric - Metric key to read.
+ * @returns Raw numeric value if present.
+ */
 export function extractLiveMetricValue(
   dashboard: DashboardReadings | undefined,
   metric: MetricType
@@ -235,8 +274,15 @@ export function extractLiveMetricValue(
   }
 }
 
+/** Qualitative indoor CO2 concentration tier. */
 export type Co2Level = 'unknown' | 'excellent' | 'good' | 'moderate' | 'high';
 
+/**
+ * Classifies a CO2 reading (ppm) into a severity tier with badge label and colors.
+ *
+ * @param co2 - CO2 concentration in parts per million.
+ * @returns Tier classification, label, and foreground/background badge colors.
+ */
 export function getCo2QualityBadge(co2?: number): {
   level: Co2Level;
   label: string;
@@ -283,6 +329,7 @@ export function getCo2QualityBadge(co2?: number): {
   };
 }
 
+/** Converts a wind azimuth angle in degrees (`0-360`) into a 16-point compass label. */
 export function getCompassDirection(angle?: number): string {
   if (angle === undefined || angle < 0) return '';
   const dirs = [
@@ -306,6 +353,7 @@ export function getCompassDirection(angle?: number): string {
   return dirs[Math.round(angle / 22.5) % 16];
 }
 
+/** Maps a Netatmo hardware `ModuleType` code to a human-readable English product label. */
 export function getModuleTypeLabel(type: ModuleType): string {
   switch (type) {
     case 'NAMain':
@@ -323,6 +371,7 @@ export function getModuleTypeLabel(type: ModuleType): string {
   }
 }
 
+/** Interprets a Netatmo Wi-Fi RSSI value into a signal quality label and indicator color. */
 export function getWifiQualityLabel(wifiStatus?: number): {
   label: string;
   color: string;
@@ -334,6 +383,7 @@ export function getWifiQualityLabel(wifiStatus?: number): {
   return { label: `Weak (${wifiStatus} dB)`, color: '#f43f5e' };
 }
 
+/** Interprets a Netatmo sub-GHz RF link value into a signal quality label and indicator color. */
 export function getRfQualityLabel(rfStatus?: number): {
   label: string;
   color: string;

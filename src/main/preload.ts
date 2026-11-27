@@ -1,3 +1,7 @@
+/**
+ * @module main/preload
+ * Context-isolated `window.winatmo` IPC bridge exposed safely from main to sandboxed renderer windows.
+ */
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   AccountInfo,
@@ -25,6 +29,7 @@ import {
   WeatherStation,
 } from '../renderer/types';
 
+/** Public typed API exposed on `window.winatmo` across all renderer windows. */
 export interface WinAtmoAPI {
   // Window controls
   minimizeWindow: () => void;

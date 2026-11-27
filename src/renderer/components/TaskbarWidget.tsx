@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/TaskbarWidget
+ * Always-on-top desktop widget displaying pinned Netatmo readings, sparklines, and quick controls.
+ */
+
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowDownRight,
@@ -28,6 +33,7 @@ import {
 import { applyThemeToDocument, setCustomThemes } from '../utils/themes';
 import { LanguageProvider } from '../utils/i18n';
 
+/** Compact always-on-top desktop widget displaying pinned sensor cards, mini sparklines, and quick controls. */
 export const TaskbarWidget: React.FC = () => {
   const [stations, setStations] = useState<WeatherStation[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -552,11 +558,13 @@ export const TaskbarWidget: React.FC = () => {
   );
 };
 
+/** Truncates a sensor label to `maxLen` characters with a trailing ellipsis. */
 function truncateLabel(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen - 1) + '…';
 }
 
+/** Builds the SVG polyline path for a compact 24-hour sensor sparkline. */
 function buildMiniSparkPath(vals: number[], w: number, h: number): string {
   if (vals.length === 0) return '';
   let min = Infinity;
@@ -575,12 +583,14 @@ function buildMiniSparkPath(vals: number[], w: number, h: number): string {
     .join(' ');
 }
 
+/** Builds a closed SVG polygon path for the translucent fill beneath a mini sparkline. */
 function buildMiniAreaPath(vals: number[], w: number, h: number): string {
   const line = buildMiniSparkPath(vals, w, h);
   if (!line) return '';
   return `${line} L${(w - 2).toFixed(1)},${h} L2.0,${h} Z`;
 }
 
+/** Determines the metric direction trend from Netatmo trend fields or 24-hour sparkline slope. */
 function resolveSensorTrend(
   metric: MetricType,
   d?: DashboardReadings,
@@ -604,6 +614,7 @@ function resolveSensorTrend(
   return 'stable';
 }
 
+/** Renders a directional trend arrow icon for a pinned widget sensor metric. */
 function renderWidgetTrendArrow(
   metric: MetricType,
   d?: DashboardReadings,

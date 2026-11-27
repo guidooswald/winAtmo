@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/DebugConsoleWindow
+ * Live diagnostic console window inspecting main-process API requests, telemetry counters, and logs.
+ */
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -48,6 +53,7 @@ function formatTs(ts: number): string {
   return `${hh}:${mm}:${ss}.${ms}`;
 }
 
+/** Formats a JSON payload string with 2-space indentation, falling back to raw text if invalid. */
 function tryPrettyJson(raw?: string): string {
   if (!raw) return '(empty response body)';
   try {
@@ -61,6 +67,7 @@ function tryPrettyJson(raw?: string): string {
 const JSON_TOKEN_REGEX =
   /("(?:\\u[0-9a-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?|[{}\[\],:])/g;
 
+/** Tokenizes pretty-printed JSON into syntax-highlighted `<span>` elements for the inspector pane. */
 function renderColorizedJson(raw?: string): React.ReactNode {
   if (!raw) return '(no response body)';
 
@@ -128,6 +135,7 @@ function renderColorizedJson(raw?: string): React.ReactNode {
   return nodes;
 }
 
+/** Memoized response body viewer toggling between raw text and syntax-colored JSON. */
 const ColorizedJsonBody: React.FC<{
   rawBody?: string;
   prettyPrint: boolean;
@@ -142,6 +150,7 @@ const ColorizedJsonBody: React.FC<{
   return <pre className="debug-raw-pre">{rendered}</pre>;
 });
 
+/** Standalone diagnostic console window displaying real-time API traffic, logs, and transfer counters. */
 export const DebugConsoleWindow: React.FC = () => {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [syncProgress, setSyncProgress] = useState<SyncProgress>({

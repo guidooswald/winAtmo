@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/ThemeEditorWindow
+ * Dedicated theme studio window for creating, cloning, importing/exporting, and live-previewing custom UI themes.
+ */
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
@@ -40,6 +45,7 @@ import { WindowTopBar } from './WindowTopBar';
 
 type EditorTab = 'colors' | 'fonts' | 'borders' | 'spacing';
 
+/** Metadata describing an editable CSS custom property input in the color section. */
 interface ColorFieldDef {
   key: string;
   label: string;
@@ -132,12 +138,14 @@ const FAMILY_OPTIONS: Array<{ value: ThemeFamily; label: string }> = [
   { value: 'soft', label: 'Soft Organic' },
 ];
 
+/** Parses a pixel CSS value string (e.g. `'14px'`) into a finite number, falling back on invalid input. */
 function parsePxNumber(val: string | undefined, fallback: number): number {
   if (!val) return fallback;
   const parsed = parseFloat(val);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/** Normalizes hex or `rgb(...)` strings into `#rrggbb` format required by HTML `<input type="color">` controls. */
 function toPickerHex(raw: string | undefined, fallback = '#38bdf8'): string {
   if (!raw || typeof raw !== 'string') return fallback;
   const s = raw.trim();
@@ -157,6 +165,7 @@ function toPickerHex(raw: string | undefined, fallback = '#38bdf8'): string {
   return fallback;
 }
 
+/** Standalone Theme Editor window with tabbed variable controls, JSON import/export, cloning, and live mockup preview. */
 export const ThemeEditorWindow: React.FC = () => {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [customThemesList, setCustomThemesList] = useState<CustomThemeRecord[]>([]);

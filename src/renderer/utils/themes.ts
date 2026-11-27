@@ -1,7 +1,13 @@
+/**
+ * @module renderer/utils/themes
+ * Built-in theme definitions, custom theme storage/sanitization, and DOM CSS-variable application.
+ */
+
 import { CustomThemeRecord, ThemeFamily, ThemeId } from '../types';
 
 export type { ThemeFamily };
 
+/** Complete visual theme descriptor including preview swatches and CSS custom properties. */
 export interface ThemeDefinition {
   id: ThemeId;
   name: string;
@@ -18,6 +24,7 @@ export interface ThemeDefinition {
   updatedAt?: number;
 }
 
+/** Preinstalled winAtmo visual themes across Fluent, Nordic, Soft, and Terminal families. */
 export const THEMES: ThemeDefinition[] = [
   // ==========================================
   // 1. MODERN FLUENT (Windows 11 Mica / Balanced Rounded)
@@ -806,6 +813,14 @@ const LEGACY_THEME_MAP: Record<string, ThemeId> = {
 let customThemesCache: ThemeDefinition[] = [];
 const customThemeListeners = new Set<(themes: ThemeDefinition[]) => void>();
 
+/**
+ * Converts a `#RRGGBB`, `#RGB`, or `rgb(...)` color string into a comma-separated RGB triplet
+ * suitable for `rgba(var(--widget-bg-rgb), alpha)` styling.
+ *
+ * @param color - Input CSS color string.
+ * @param fallback - Triplet returned if parsing fails.
+ * @returns Comma-separated `"R, G, B"` string.
+ */
 export function hexToRgbTriplet(color: string, fallback = '13, 19, 33'): string {
   const s = (color || '').trim();
   const hex6 = /^#([0-9a-fA-F]{6})$/.exec(s);
@@ -847,6 +862,7 @@ function normalizeColorForSwatch(color: string | undefined, fallback: string): s
   return fallback;
 }
 
+/** Derives the 4-color theme preview swatch tuple `[base, card, primaryAccent, secondaryAccent]` from theme variables. */
 export function deriveSwatches(
   vars: Record<string, string>,
   mode: 'dark' | 'light'
@@ -863,6 +879,7 @@ export function deriveSwatches(
   ];
 }
 
+/** Filters a raw CSS variable map to safe `--*` keys and CSS-injection-free values. */
 export function sanitizeThemeVars(
   rawVars: Record<string, unknown> | undefined | null
 ): Record<string, string> {
@@ -894,6 +911,14 @@ export function sanitizeThemeVars(
   return clean;
 }
 
+/**
+ * Clones an existing built-in or custom theme into a new editable `CustomThemeRecord` draft
+ * with a unique name and ID.
+ *
+ * @param source - Built-in or custom theme to duplicate.
+ * @param existingNames - Existing theme names used to avoid duplicate `(Copy)` labels.
+ * @returns Newly generated custom theme draft.
+ */
 export function cloneThemeAsDraft(
   source: ThemeDefinition | CustomThemeRecord,
   existingNames: string[] = []
@@ -937,6 +962,7 @@ export function cloneThemeAsDraft(
   };
 }
 
+/** Replaces the in-memory custom theme cache and notifies all registered theme subscribers. */
 export function setCustomThemes(themes: CustomThemeRecord[]): ThemeDefinition[] {
   customThemesCache = Array.isArray(themes)
     ? themes.map((t) => ({
@@ -954,14 +980,17 @@ export function setCustomThemes(themes: CustomThemeRecord[]): ThemeDefinition[] 
   return snapshot;
 }
 
+/** Returns a shallow copy of all currently loaded user-defined themes. */
 export function getCustomThemes(): ThemeDefinition[] {
   return [...customThemesCache];
 }
 
+/** Returns all available themes, combining preinstalled presets with custom user themes. */
 export function getAllThemes(): ThemeDefinition[] {
   return [...THEMES, ...customThemesCache];
 }
 
+/** Subscribes a listener to updates in the custom themes list and returns an unsubscribe callback. */
 export function subscribeCustomThemes(
   listener: (themes: ThemeDefinition[]) => void
 ): () => void {
@@ -971,6 +1000,7 @@ export function subscribeCustomThemes(
   };
 }
 
+/** Resolves a theme definition by ID, checking custom themes and legacy aliases before falling back to the default preset. */
 export function getThemeDefinition(themeId?: string): ThemeDefinition {
   if (!themeId) return THEMES[0];
   const customMatch = customThemesCache.find((t) => t.id === themeId);
@@ -979,6 +1009,7 @@ export function getThemeDefinition(themeId?: string): ThemeDefinition {
   return THEMES.find((t) => t.id === targetId) || THEMES[0];
 }
 
+/** Applies a theme's CSS custom properties, attributes, and color scheme to `document.documentElement`. */
 export function applyThemeToDocument(themeId?: string): ThemeDefinition {
   const def = getThemeDefinition(themeId);
   if (typeof document !== 'undefined') {

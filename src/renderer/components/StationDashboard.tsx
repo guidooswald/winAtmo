@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/StationDashboard
+ * Live Netatmo weather station and module grid supporting tile drag-and-drop reordering and widget pinning.
+ */
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -47,6 +52,7 @@ declare const __APP_BUILD__: number | undefined;
 declare const __APP_COMMIT__: string | undefined;
 declare const __APP_DATE__: string | undefined;
 
+/** Builds a Netatmo Weathermap URL centered on the station's geographic coordinates when available. */
 function getWeathermapUrl(station: WeatherStation): string {
   const loc = station.place?.location;
   if (loc && Array.isArray(loc) && loc.length >= 2) {
@@ -59,6 +65,7 @@ function getWeathermapUrl(station: WeatherStation): string {
   return 'https://weathermap.netatmo.com/';
 }
 
+/** Orders a station's modules according to the user's persisted drag-and-drop tile order. */
 function getOrderedModules(
   modules: StationModule[],
   savedOrder?: string[]
@@ -87,6 +94,7 @@ function getOrderedModules(
   return ordered;
 }
 
+/** Props for {@link StationDashboard}. */
 interface StationDashboardProps {
   stations: WeatherStation[];
   settings: UserSettings;
@@ -94,6 +102,7 @@ interface StationDashboardProps {
   onOpenInChart: (moduleId: string, metric: MetricType) => void;
 }
 
+/** Displays station telemetry cards, metric tiles, drag-and-drop module ordering, and quick pin/chart links. */
 export const StationDashboard: React.FC<StationDashboardProps> = ({
   stations,
   settings,
@@ -858,6 +867,7 @@ export const StationDashboard: React.FC<StationDashboardProps> = ({
   );
 };
 
+/** Returns the Lucide icon component representing a sensor metric type. */
 function renderMetricIcon(metric: MetricType) {
   switch (metric) {
     case 'temperature':

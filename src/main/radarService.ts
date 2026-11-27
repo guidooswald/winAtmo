@@ -1,3 +1,8 @@
+/**
+ * @module main/radarService
+ * Precipitation radar metadata discovery (DWD GeoServer WMS + RainViewer) and
+ * authenticated localhost 24-hour tile cache proxy (`127.0.0.1`).
+ */
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -22,6 +27,7 @@ const TILE_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TILE_MAX_REDIRECT_HOPS = 2;
 const TILE_PROXY_SECRET = crypto.randomBytes(18).toString('hex');
 
+/** Constant-time string comparison used to verify per-session tile proxy tokens. */
 function safeTokenEquals(a: string, b: string): boolean {
   const ab = Buffer.from(a, 'utf8');
   const bb = Buffer.from(b, 'utf8');
@@ -29,6 +35,7 @@ function safeTokenEquals(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ab, bb);
 }
 
+/** Permits CORS only for Electron `file://` (`origin === 'null'`) and localhost dev origins. */
 function isValidLocalCorsOrigin(origin?: string): boolean {
   if (!origin) return false;
   if (origin === 'null') return true;
@@ -64,6 +71,7 @@ function hashUrl(targetUrl: string): string {
   return crypto.createHash('sha1').update(targetUrl).digest('hex');
 }
 
+/** Enforces strict HTTPS-only allowlisting for permitted DWD, RainViewer, OSM, OpenTopoMap, and Esri hosts. */
 function isAllowedRadarOrMapHost(rawUrl: string): boolean {
   try {
     const u = new URL(rawUrl);
@@ -98,6 +106,7 @@ function putMemTile(hash: string, entry: CachedTileEntry): void {
   }
 }
 
+/** Returns a fresh (<24h) tile buffer from memory LRU or disk cache, pruning expired entries. */
 function getFreshTileFromCache(targetUrl: string): CachedTileEntry | null {
   const now = Date.now();
   const hash = hashUrl(targetUrl);
@@ -210,6 +219,7 @@ function maybePruneDiskCache(): void {
   });
 }
 
+/** Fetches a single radar/map tile via HTTPS (with manual redirect validation & 8 MB cap) and caches it. */
 async function fetchAndCacheTile(targetUrl: string): Promise<CachedTileEntry | null> {
   const cached = getFreshTileFromCache(targetUrl);
   if (cached) return cached;
@@ -287,6 +297,7 @@ async function fetchAndCacheTile(targetUrl: string): Promise<CachedTileEntry | n
   return req;
 }
 
+/** Starts (or reuses) the loopback HTTP tile cache proxy bound exclusively to `127.0.0.1`. */
 export async function ensureRadarCacheServerStarted(): Promise<string> {
   if (cacheServer && cacheServerPort) {
     return `http://127.0.0.1:${cacheServerPort}`;
@@ -369,6 +380,7 @@ export async function ensureRadarCacheServerStarted(): Promise<string> {
   return cacheServerStartPromise;
 }
 
+/** Shuts down the loopback radar tile cache server if currently running. */
 export function stopRadarCacheServer(): void {
   if (cacheServer) {
     try {
@@ -438,6 +450,7 @@ function findNowFrameIndex(frames: RadarFrame[]): number {
   return bestIdx;
 }
 
+/** Fetches DWD WMS GetCapabilities (`RADOLAN-RY`) and builds 5-minute past + 2h nowcast frames. */
 async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPayload> {
   // Fast RADOLAN-RY layer GetCapabilities (~11 KB, <200ms) gives live observation time up to NOW;
   // past+now frames use fast RADOLAN-RY while future forecast steps use Radar_rv_product_1x1km_ger.
@@ -551,6 +564,7 @@ async function fetchDwdMetadata(cacheProxyUrl: string): Promise<RadarMetadataPay
   }
 }
 
+/** Queries RainViewer public weather-maps JSON for past and nowcast radar tile paths. */
 async function fetchRainViewerMetadata(
   cacheProxyUrl: string
 ): Promise<RadarMetadataPayload> {

@@ -1,3 +1,8 @@
+/**
+ * @module main/database
+ * Native SQLite (`node:sqlite` in WAL mode) persistence layer for sensor time-series,
+ * Netatmo security entities, dashboard sensor arrangement, and custom themes.
+ */
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -17,6 +22,7 @@ import {
   StorageStats,
 } from '../renderer/types';
 
+/** Single normalized sensor measurement row written in bulk into `measurements`. */
 export interface BatchMeasurementRow {
   stationId: string;
   moduleId: string;
@@ -26,6 +32,9 @@ export interface BatchMeasurementRow {
   value: number;
 }
 
+/**
+ * Manages `winatmo-history.sqlite` schema initialization and all weather, security, and customization queries.
+ */
 export class TimeSeriesDatabase {
   private db: DatabaseSync;
   private dbPath: string;
@@ -40,6 +49,10 @@ export class TimeSeriesDatabase {
     this.initSchema();
   }
 
+  /**
+   * Initializes WAL pragmas, creates all tables/indexes if missing, and scrubs legacy
+   * plaintext camera stream URLs (`vpn_url`, `local_url`) from prior schema versions.
+   */
   private initSchema(): void {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
@@ -157,6 +170,11 @@ export class TimeSeriesDatabase {
     `);
   }
 
+  /**
+   * Atomically inserts or replaces a batch of measurement points inside `BEGIN IMMEDIATE`.
+   * @param rows Normalized sensor measurement rows to persist.
+   * @returns Number of valid rows written.
+   */
   public insertBatch(rows: BatchMeasurementRow[]): number {
     if (rows.length === 0) return 0;
 
@@ -195,6 +213,7 @@ export class TimeSeriesDatabase {
     return inserted;
   }
 
+  /** Expands recorded min/max timestamp sync coverage for a `(moduleId, scale)` pair. */
   public updateSyncCoverage(
     moduleId: string,
     scale: NetatmoScale,
@@ -213,6 +232,10 @@ export class TimeSeriesDatabase {
     stmt.run(moduleId, scale, Math.floor(newMin), Math.floor(newMax), now);
   }
 
+  /**
+   * Retrieves synced timestamp bounds for a module at a given scale, falling back to scanning
+   * `measurements` if `sync_log` has no entry yet.
+   */
   public getSyncCoverage(
     moduleId: string,
     scale: NetatmoScale
@@ -251,6 +274,10 @@ export class TimeSeriesDatabase {
     };
   }
 
+  /**
+   * Queries stored points for a metric within `[dateBegin, dateEnd]`, aggregating locally from
+   * finer scales (`30min`, `max`, `1hour`) when the target scale is not cached directly.
+   */
   public queryPoints(
     moduleId: string,
     metric: MetricType,
@@ -315,6 +342,7 @@ export class TimeSeriesDatabase {
     }));
   }
 
+  /** Computes min, max, average, first, latest, delta, and count statistics for a point series. */
   public computeStats(points: MeasurePoint[]): SeriesStats {
     if (points.length === 0) {
       return {
@@ -348,6 +376,7 @@ export class TimeSeriesDatabase {
     };
   }
 
+  /** Converts a Netatmo scale identifier into its bucket width in seconds. */
   public getScaleSeconds(scale: NetatmoScale): number {
     switch (scale) {
       case 'max':
@@ -369,6 +398,7 @@ export class TimeSeriesDatabase {
     }
   }
 
+  /** Collects database file size, row counts, timestamp ranges, and per-scale breakdowns. */
   public getStorageStats(): StorageStats {
     let fileSizeBytes = 0;
     try {
@@ -470,6 +500,7 @@ export class TimeSeriesDatabase {
     };
   }
 
+  /** Returns the set of already-stored Netatmo security event IDs for incremental sync. */
   public getKnownSecurityEventIds(homeId?: string): Set<string> {
     const rows = homeId
       ? (this.db
@@ -481,6 +512,10 @@ export class TimeSeriesDatabase {
     return new Set(rows.map((r) => String(r.id)));
   }
 
+  /**
+   * Persists security homes, cameras, known persons, and events while intentionally omitting
+   * secret camera URLs (`vpn_url`, `local_url`) from SQLite.
+   */
   public upsertSecurityData(payload: {
     homes: SecurityHome[];
     events: SecurityEvent[];
@@ -635,6 +670,7 @@ export class TimeSeriesDatabase {
     return upsertedEvents;
   }
 
+  /** Updates the cached snapshot/vignette image URLs and expiration for a security event. */
   public updateSecurityEventImage(
     eventId: string,
     snapshotUrl: string,
@@ -677,6 +713,7 @@ export class TimeSeriesDatabase {
       );
   }
 
+  /** Reconstructs cached `SecurityDataPayload` (homes, cameras, persons, events) from SQLite. */
   public getSecurityData(homeId?: string): SecurityDataPayload {
     const homeRows = (
       homeId
@@ -832,6 +869,7 @@ export class TimeSeriesDatabase {
     };
   }
 
+  /** Marks all persisted person records for a home as away (`out_of_sight = 1`). */
   public markHomePersonsAway(homeId: string): void {
     const now = Math.floor(Date.now() / 1000);
     this.db
@@ -841,6 +879,7 @@ export class TimeSeriesDatabase {
       .run(now, homeId);
   }
 
+  /** Updates the cached floodlight mode (`auto` | `on` | `off`) for a camera in SQLite. */
   public updateCameraFloodlight(
     homeId: string,
     cameraId: string,
@@ -854,6 +893,7 @@ export class TimeSeriesDatabase {
       .run(floodlight, now, homeId, cameraId);
   }
 
+  /** Returns stored per-station module tile ID arrays ordered by user drag position. */
   public getSensorTileOrder(): Record<string, string[]> {
     const rows = this.db
       .prepare(
@@ -871,6 +911,7 @@ export class TimeSeriesDatabase {
     return result;
   }
 
+  /** Replaces the saved module tile arrangement for `stationId` atomically. */
   public setSensorTileOrder(
     stationId: string,
     moduleIds: string[]
@@ -912,6 +953,7 @@ export class TimeSeriesDatabase {
     return this.getSensorTileOrder();
   }
 
+  /** Deletes custom tile arrangement for a station, or for all stations when omitted. */
   public resetSensorTileOrder(stationId?: string): Record<string, string[]> {
     if (stationId && stationId.trim()) {
       this.db
@@ -923,6 +965,7 @@ export class TimeSeriesDatabase {
     return this.getSensorTileOrder();
   }
 
+  /** Returns all user-created custom themes sorted by most recently updated. */
   public getCustomThemes(): CustomThemeRecord[] {
     const rows = this.db
       .prepare(
@@ -958,6 +1001,7 @@ export class TimeSeriesDatabase {
     return list;
   }
 
+  /** Looks up a single custom theme record by its `custom-*` ID, or returns `null`. */
   public getCustomThemeById(id: string): CustomThemeRecord | null {
     const tid = id.trim();
     if (!tid) return null;
@@ -995,6 +1039,7 @@ export class TimeSeriesDatabase {
     }
   }
 
+  /** Inserts or updates a custom theme while preserving its original creation timestamp. */
   public upsertCustomTheme(theme: CustomThemeRecord): CustomThemeRecord[] {
     const now = Date.now();
     const existing = this.getCustomThemeById(theme.id);
@@ -1025,6 +1070,7 @@ export class TimeSeriesDatabase {
     return this.getCustomThemes();
   }
 
+  /** Deletes a custom theme by ID and returns the remaining custom themes. */
   public deleteCustomTheme(id: string): CustomThemeRecord[] {
     const tid = id.trim();
     if (tid) {
@@ -1033,6 +1079,7 @@ export class TimeSeriesDatabase {
     return this.getCustomThemes();
   }
 
+  /** Deletes all cached security homes, cameras, persons, and events and compacts the database. */
   public clearSecurityData(): StorageStats {
     this.db.exec(`
       DELETE FROM security_events;
@@ -1045,6 +1092,7 @@ export class TimeSeriesDatabase {
     return this.getStorageStats();
   }
 
+  /** Clears all weather measurements and sync logs while preserving security, layout, and custom themes. */
   public clearAllHistory(): StorageStats {
     this.db.exec(`
       DELETE FROM measurements;
@@ -1055,6 +1103,7 @@ export class TimeSeriesDatabase {
     return this.getStorageStats();
   }
 
+  /** Removes synthetic demo-mode weather, security, and tile-order records from SQLite. */
   public clearDemoHistory(): void {
     this.db.exec(`
       DELETE FROM measurements WHERE station_id LIKE '70:ee:50:de:m0:%';
@@ -1067,6 +1116,7 @@ export class TimeSeriesDatabase {
     `);
   }
 
+  /** Truncates the WAL, runs `PRAGMA optimize`, and vacuums SQLite storage. */
   public optimizeDatabase(): StorageStats {
     this.db.exec(`
       PRAGMA wal_checkpoint(TRUNCATE);

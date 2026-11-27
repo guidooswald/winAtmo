@@ -1,3 +1,7 @@
+/**
+ * @module main/webAuth
+ * Manages isolated Netatmo Chromium Web Login, background session refresh, and loopback OAuth 2.0 grants.
+ */
 import { BrowserWindow, session } from 'electron';
 import http from 'http';
 import crypto from 'crypto';
@@ -7,6 +11,7 @@ import { AccountInfo, StoredCookie } from '../renderer/types';
 
 export const NETATMO_PARTITION = 'persist:netatmo';
 
+/** Verifies that a cookie domain is an exact Netatmo host or subdomain. */
 function isAllowedNetatmoDomain(domain: string): boolean {
   const d = domain.toLowerCase().replace(/^\.+/, '');
   return (
@@ -17,6 +22,7 @@ function isAllowedNetatmoDomain(domain: string): boolean {
   );
 }
 
+/** Restricts auth window navigation to Netatmo/Legrand HTTPS origins or the active loopback OAuth callback. */
 function isAllowedAuthNavUrl(rawUrl: string, callbackOrigin?: string): boolean {
   try {
     const u = new URL(rawUrl);
@@ -38,6 +44,7 @@ function isAllowedAuthNavUrl(rawUrl: string, callbackOrigin?: string): boolean {
   }
 }
 
+/** Constant-time string equality check used to validate OAuth CSRF state nonces. */
 function safeEquals(a: string, b: string): boolean {
   const ab = Buffer.from(a, 'utf8');
   const bb = Buffer.from(b, 'utf8');
@@ -45,6 +52,9 @@ function safeEquals(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ab, bb);
 }
 
+/**
+ * Orchestrates interactive Netatmo sign-in windows and clears isolated session cookies.
+ */
 export class WebAuthManager {
   private store: AppStore;
   private client: NetatmoClient;
@@ -552,6 +562,7 @@ export class WebAuthManager {
     });
   }
 
+  /** Clears persisted cookies and storage in the isolated Netatmo partition and resets stored session state. */
   public async clearWebSession(): Promise<void> {
     try {
       const netatmoSession = session.fromPartition(NETATMO_PARTITION);

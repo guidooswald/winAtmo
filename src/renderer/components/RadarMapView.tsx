@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/RadarMapView
+ * Interactive Leaflet weather map displaying DWD and RainViewer precipitation radar timelines and station pins.
+ */
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -23,6 +28,7 @@ import {
 import { formatMetricValue } from '../utils/metrics';
 import { getThemeDefinition } from '../utils/themes';
 
+/** Props for {@link RadarMapView}. */
 interface RadarMapViewProps {
   stations: WeatherStation[];
   settings: UserSettings;
@@ -39,6 +45,7 @@ const DWD_BOUNDS = {
   maxLon: 18.75,
 };
 
+/** Returns true when geographic coordinates lie within the DWD Central European radar footprint. */
 function isInsideDwdBounds(lat: number, lon: number): boolean {
   return (
     lat >= DWD_BOUNDS.minLat &&
@@ -48,6 +55,7 @@ function isInsideDwdBounds(lat: number, lon: number): boolean {
   );
 }
 
+/** Escapes HTML special characters before interpolating station labels into Leaflet popup markup. */
 function escapeHtml(raw: string): string {
   return raw
     .replace(/&/g, '&amp;')
@@ -57,6 +65,7 @@ function escapeHtml(raw: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/** Extracts valid `[lat, lon]` coordinates from a station's GeoJSON `[lon, lat]` place tuple. */
 function getStationCoordinates(station?: WeatherStation): [number, number] | null {
   const loc = station?.place?.location;
   if (!Array.isArray(loc) || loc.length < 2) return null;
@@ -67,6 +76,7 @@ function getStationCoordinates(station?: WeatherStation): [number, number] | nul
   return [lat, lon];
 }
 
+/** Formats a radar frame timestamp into a relative offset badge (`NOW`, `-20m`, `+1h Forecast`). */
 function formatFrameOffset(timestampSec: number): {
   label: string;
   tone: 'past' | 'now' | 'forecast';
@@ -85,6 +95,7 @@ function formatFrameOffset(timestampSec: number): {
   return { label: `-${duration}`, tone: 'past' };
 }
 
+/** Resolves tile URL template, attribution, and CSS filter options for the chosen base map style. */
 function getBaseTileConfig(mode: BaseMapMode, themeId: string): {
   url: string;
   labelsUrl?: string;
@@ -138,10 +149,12 @@ const DWD_LATLNG_BOUNDS = L.latLngBounds(
   [DWD_BOUNDS.maxLat, DWD_BOUNDS.maxLon]
 );
 
+/** Produces a stable frame cache key combining provider and ISO timestamp. */
 function getRadarFrameKey(provider: RadarProvider, frame: RadarFrame): string {
   return `${provider}:${frame.isoTime}`;
 }
 
+/** Rewrites an external tile URL to route through the local main-process tile cache proxy when available. */
 function toProxyTileUrl(
   rawUrl: string,
   cacheProxyUrl?: string,
@@ -174,6 +187,7 @@ const ProxiedWmsTileLayer = L.TileLayer.WMS.extend({
   },
 });
 
+/** Instantiates a Leaflet `TileLayer` that routes XYZ tile requests through the local cache proxy. */
 function createProxiedTileLayer(
   urlTemplate: string,
   options: L.TileLayerOptions
@@ -181,6 +195,7 @@ function createProxiedTileLayer(
   return new (ProxiedTileLayer as any)(urlTemplate, options);
 }
 
+/** Instantiates a Leaflet `TileLayer.WMS` that routes WMS requests through the local cache proxy. */
 function createProxiedWmsLayer(
   baseUrl: string,
   options: L.WMSOptions & Record<string, unknown>
@@ -188,6 +203,7 @@ function createProxiedWmsLayer(
   return new (ProxiedWmsTileLayer as any)(baseUrl, options);
 }
 
+/** Enumerates XYZ tile coordinates visible in the current map viewport at the clamped native zoom level. */
 function getVisibleTileCoords(
   map: L.Map,
   maxNativeZoom: number,
@@ -230,6 +246,7 @@ function getVisibleTileCoords(
   return coords;
 }
 
+/** Computes all raw upstream tile URLs needed to prefetch the current viewport for a radar frame. */
 function getRawFrameTileUrls(
   map: L.Map,
   meta: RadarMetadataPayload,
@@ -286,6 +303,7 @@ function getRawFrameTileUrls(
   return [];
 }
 
+/** Builds an outward-expanding list of adjacent frame indices for seamless radar animation preloading. */
 function buildSurroundingIndices(
   total: number,
   centerIndex: number,
@@ -309,6 +327,7 @@ function buildSurroundingIndices(
   return order;
 }
 
+/** Interactive precipitation radar map with animated playback, frame preloading, and station overlays. */
 export const RadarMapView: React.FC<RadarMapViewProps> = ({
   stations,
   settings,

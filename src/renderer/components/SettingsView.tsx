@@ -1,3 +1,8 @@
+/**
+ * @module renderer/components/SettingsView
+ * Application settings panel for Netatmo authentication, units, sync intervals, themes, widget behavior, and storage.
+ */
+
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   AlertTriangle,
@@ -42,6 +47,7 @@ import {
 } from '../utils/themes';
 import { useI18n, LANGUAGES } from '../utils/i18n';
 
+/** Props for {@link SettingsView}. */
 interface SettingsViewProps {
   settings: UserSettings;
   account: AccountInfo;
@@ -65,6 +71,7 @@ interface SettingsViewProps {
   onLogout: (eraseDatabase?: boolean) => Promise<void>;
 }
 
+/** Settings view organizing account login controls, theme gallery, language/unit preferences, and database actions. */
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   account,
