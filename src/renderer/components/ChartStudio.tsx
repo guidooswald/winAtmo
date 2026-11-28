@@ -1380,6 +1380,7 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
                       curveStyle,
                       showAvgLines,
                       showExtremaMarkers,
+                      settings,
                     })}
 
                 {/* X-Axis Time Labels */}
@@ -1583,6 +1584,71 @@ export const ChartStudio: React.FC<ChartStudioProps> = ({
   );
 };
 
+/** Returns the numeric threshold and display label for the 0°C freezing reference line in the active unit. */
+function getFreezingMarkerInfo(settings: UserSettings): {
+  value: number;
+  label: string;
+} {
+  return settings.temperatureUnit === 'F'
+    ? { value: 32, label: '32°F (0°C)' }
+    : { value: 0, label: '0°C' };
+}
+
+/** Renders a horizontal dashed 0°C reference line and inline pill label inside a plot region. */
+function renderZeroDegreeMarker(params: {
+  y: number;
+  minY: number;
+  maxY: number;
+  padLeft: number;
+  plotWidth: number;
+  label: string;
+}) {
+  const { y, minY, maxY, padLeft, plotWidth, label } = params;
+  const badgeWidth = Math.max(36, Math.round(label.length * 6.5 + 12));
+  const badgeHeight = 16;
+  const badgeX = padLeft + plotWidth - badgeWidth - 6;
+  const badgeY = Math.max(
+    minY + 2,
+    Math.min(maxY - badgeHeight - 2, y - badgeHeight / 2)
+  );
+
+  return (
+    <g className="chart-freezing-marker">
+      <line
+        x1={padLeft}
+        y1={y}
+        x2={padLeft + plotWidth}
+        y2={y}
+        stroke="var(--accent-sky)"
+        strokeOpacity="0.85"
+        strokeWidth="1.4"
+        strokeDasharray="6 4"
+      />
+      <rect
+        x={badgeX}
+        y={badgeY}
+        width={badgeWidth}
+        height={badgeHeight}
+        rx="4"
+        fill="var(--bg-card)"
+        fillOpacity="0.92"
+        stroke="var(--accent-sky)"
+        strokeWidth="1"
+      />
+      <text
+        x={badgeX + badgeWidth / 2}
+        y={badgeY + badgeHeight / 2 + 3.5}
+        textAnchor="middle"
+        fill="var(--accent-sky)"
+        fontSize="10.5"
+        fontWeight="700"
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
 /** Renders multiple sensor series on a shared time axis with dual/multi-metric vertical scales. */
 function renderOverlayChart(params: {
   processedSeries: Array<{
@@ -1636,6 +1702,19 @@ function renderOverlayChart(params: {
 
   const ticks = [0, 0.25, 0.5, 0.75, 1];
   const timeSpan = Math.max(1, visibleTimeBounds.maxT - visibleTimeBounds.minT);
+  const freezing = getFreezingMarkerInfo(settings);
+  const tempDomain = distinctMetrics.includes('temperature')
+    ? metricDomains.get('temperature')
+    : undefined;
+  const freezingY =
+    tempDomain &&
+    tempDomain.max > tempDomain.min &&
+    freezing.value >= tempDomain.min &&
+    freezing.value <= tempDomain.max
+      ? padTop +
+        (1 - (freezing.value - tempDomain.min) / (tempDomain.max - tempDomain.min)) *
+          plotHeight
+      : null;
 
   return (
     <g>
@@ -1788,6 +1867,17 @@ function renderOverlayChart(params: {
           </g>
         );
       })}
+
+      {/* 0°C Freezing Point Reference Line */}
+      {freezingY !== null &&
+        renderZeroDegreeMarker({
+          y: freezingY,
+          minY: padTop,
+          maxY: padTop + plotHeight,
+          padLeft,
+          plotWidth,
+          label: freezing.label,
+        })}
     </g>
   );
 }
@@ -1817,6 +1907,7 @@ function renderStackedChart(params: {
   curveStyle: ChartCurveStyle;
   showAvgLines: boolean;
   showExtremaMarkers: boolean;
+  settings: UserSettings;
 }) {
   const {
     processedSeries,
@@ -1827,12 +1918,14 @@ function renderStackedChart(params: {
     plotHeight,
     curveStyle,
     showAvgLines,
+    settings,
   } = params;
 
   const count = Math.max(1, processedSeries.length);
   const gap = 18;
   const subHeight = (plotHeight - gap * (count - 1)) / count;
   const timeSpan = Math.max(1, visibleTimeBounds.maxT - visibleTimeBounds.minT);
+  const freezing = getFreezingMarkerInfo(settings);
 
   return (
     <g>
@@ -1933,6 +2026,19 @@ function renderStackedChart(params: {
                 />
               </>
             )}
+
+            {s.curve.metric === 'temperature' &&
+              s.points.length > 0 &&
+              freezing.value >= min &&
+              freezing.value <= max &&
+              renderZeroDegreeMarker({
+                y: toY(freezing.value),
+                minY: subTop,
+                maxY: subBottom,
+                padLeft,
+                plotWidth,
+                label: freezing.label,
+              })}
           </g>
         );
       })}
